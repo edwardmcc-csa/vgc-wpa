@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 from poke_env.player import RandomPlayer
 from poke_env.ps_client import ServerConfiguration
@@ -93,6 +94,105 @@ def play_one_battle(battle_format: str | None = None) -> BattleResult:
         p1_username=p1.username,
         p2_username=p2.username,
         battle_tag=battle.battle_tag,
+    )
+
+
+@dataclass(frozen=True)
+class CrashRecord:
+    """One battle that failed to complete, and why."""
+
+    battle_index: int
+    error: str
+
+
+@dataclass(frozen=True)
+class BattleRunResult:
+    """Outcome of running a batch of battles."""
+
+    attempted: int
+    completed: int
+    crashes: list[CrashRecord] = field(default_factory=list)
+    elapsed_seconds: float = 0.0
+    battles_per_minute: float = 0.0
+
+
+async def _run_pair(
+    p1: RandomPlayer, p2: RandomPlayer, n: int, start_index: int
+) -> tuple[int, list[CrashRecord]]:
+    """Play n battles between one pair of agents, one at a time.
+
+    One at a time, not a single `n_battles=n` call, so a single connection
+    hiccup doesn't abort the whole batch - each failure is caught and
+    recorded individually instead.
+    """
+    completed = 0
+    crashes: list[CrashRecord] = []
+    for i in range(n):
+        try:
+            await p1.battle_against(p2, n_battles=1)
+            completed += 1
+        except Exception as e:
+            crashes.append(
+                CrashRecord(
+                    battle_index=start_index + i, error=f"{type(e).__name__}: {e}"
+                )
+            )
+    return completed, crashes
+
+
+def run_battles(n: int, run_id: int = 1) -> BattleRunResult:
+    """Run n battles sequentially, one pair of agents, one process."""
+    fmt = get_current_format()
+    p1 = _make_random_player(fmt, run_id)
+    p2 = _make_random_player(fmt, run_id + 1)
+    start = time.monotonic()
+    completed, crashes = asyncio.run(_run_pair(p1, p2, n, start_index=0))
+    elapsed = time.monotonic() - start
+    return BattleRunResult(
+        attempted=n,
+        completed=completed,
+        crashes=crashes,
+        elapsed_seconds=elapsed,
+        battles_per_minute=(completed / elapsed * 60) if elapsed > 0 else 0.0,
+    )
+
+
+async def _run_parallel(
+    n: int, concurrency: int, run_id_base: int
+) -> tuple[int, list[CrashRecord]]:
+    fmt = get_current_format()
+    per_pair, remainder = divmod(n, concurrency)
+    tasks = []
+    assigned = 0
+    for i in range(concurrency):
+        count = per_pair + (1 if i < remainder else 0)
+        if count == 0:
+            continue
+        run_id = run_id_base + i * 2
+        p1 = _make_random_player(fmt, run_id)
+        p2 = _make_random_player(fmt, run_id + 1)
+        tasks.append(_run_pair(p1, p2, count, start_index=assigned))
+        assigned += count
+    results = await asyncio.gather(*tasks)
+    completed = sum(c for c, _ in results)
+    crashes = [c for _, crs in results for c in crs]
+    return completed, crashes
+
+
+def run_battles_parallel(
+    n: int, concurrency: int, run_id_base: int = 1000
+) -> BattleRunResult:
+    """Run n battles split across `concurrency` independent agent pairs, all
+    connected to the local server concurrently within one process."""
+    start = time.monotonic()
+    completed, crashes = asyncio.run(_run_parallel(n, concurrency, run_id_base))
+    elapsed = time.monotonic() - start
+    return BattleRunResult(
+        attempted=n,
+        completed=completed,
+        crashes=crashes,
+        elapsed_seconds=elapsed,
+        battles_per_minute=(completed / elapsed * 60) if elapsed > 0 else 0.0,
     )
 
 
