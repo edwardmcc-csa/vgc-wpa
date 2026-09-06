@@ -24,7 +24,7 @@ dependencies = [
 optional-dependencies = { dev = ["pyright==1.1.408", "pytest==8.3.5", "ruff==0.11.12"] }
 
 [tool.setuptools.packages.find]
-include = ["vgc_bench"]
+include = ["vgc_bench", "wpa"]
 
 [tool.ruff]
 line-length = 88
@@ -37,15 +37,15 @@ skip-magic-trailing-comma = true
 select = ["E", "F", "I", "W"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["vgc_bench"]
+known-first-party = ["vgc_bench", "wpa"]
 split-on-trailing-comma = false
 
 [tool.pytest.ini_options]
-testpaths = ["unit_tests", "integration_tests"]
+testpaths = ["unit_tests", "integration_tests", "tests"]
 addopts = "--import-mode=importlib"
 
 [tool.pyright]
-include = ["vgc_bench"]
+include = ["vgc_bench", "wpa"]
 pythonVersion = "3.13"
 reportPrivateUsage = false
 reportUnknownLambdaType = false
