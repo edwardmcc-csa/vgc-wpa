@@ -14,11 +14,13 @@ import os
 import time
 from dataclasses import dataclass, field
 
-from poke_env.player import RandomPlayer
-from poke_env.ps_client import ServerConfiguration
+from poke_env.battle import AbstractBattle, DoubleBattle
+from poke_env.player import BattleOrder, RandomPlayer
+from poke_env.ps_client import AccountConfiguration, ServerConfiguration
 
 from vgc_bench.src.teams import RandomTeamBuilder, get_available_regs
 from vgc_bench.src.utils import format_map
+from wpa.state import BattleState
 
 CURRENT_REG = os.environ.get("VGC_WPA_REG", "ma")
 """The regulation this project currently targets. Per docs/DEFINITIONS.md
@@ -61,6 +63,128 @@ def _make_random_player(battle_format: str, run_id: int) -> RandomPlayer:
         accept_open_team_sheet=True,
         log_level=51,
     )
+
+
+_BESTOF_ROOM_PREFIX = "game-bestof3-"
+
+
+class _StateCapturingPlayer(RandomPlayer):
+    """RandomPlayer that captures a BattleState at every decision point.
+
+    Also derives best-of-3 set context (set_id, game_index,
+    set_score_entering_game - see docs/DEFINITIONS.md #11.6/#13) from the
+    live protocol, the same fields parse_battle_states derives from a raw
+    replay log, via wpa.state.BattleState's single shared schema.
+
+    set_id comes from _handle_bestof_message's room tag - a public,
+    documented extension point already used the same way by vgc_bench's own
+    PolicyPlayer (see vgc_bench/src/policy_player.py). Score entering each
+    game is always fully known here (unlike replaying the historical
+    corpus): we play every game of the set ourselves, so self.battles
+    always holds every prior game's real result.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.captured_states: list[BattleState] = []
+        self._set_id: str | None = None
+
+    async def _handle_bestof_message(self, split_messages):
+        room_tag = split_messages[0][0][1:]  # strip leading '>'
+        if room_tag.startswith(_BESTOF_ROOM_PREFIX):
+            self._set_id = room_tag[len(_BESTOF_ROOM_PREFIX) :]
+        await super()._handle_bestof_message(split_messages)
+
+    def _bo3_context(
+        self, battle: AbstractBattle
+    ) -> tuple[int | None, tuple[int, int] | None]:
+        if self._set_id is None:
+            return None, None
+        tags = list(self.battles.keys())
+        game_index = (
+            tags.index(battle.battle_tag) + 1
+            if battle.battle_tag in tags
+            else len(tags) + 1
+        )
+        wins_ours = wins_opp = 0
+        for prior_tag in tags[: game_index - 1]:
+            prior = self.battles[prior_tag]
+            if prior.won is True:
+                wins_ours += 1
+            elif prior.won is False:
+                wins_opp += 1
+        return game_index, (wins_ours, wins_opp)
+
+    def choose_move(self, battle: AbstractBattle) -> BattleOrder:
+        assert isinstance(battle, DoubleBattle)
+        game_index, score = self._bo3_context(battle)
+        self.captured_states.append(
+            BattleState.from_battle(
+                battle,
+                set_id=self._set_id,
+                game_index=game_index,
+                set_score_entering_game=score,
+            )
+        )
+        return self.choose_random_move(battle)
+
+
+def _make_state_capturing_player(
+    battle_format: str, run_id: int
+) -> _StateCapturingPlayer:
+    # An explicit account_configuration, not poke-env's default naming from
+    # the class name: that default produced "_StateCapturingP 1" for this
+    # class (leading underscore, truncated), which Showdown's login rejects
+    # outright - the connection then hangs forever awaiting a login
+    # confirmation that never arrives, rather than failing loudly. Confirmed
+    # by reproducing it in isolation before applying this fix.
+    return _StateCapturingPlayer(
+        account_configuration=AccountConfiguration(f"WpaCapture{run_id}", None),
+        battle_format=battle_format,
+        server_configuration=_SERVER_CONFIGURATION,
+        team=RandomTeamBuilder(run_id, None, CURRENT_REG),
+        accept_open_team_sheet=True,
+        log_level=51,
+    )
+
+
+async def _capture_live_states(
+    n_simple: int, n_bo3_sets: int, run_id: int
+) -> list[BattleState]:
+    states: list[BattleState] = []
+
+    if n_simple:
+        p1 = _make_state_capturing_player(get_current_format(bo3=False), run_id)
+        p2 = _make_state_capturing_player(get_current_format(bo3=False), run_id + 1)
+        await p1.battle_against(p2, n_battles=n_simple)
+        states.extend(p1.captured_states)
+
+    for i in range(n_bo3_sets):
+        b1 = _make_state_capturing_player(
+            get_current_format(bo3=True), run_id + 10 + i * 2
+        )
+        b2 = _make_state_capturing_player(
+            get_current_format(bo3=True), run_id + 11 + i * 2
+        )
+        await b1.battle_against(b2, n_battles=1)
+        states.extend(b1.captured_states)
+
+    return states
+
+
+def capture_live_states(
+    n_simple: int, n_bo3_sets: int, run_id: int = 1
+) -> list[BattleState]:
+    """Play n_simple ordinary battles plus n_bo3_sets full best-of-3 sets
+    live, and return every captured BattleState across all of them.
+
+    One asyncio.run() for the whole call (not one per battle/set): repeated
+    asyncio.run() cycles within one long-lived process were observed to hang
+    a later call indefinitely (near-zero CPU, no exception) - reproduced by
+    isolating an identical call that succeeded standalone but hung after two
+    prior capture_live_states calls in the same pytest session.
+    """
+    return asyncio.run(_capture_live_states(n_simple, n_bo3_sets, run_id))
 
 
 @dataclass(frozen=True)
