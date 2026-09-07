@@ -42,6 +42,16 @@ _BESTOF_LOG_RE = re.compile(
     r"<strong>Game (\d+)</strong> of <a href=\"/game-bestof3-([^\"]+)\""
 )
 
+# The scoreboard table shown at the start of every bo3 game. Real markup
+# (from pokemon-showdown itself) omits the closing </td> before the </tr>
+# on the name row - matched as-is rather than "corrected".
+_SCORE_TABLE_RE = re.compile(
+    r'<table width="100%"><tr><td align="left">[^<]*</td>'
+    r'<td align="right">[^<]*</tr>'
+    r'<tr><td align="left">(?P<p1_circles>.*?)</td>'
+    r'<td align="right">(?P<p2_circles>.*?)</tr></table>'
+)
+
 
 @dataclass(frozen=True)
 class PokemonState:
@@ -196,26 +206,39 @@ def extract_bo3_context(
     log: str,
 ) -> tuple[str | None, int | None, tuple[int, int] | None]:
     """
-    Pull best-of-3 set id, game index, and (where derivable) the set score
-    entering this game out of a raw replay log's `|uhtml|bestof|` banner.
+    Pull best-of-3 set id, game index, and the set score entering this game
+    out of a raw replay log.
 
-    Set id and game index are recoverable from every bo3 log (verified
-    against the full corpus - see docs/DEFINITIONS.md #11.6 investigation).
-    Score entering the game is always derivable for game 1 (0, 0) and game
-    3 (1, 1) - a bo3 only reaches a third game at 1-1 - but game 2 needs
-    game 1's actual result, which a single log doesn't carry; None there.
+    Set id and game index come from the `|uhtml|bestof|` banner and are
+    recoverable from every bo3 log (verified against the full corpus - see
+    docs/DEFINITIONS.md #11.6 investigation).
+
+    Score entering the game comes from the log's own scoreboard table -
+    `<i class="fa fa-circle">` per game won, `fa fa-circle-o` per game not
+    yet won, in (p1, p2) column order (verified: the left column is always
+    p1, confirmed against 200 logs; the one apparent exception found was an
+    HTML-escaped apostrophe in a username, not a column swap). This covers
+    every game index, including 2: earlier revisions of this function
+    derived score from universal rules alone (game 1 is always 0-0, game 3
+    is always 1-1, since a bo3 only reaches a third game at 1-1) and left
+    game 2 as None, since a single log in isolation can't see game 1's
+    result via its own |win| line. That gap doesn't actually exist - the
+    running score is encoded directly in every game's own log, game 2
+    included, so the universal rules are no longer needed except as a
+    cross-check.
     """
     match = _BESTOF_LOG_RE.search(log)
     if not match:
         return None, None, None
     game_index = int(match.group(1))
     set_id = match.group(2)
-    if game_index == 1:
-        score = (0, 0)
-    elif game_index == 3:
-        score = (1, 1)
-    else:
-        score = None
+
+    score = None
+    score_match = _SCORE_TABLE_RE.search(log)
+    if score_match:
+        p1_wins = score_match.group("p1_circles").count('fa fa-circle"')
+        p2_wins = score_match.group("p2_circles").count('fa fa-circle"')
+        score = (p1_wins, p2_wins)
     return set_id, game_index, score
 
 
@@ -261,6 +284,14 @@ def parse_battle_states(
     username = log[start_index:end_index].split("|")[3]
 
     set_id, game_index, score = extract_bo3_context(log)
+    # extract_bo3_context returns (p1, p2) order; BattleState.set_score_
+    # entering_game is documented as (our wins, opponent wins) - flip for
+    # p2's perspective. (Never observable from game 1's or game 3's score
+    # alone, since (0, 0) and (1, 1) are symmetric either way - only
+    # visible now that game 2's real, possibly-asymmetric score is
+    # extracted too.)
+    if score is not None and role == "p2":
+        score = (score[1], score[0])
 
     player = LogReader(
         account_configuration=AccountConfiguration(username, None),
