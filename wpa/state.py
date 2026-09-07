@@ -51,14 +51,48 @@ class PokemonState:
     hp_fraction: float
     fainted: bool
     active: bool
+    gimmick: str | None = None
+    """Which format gimmick this Pokemon is currently using, if any: "mega",
+    "tera", or "dynamax". Which gimmick(s) a format allows is a fact about
+    the format (config), not this schema - e.g. M-A/M-B/M-C disable
+    Terastallization entirely and use Mega Evolution instead (see the Week
+    2 Task 5 report), but a future regulation may differ. Kept generic so
+    that needs no schema change."""
 
     @classmethod
-    def from_pokemon(cls, pokemon: Pokemon, active: bool) -> "PokemonState":
+    def from_pokemon(
+        cls, pokemon: Pokemon, active: bool, side_used_mega_evolve: bool = False
+    ) -> "PokemonState":
+        # Mega Evolution deliberately does not change poke-env's `species`
+        # (Pokemon.forme_change/mega_evolve both call _update_from_pokedex
+        # with store_species=False - species is a stable identity across
+        # forme changes by design). So this can't be species-string matching
+        # - confirmed empirically: replaying a real mega-evolution log left
+        # `species` as the base form on every subsequent turn, while
+        # `ability` visibly changed to the Mega's signature ability. The
+        # reliable per-side signal is the same public flag vgc_bench's own
+        # PolicyPlayer.embed_side already uses (battle.used_mega_evolve /
+        # .opponent_used_mega_evolve); combined with holding a Mega Stone
+        # (real Mega Stones are always named "<species>ite") to attribute it
+        # to the right Pokemon on that side.
+        if pokemon.is_terastallized:
+            gimmick = "tera"
+        elif pokemon.is_dynamaxed:
+            gimmick = "dynamax"
+        elif (
+            side_used_mega_evolve
+            and pokemon.item is not None
+            and pokemon.item.endswith("ite")
+        ):
+            gimmick = "mega"
+        else:
+            gimmick = None
         return cls(
             species=pokemon.species,
             hp_fraction=pokemon.current_hp_fraction,
             fainted=pokemon.fainted,
             active=active,
+            gimmick=gimmick,
         )
 
 
@@ -96,12 +130,20 @@ class BattleState:
     ) -> "BattleState":
         our_actives = [p for p in battle.active_pokemon if p is not None]
         our = tuple(
-            PokemonState.from_pokemon(p, active=any(p is a for a in our_actives))
+            PokemonState.from_pokemon(
+                p,
+                active=any(p is a for a in our_actives),
+                side_used_mega_evolve=battle.used_mega_evolve,
+            )
             for p in battle.team.values()
         )
         opp_actives = [p for p in battle.opponent_active_pokemon if p is not None]
         opp = tuple(
-            PokemonState.from_pokemon(p, active=any(p is a for a in opp_actives))
+            PokemonState.from_pokemon(
+                p,
+                active=any(p is a for a in opp_actives),
+                side_used_mega_evolve=battle.opponent_used_mega_evolve,
+            )
             for p in battle.opponent_team.values()
         )
         return cls(
