@@ -20,7 +20,7 @@ from poke_env.ps_client import AccountConfiguration, ServerConfiguration
 
 from vgc_bench.src.teams import RandomTeamBuilder, get_available_regs
 from vgc_bench.src.utils import format_map
-from wpa.state import BattleState
+from wpa.state import BattleState, assign_decision_indices
 
 CURRENT_REG = os.environ.get("VGC_WPA_REG", "ma")
 """The regulation this project currently targets. Per docs/DEFINITIONS.md
@@ -86,7 +86,12 @@ class _StateCapturingPlayer(RandomPlayer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.captured_states: list[BattleState] = []
+        # Keyed by battle_tag, not one flat list: battle_against(n_battles=N)
+        # plays N separate battles with this same player object, and
+        # decision_index (assigned afterwards, per trajectory) must reset
+        # at each battle's own start, not continue across a coincidental
+        # matching turn number at the boundary between two battles.
+        self.captured_states: dict[str, list[BattleState]] = {}
         self._set_id: str | None = None
 
     async def _handle_bestof_message(self, split_messages):
@@ -118,14 +123,13 @@ class _StateCapturingPlayer(RandomPlayer):
     def choose_move(self, battle: AbstractBattle) -> BattleOrder:
         assert isinstance(battle, DoubleBattle)
         game_index, score = self._bo3_context(battle)
-        self.captured_states.append(
-            BattleState.from_battle(
-                battle,
-                set_id=self._set_id,
-                game_index=game_index,
-                set_score_entering_game=score,
-            )
+        state = BattleState.from_battle(
+            battle,
+            set_id=self._set_id,
+            game_index=game_index,
+            set_score_entering_game=score,
         )
+        self.captured_states.setdefault(battle.battle_tag, []).append(state)
         return self.choose_random_move(battle)
 
 
@@ -157,7 +161,8 @@ async def _capture_live_states(
         p1 = _make_state_capturing_player(get_current_format(bo3=False), run_id)
         p2 = _make_state_capturing_player(get_current_format(bo3=False), run_id + 1)
         await p1.battle_against(p2, n_battles=n_simple)
-        states.extend(p1.captured_states)
+        for trajectory in p1.captured_states.values():
+            states.extend(assign_decision_indices(trajectory))
 
     for i in range(n_bo3_sets):
         b1 = _make_state_capturing_player(
@@ -167,7 +172,11 @@ async def _capture_live_states(
             get_current_format(bo3=True), run_id + 11 + i * 2
         )
         await b1.battle_against(b2, n_battles=1)
-        states.extend(b1.captured_states)
+        # Each game of the set has its own battle_tag (its own turn
+        # counter, starting fresh at 1), so decision_index is assigned per
+        # game here too, not per whole set.
+        for trajectory in b1.captured_states.values():
+            states.extend(assign_decision_indices(trajectory))
 
     return states
 

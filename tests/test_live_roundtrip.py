@@ -94,4 +94,5 @@ def test_live_and_replay_paths_produce_the_same_schema(sample_battles, reader_lo
         "set_id",
         "game_index",
         "set_score_entering_game",
+        "decision_index",
     }

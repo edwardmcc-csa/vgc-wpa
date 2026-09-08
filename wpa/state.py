@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 
 import numpy as np
 import numpy.typing as npt
@@ -128,6 +128,15 @@ class BattleState:
     played it), not always known when replaying the historical corpus,
     where some sets are missing their earlier game's log - None in that
     case rather than a guess."""
+    decision_index: int = 0
+    """Position of this decision point among others sharing the same turn
+    number - 0 for the first, 1 for the second, and so on. A game turn can
+    hold multiple decision points (DEFINITIONS #6: team preview, lead
+    selection, a forced switch after a faint), so `turn` alone doesn't
+    order them. The pair (turn, decision_index) strictly increases across
+    a whole game - assign_decision_indices computes it; not populated by
+    from_battle directly, since a single state has no notion of its
+    neighbours."""
 
     @classmethod
     def from_battle(
@@ -186,6 +195,7 @@ class BattleState:
                 if self.set_score_entering_game is not None
                 else None
             ),
+            "decision_index": self.decision_index,
         }
 
     @classmethod
@@ -199,7 +209,29 @@ class BattleState:
             set_id=d["set_id"],
             game_index=d["game_index"],
             set_score_entering_game=tuple(score) if score is not None else None,
+            decision_index=d.get("decision_index", 0),
         )
+
+
+def assign_decision_indices(states: list[BattleState]) -> list[BattleState]:
+    """Populate decision_index over one trajectory's states, in order.
+
+    Must be called on a single trajectory's states only - concatenating
+    states from unrelated battles first would let a coincidental turn
+    match at the boundary continue the previous battle's counter instead
+    of resetting it.
+    """
+    result = []
+    last_turn = None
+    index = 0
+    for state in states:
+        if state.turn != last_turn:
+            index = 0
+            last_turn = state.turn
+        else:
+            index += 1
+        result.append(replace(state, decision_index=index))
+    return result
 
 
 def extract_bo3_context(
@@ -302,9 +334,10 @@ def parse_battle_states(
     )
     future = asyncio.run_coroutine_threadsafe(player.follow_log(tag, log), loop)
     future.result()
-    return [
+    states = [
         BattleState.from_battle(
             battle, set_id=set_id, game_index=game_index, set_score_entering_game=score
         )
         for battle in player.states
     ]
+    return assign_decision_indices(states)

@@ -5,13 +5,15 @@ the properties are checked on actual parser output, not synthetic data.
 wpa/state.py does not exist yet; this test is written first and is expected
 to fail on import.
 
-Note on "turn numbers strictly increase": a single game turn can contain
-multiple decision points (team preview, lead selection, a forced switch after
-a faint - see docs/DEFINITIONS.md #6), so consecutive snapshots legitimately
-share a turn number. The checked property is therefore "turn numbers never
-decrease", which is what the dispatch's requirement actually guards against
-(a parser bug that rewinds or misorders states) without being broken by
-correct multi-decision turns.
+Note on ordering: Week 1 relaxed "turn numbers strictly increase" to "turn
+numbers never decrease", correctly, because DEFINITIONS #6 allows multiple
+decision points per game turn (team preview, lead selection, a forced
+switch after a faint) - the strict version would fail on those, which
+aren't bugs. But "never decrease" alone can't catch a stuck counter: a
+parser bug that repeats the same turn forever would still pass it. Week 3
+Task 5 tightens this to what the dispatch actually wants: the pair
+(turn, decision_index) strictly increases lexicographically - see
+test_turn_decision_index_pair_strictly_increases.
 """
 
 import pytest
@@ -54,9 +56,12 @@ def test_hp_never_negative(parsed_battle):
             assert mon.hp_fraction >= 0.0
 
 
-def test_turn_numbers_never_decrease(parsed_battle):
-    turns = [state.turn for state in parsed_battle]
-    assert all(t2 >= t1 for t1, t2 in zip(turns, turns[1:]))
+def test_turn_decision_index_pair_strictly_increases(parsed_battle):
+    pairs = [(state.turn, state.decision_index) for state in parsed_battle]
+    assert pairs == sorted(pairs)
+    assert len(set(pairs)) == len(pairs), (
+        "no two states may share a (turn, decision_index) pair"
+    )
 
 
 def test_no_fainted_pokemon_is_active(parsed_battle):
