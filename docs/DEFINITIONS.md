@@ -1,6 +1,6 @@
 # DEFINITIONS
 
-**Status:** approved by the product owner. Revision 5 — adds §13 (data splitting).
+**Status:** approved by the product owner. Revision 6 — adds §14 (spread revelation).
 **Applies to:** milestones M4, M4b, M5, M7.
 
 This document is the contract. If code and this document disagree, the code is wrong.
@@ -204,6 +204,24 @@ A random split by trajectory therefore places the same game — and the same mat
 **Tests:** no set ID appears in more than one split; no exact team pairing appears in more than one split; the archetype holdout is available as an option from the first day of M4.
 
 This is not tunable and not a performance trade-off. A leaky split does not announce itself — it silently converts every calibration number in the product into a false claim.
+
+---
+
+## 14. Spread revelation (added rev 6)
+
+Open team sheets reveal species, item, ability, moves and Tera type. They do **not** reveal EVs, IVs or nature. Speed tier and effective bulk are therefore hidden information in both open- and closed-sheet formats.
+
+These quantities determine correct play. A win probability that ignores them is not measuring the decision the player actually faced.
+
+**Rule: the parsed record must carry what has been revealed about spreads, at the decision point where it was revealed.** Revelation is monotonic within a set — evidence from game 1 remains available in game 3 (see §11.3) — and it never runs backwards. A model must not condition on information the player did not yet hold.
+
+**Observation, not inference.** The parsed record stores observable events: damage dealt with full modifier context, move order at known priority, survival and faint thresholds, exact recovery amounts, behavioural item tells, Tera activation. It does not store derived bounds, fitted spreads or probabilities. Derivation is M4b's responsibility and must be reproducible from the stored observations alone.
+
+**HP expression is part of the record.** Whether an HP figure is exact or a percentage must be stored per side and per event. Exact HP constrains a spread to a point; a percentage constrains it to an interval. Losing the distinction silently weakens every constraint built on top of it.
+
+This section defines what must be captured. It does not define how spreads are estimated.
+
+**Addendum, Week 3 Task 10:** the corpus's HP is percentage-only, exhaustively — every `|-damage|`/`|-heal|` figure across all 88,905 battles resolves to a percentage of max HP, zero exceptions. The "exact HP pins the stat outright" case this section anticipates does not occur in this data; only the weaker interval case does. Flagged to the product owner per this section's own rule rather than worked around silently; the decision was to record `hp_expression` as specified (still populated on every HP-bearing observation, never null) rather than narrow scope, since the field is correct — it just never varies in this corpus.
 
 ---
 

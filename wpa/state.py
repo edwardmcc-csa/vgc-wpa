@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, fields, replace
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
@@ -37,6 +38,9 @@ from poke_env.battle import DoubleBattle, Pokemon
 from poke_env.ps_client import AccountConfiguration
 
 from vgc_bench.logs2trajs import LogReader
+
+if TYPE_CHECKING:
+    from wpa.observations import Observation
 
 _BESTOF_LOG_RE = re.compile(
     r"<strong>Game (\d+)</strong> of <a href=\"/game-bestof3-([^\"]+)\""
@@ -137,6 +141,12 @@ class BattleState:
     a whole game - assign_decision_indices computes it; not populated by
     from_battle directly, since a single state has no notion of its
     neighbours."""
+    observations: tuple[Observation, ...] = ()
+    """Spread-revealing events observed at this decision point - damage,
+    move order, faints, recovery, behavioural tells, Tera activation. See
+    docs/DEFINITIONS.md #14. Not populated by from_battle (a live/replay
+    DoubleBattle snapshot has no memory of what led to it) - populated by
+    parse_battle_states from the raw log via wpa.observations."""
 
     @classmethod
     def from_battle(
@@ -196,10 +206,13 @@ class BattleState:
                 else None
             ),
             "decision_index": self.decision_index,
+            "observations": [o.to_dict() for o in self.observations],
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "BattleState":
+        from wpa.observations import Observation
+
         score = d["set_score_entering_game"]
         return cls(
             turn=d["turn"],
@@ -210,6 +223,9 @@ class BattleState:
             game_index=d["game_index"],
             set_score_entering_game=tuple(score) if score is not None else None,
             decision_index=d.get("decision_index", 0),
+            observations=tuple(
+                Observation.from_dict(o) for o in d.get("observations", [])
+            ),
         )
 
 
@@ -340,4 +356,9 @@ def parse_battle_states(
         )
         for battle in player.states
     ]
-    return assign_decision_indices(states)
+    states = assign_decision_indices(states)
+
+    from wpa.observations import attach_observations, extract_observations
+
+    observations = extract_observations(log, states)
+    return attach_observations(states, observations)
