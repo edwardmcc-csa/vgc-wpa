@@ -9,4 +9,5 @@ profile.prof
 battle_logs/
 results*/
 trajs/
+wpa_states/
 debug*.log
