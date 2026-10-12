@@ -14,7 +14,7 @@ Entries here are **specification, not yet tests**. A claim becomes a test when s
 
 *Becomes:* a position with those features, and two follow-up states: after a double knockout, and after a single knockout or a stall. Assert WP(single knockout or stall) > WP(double knockout). A decision-level version (M5) asserts that Decision WPA marks the double knockout as the worse choice.
 
-*Needs:* Tailwind turns remaining, relative speed of the four active and incoming Pokémon, who is held in reserve, damage potential of the reserve. **Not in `BattleState` today** (it carries species, HP fraction, fainted, active, gimmick).
+*Needs:* Tailwind turns remaining (see Week 4 Task 7), relative speed of the four active and incoming Pokémon, who is held in reserve, damage potential of the reserve. **Not in `BattleState` today** (it carries species, HP fraction, fainted, active, gimmick).
 
 *Why it matters:* it is a direct counterexample to "fewer opposing Pokémon is never worse for me", which is why the strict monotonicity test was dropped (Week 4 brief, Task 4).
 

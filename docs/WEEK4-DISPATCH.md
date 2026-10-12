@@ -1,4 +1,4 @@
-# Week 4 — Dispatch Brief (M4 foundations: formats, splits, metrics, v0 baseline)
+# Week 4 — Dispatch Brief (M4 foundations: formats, splits, metrics, v0 baseline, timers)
 
 **Status:** DRAFT for product owner review. Do not hand to the agent until Week 3 is closed out (re-parse signed off, Tasks 8 and 9 committed).
 **For:** Claude Code, or a contract engineer working unsupervised
@@ -79,6 +79,19 @@ Hand-written, no machine learning.
 - [ ] Report Brier and calibration on the validation split, per format
 
 **Do not add state fields.** Speed control and field conditions are not in `BattleState`, and a new field would force a second re-parse. List which of them the existing `observations` could supply without one, and raise any proposal as a question. Any schema change needs the product owner's approval.
+
+## Task 7 — Timers: how long each effect lasts (investigate and design; no re-parse)
+
+Product owner requirement (12 Oct 2026): the state must know how many turns remain on timed effects, because they drive different decisions (`docs/EXPERT-CLAIMS.md` EC-001). That means at least Tailwind, Light Screen, Reflect, Aurora Veil, Trick Room, Encore and Disable, plus weather and terrain, Taunt, Gravity, Wonder Room, Magic Room, Safeguard, Mist, Lucky Chant and delayed effects such as Future Sight and Perish Song. Today `Observation.side_conditions` stores names only, with no start turn or duration, and per-Pokémon effects such as Encore and Disable are not tracked.
+
+Durations are not constants. In the pinned Showdown source (found 12 Oct, **verify**): Tailwind lasts 4 turns, 6 with the Persistent ability; Light Screen 5, or 8 with Light Clay; Trick Room 5, or 7 with Persistent; Encore 3, one longer if the target has already moved that turn; Disable 5, one shorter if the target has not yet moved. The Champions mod overrides Encore's start behaviour.
+
+- [ ] **Generate, do not hand-write,** `docs/DURATIONS.md` from the pinned Showdown data for both format mods (`champions` and `championsregma`): every timed condition, its base duration, and every modifier (ability, item, ordering within the turn). Record the source file and line for each
+- [ ] **Validate against the corpus.** For every start event in the logs that has a matching end event, the observed length matches the table, or the exception is explained (removed early, ended by a switch-out, extended by an item or ability). Report the mismatch rate per condition, per format
+- [ ] **Leakage rule, with a test:** turns remaining at a decision point is computed from the start turn and the table, **never** from the end event, which is the future. End events are used only to validate the table
+- [ ] **List which timers are hidden or random** (for example sleep and confusion lengths) and so cannot be known to the player. They are not features
+- [ ] **Propose a `Timer` record** on `BattleState` (kind, side or target, name, start turn, scheduled end turn, what extended it) for both the live and replay paths, one schema. Check what poke-env exposes on the live path before proposing
+- [ ] **Do not change the schema and do not re-parse.** A schema change costs one more re-parse (about 103 minutes) and should carry every feature the learned model needs. Report; the product owner decides
 
 ## Task 6 — Runbook update
 
