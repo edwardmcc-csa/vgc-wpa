@@ -1,6 +1,6 @@
 # DEFINITIONS
 
-**Status:** approved by the product owner. Revision 6 — adds §14 (spread revelation).
+**Status:** approved by the product owner. Revision 7 — adds §15 (two formats).
 **Applies to:** milestones M4, M4b, M5, M7.
 
 This document is the contract. If code and this document disagree, the code is wrong.
@@ -226,3 +226,20 @@ This section defines what must be captured. It does not define how spreads are e
 ---
 
 *Approved: product owner. Engineering to raise a blocker rather than reinterpret if any clause here proves impractical.*
+
+---
+
+## 15. Two formats (added rev 7)
+
+**Decision (product owner):** Regulation M-A and Regulation M-B are **two formats**, not one format with a missing field. They differ in what a team sheet reveals (nature is shown in every M-B sheet and in none of M-A, `docs/SHEET-FIELDS.md`), and the PO treats the rule sets as distinct.
+
+**Consequences:**
+
+- **Every set belongs to exactly one format.** A set never spans formats. Format is identified from the battle tag (`gen9championsvgc2026regma...` or `...regmb...`).
+- **Models are fitted, calibrated and evaluated per format.** Every metric in §1–§14 is reported per format. A pooled number may be shown as a secondary figure and never as the headline.
+- **Splits (§13) are made inside each format.** The set rule is unchanged; the format is an additional stratum, so each format has its own train, validation and test sets.
+- **Spread inference differs by format.** Nature is an observation in M-B and a hidden quantity in M-A. M4b must not carry a nature assumption from one format into the other.
+- **Data volume is unequal and must be reported.** At the time of this revision the corpus holds 84,738 M-A battles and 4,167 M-B battles (about 5%). Any M-B result must state its sample size alongside it. A model that only works where data is plentiful must say so.
+- **Format stays configuration (§12.5).** Adding a third format is a configuration change, not a code change.
+
+This section does not change §12.2's stale expectation about Terastallisation; `docs/TERA-COVERAGE.md` is the current finding (the format disables it). Correcting §12.2 and §12.3 is a separate edit for the PO to approve.
