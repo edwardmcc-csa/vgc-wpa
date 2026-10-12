@@ -121,7 +121,7 @@ Fork, scraper, parser, adapter into `wpa/state.py`, so we are not coupled to the
 - **v0:** hand-written heuristic baseline (HP fractions, Pokémon remaining, speed control, field).
 - **v1:** gradient-boosted model on parsed states, label = this side won.
 - **Split rule (non-negotiable, `DEFINITIONS` §13):** split by **set**, never by trajectory, game or player; additionally hold out whole team archetypes. Tests: no set ID in more than one split; no exact team pairing in more than one split.
-- **Metric tests (set thresholds in CI, fail on regression):** Brier beats 0.25 and beats v0; calibration by bucket within tolerance; monotonicity (removing an opposing Pokémon never lowers your WP); symmetry (mirrored state returns 0.50); terminal (won battle returns 1.0).
+- **Metric tests (set thresholds in CI, fail on regression):** Brier beats 0.25 and beats v0; calibration by bucket within tolerance; a reported trend of WP against Pokémon remaining, with **no** strict monotonicity law (it is false for real play: a weak Pokémon left alive, or a running Tailwind timer, can make a knockout the worse choice; see `docs/EXPERT-CLAIMS.md`); symmetry (mirrored state returns 0.50); terminal (won battle returns 1.0).
 - Estimate: 3–4 weeks.
 
 ### M4b — Bring-four and spread model — NOT STARTED

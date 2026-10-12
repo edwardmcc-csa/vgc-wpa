@@ -61,7 +61,9 @@ Metrics are tests, with thresholds in CI. Implement them against the baseline in
 
 - [ ] Brier score; coin-flip reference of 0.25
 - [ ] Calibration: bucketed predicted versus observed win rate, with a tolerance, reported with each bucket's sample count
-- [ ] **Monotonicity:** removing an opposing Pokémon never lowers your win probability
+- [ ] **No strict monotonicity test.** "Removing an opposing Pokémon never lowers your win probability" is false for real play: a weak active Pokémon can be worth more to leave alive than the stronger one that replaces it, and a timer such as Tailwind can make a knockout costly. The same holds for your own side (sacrificing a spent Pokémon can raise your odds). Say so in the test module's docstring so the test is not re-added
+- [ ] **Trend, reported not gated:** mean predicted win probability by number of Pokémon remaining on each side, on the validation split, per format, with sample sizes. It should rise as the opposing count falls. This is a sanity trend over many states, never a pass or fail on one state
+- [ ] **Expert-claim cases:** if `docs/EXPERT-CLAIMS.md` has labelled positions, report how the baseline scores each. Report only, do not gate
 - [ ] **Symmetry:** a perfectly mirrored state returns 0.50
 - [ ] **Terminal:** a won state returns 1.0, a lost state 0.0
 - [ ] Every metric is computed per format. Pooled figures are secondary and labelled as pooled
@@ -72,7 +74,8 @@ Hand-written, no machine learning.
 
 - [ ] Win probability from the fields the state already carries (hit-point fractions, Pokémon remaining), following `DEFINITIONS` §1 and §5
 - [ ] It must be `WP_public`: use nothing the player did not yet know. **Check and document what `opp_pokemon` contains** (all six from the sheet, or only the revealed Pokémon) and confirm no unrevealed information leaks in
-- [ ] Tests first: the Task 4 monotonicity, symmetry and terminal tests, written to fail on an empty implementation
+- [ ] Tests first: the Task 4 symmetry and terminal tests, written to fail on an empty implementation
+- [ ] State plainly in the report that this baseline cannot represent timers or speed relationships, so it is expected to get the `docs/EXPERT-CLAIMS.md` cases wrong. That is the evidence for which state features the learned model needs
 - [ ] Report Brier and calibration on the validation split, per format
 
 **Do not add state fields.** Speed control and field conditions are not in `BattleState`, and a new field would force a second re-parse. List which of them the existing `observations` could supply without one, and raise any proposal as a question. Any schema change needs the product owner's approval.
