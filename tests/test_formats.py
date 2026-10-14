@@ -136,3 +136,66 @@ def test_an_unrecognised_file_fails_loudly(tmp_path):
     _write(tmp_path / "gen9championsvgc2026regmc-1-p1.json", [_state()])
     with pytest.raises(UnknownFormatError):
         summarize_directory(tmp_path, num_workers=1)
+
+
+# --- Found on the real corpus (13 Oct re-run of Task 1) ---------------------
+# 11 of 48,347 set ids end in a private-room password, e.g.
+# 'gen9championsvgc2026regmabo3-2604921266-q4mk6d2nr63emwdihwxco5c8fi1lnacpw'.
+# And 1,281 best-of-three sets (1,246 M-A, 35 M-B) live in the *single* log
+# files: their set id carries the single log name. A file's kind is not
+# whether it has a set.
+
+
+@pytest.mark.parametrize(
+    "set_id, expected_format, expected_kind",
+    [
+        (
+            "gen9championsvgc2026regmabo3-2604921266-q4mk6d2nr63emwdihwxco5c8fi1lnacpw",
+            FORMAT_MA,
+            KIND_BO3,
+        ),
+        (
+            "gen9championsvgc2026regma-2605947927-6ce64a9tbyfhi6lmnnt5gpm6hcsj7lspw",
+            FORMAT_MA,
+            KIND_SINGLE,
+        ),
+        ("gen9championsvgc2026regmbbo3-55-abc123pw", FORMAT_MB, KIND_BO3),
+    ],
+)
+def test_set_ids_with_a_private_room_password_still_map_to_a_format(
+    set_id, expected_format, expected_kind
+):
+    assert format_of(set_id) == expected_format
+    assert kind_of(set_id) == expected_kind
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "gen9championsvgc2026regmc-12-abcpw",  # unknown log name, with a password
+        "gen9championsvgc2026regma-12-34-56",  # more than one suffix
+        "gen9championsvgc2026regma-abc",  # id is not a number
+        "gen9championsvgc2026regma-12-",  # empty password
+    ],
+)
+def test_malformed_tags_still_raise_after_allowing_a_password(tag):
+    with pytest.raises(UnknownFormatError):
+        format_of(tag)
+
+
+def test_sets_in_single_log_files_are_counted_as_sets(tmp_path):
+    set_id = "gen9championsvgc2026regma-400"
+    for tag in ("gen9championsvgc2026regma-401", "gen9championsvgc2026regma-402"):
+        for role in ("p1", "p2"):
+            _write(tmp_path / f"{tag}-{role}.json", [_state(set_id), _state(set_id)])
+    # and one true single game with no set at all
+    for role in ("p1", "p2"):
+        _write(tmp_path / f"gen9championsvgc2026regma-500-{role}.json", [_state()])
+
+    summary = summarize_directory(tmp_path, num_workers=1)
+
+    single = summary.counts[(FORMAT_MA, KIND_SINGLE)]
+    assert single.sets == 1
+    assert (single.battles, single.files, single.states) == (3, 6, 10)
+    # states without a set are only an anomaly in a bo3 file, not in a single one
+    assert summary.bo3_states_without_set == 0

@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,11 +44,18 @@ class UnknownFormatError(ValueError):
     """A battle tag does not belong to any configured format."""
 
 
+# '<log name>-<numeric id>', optionally followed by '-<password>'. Set ids of
+# private-room games end in a password (11 of 48,347 in the corpus), e.g.
+# 'gen9championsvgc2026regmabo3-2604921266-q4mk6d2nr63emwdihwxco5c8fi1lnacpw'.
+# Nothing else is accepted, so a malformed tag still raises.
+_TAG_RE = re.compile(r"^(?P<name>[a-z0-9]+)-\d+(?:-[a-z0-9]+)?$")
+
+
 def _lookup(tag: str) -> tuple[str, str]:
-    name, sep, _battle_id = tag.rpartition("-")
-    if not sep or name not in LOG_NAMES:
+    match = _TAG_RE.match(tag)
+    if match is None or match.group("name") not in LOG_NAMES:
         raise UnknownFormatError(f"unrecognised battle tag: {tag!r}")
-    return LOG_NAMES[name]
+    return LOG_NAMES[match.group("name")]
 
 
 def format_of(tag: str) -> str:
@@ -120,11 +128,13 @@ def summarize_directory(directory: Path, num_workers: int = 4) -> FormatSummary:
         tags.setdefault(key, set()).add(tag)
         if kind == KIND_BO3:
             summary.bo3_states_without_set += no_set
-            if set_id is not None:
-                set_ids.setdefault(key, set()).add(set_id)
-                formats = set_member_formats.setdefault(set_id, set())
-                formats.add(format_of(tag))
-                formats.add(format_of(set_id))
+        # A file's kind is not whether it has a set: 1,281 best-of-three sets
+        # live in the single-game log files, so count sets for every kind.
+        if set_id is not None:
+            set_ids.setdefault(key, set()).add(set_id)
+            formats = set_member_formats.setdefault(set_id, set())
+            formats.add(format_of(tag))
+            formats.add(format_of(set_id))
     for key, counts in summary.counts.items():
         counts.battles = len(tags[key])
         counts.sets = len(set_ids.get(key, ()))
