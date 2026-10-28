@@ -265,6 +265,9 @@ whole-log).
 
 ## 7. Decision for the PO
 
+**Decided 27 Oct 2026: option A.** Timers live in a side file keyed by game
+and turn. No schema change and no re-parse. The Week 5 model reads that file.
+
 | Option | Schema | Re-parse | Live path | Notes |
 |---|---|---|---|---|
 | A. Side file (recommended now) | none | none | via the incremental walker | `GameTimers.snapshots` already gives per-turn timers for every game; written as a file keyed by game tag and turn. |
