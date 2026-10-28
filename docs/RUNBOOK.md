@@ -1,7 +1,8 @@
 # Runbook
 
 This is for anyone who needs to start the local battle server, run the log
-parser, or run the tests, and has never touched this repository before. You
+parser, run the tests, split the data, or run the metric report, and has
+never touched this repository before. You
 do not need to know how to write code to follow this - every command is
 meant to be copied and pasted exactly as written, from a terminal opened in
 the repo's top-level folder (the one containing `pyproject.toml`).
@@ -300,6 +301,8 @@ you've already picked into a saved fixture file.
 - `wpa_states/` - the output of the re-parse (Section 9): our own, much
   smaller records, one file per battle per player. Not checked into Git,
   also regenerated.
+- `splits.json` - the output of the splitter (Section 10): which split
+  every game belongs to. Not checked into Git, also regenerated.
 - `tests/` - our own tests (for the code in `wpa/`), including
   `tests/fixtures/battles/` - the 20 saved example battles from Section 7,
   documented in `tests/fixtures/README.md`.
@@ -401,6 +404,243 @@ first. It does not need the local server running.
 
 ---
 
+## 10. Splitting the data into train, validation and test
+
+Before we can say whether any model is good, some games have to be kept
+hidden from it. This step decides, once and for good, which games are used
+for what:
+
+- **train** - what a model learns from (about 80%)
+- **validation** - what we measure and tune against (about 10%)
+- **test** - the final exam, looked at as rarely as possible (about 10%)
+
+The important word is *leak-proof*. If one half of a best-of-three set were
+in train and the other half in test, the model would be tested on a match it
+has partly seen, and every score would look better than it really is. So the
+splitter keeps things together: both players' views of the same game, every
+game of the same best-of-three set, and games that share the same pair of
+teams all land in the same split. It also does this separately for each
+format (Regulation M-A and Regulation M-B are never mixed - see
+`docs/DEFINITIONS.md` section 15).
+
+It reads `wpa_states/` from Section 9, so do that first. It does not need
+the local server.
+
+1. **Run the tests first.** From the repo root:
+   ```
+   python -m pytest tests\test_formats.py tests\test_splits.py tests\test_archetypes.py
+   ```
+   The last line should say `84 passed`, with nothing failed or skipped. If
+   anything fails, stop and write down the exact error message.
+
+2. **Run the splitter:**
+   ```
+   python -m wpa.splits --out splits.json
+   ```
+   It reads about 178,000 files, so expect several minutes, possibly
+   longer on a slow disk. Leave the window open. If the computer struggles,
+   add `--num_workers 2`.
+
+   On the real data the first run printed this:
+   ```
+   === wpa splits ===
+   proportions: train 0.80, validation 0.10, test 0.10 (salt wpa-splits-v1)
+   dropped: 6 files, 71 states (best-of-three files with no set information)
+   regma:
+     train       40502 units (79.8%),  67508 games, 135016 files,  1396571 states
+     validation   5167 units (10.2%),   8694 games,  17388 files,   178823 states
+     test         5108 units (10.1%),   8532 games,  17064 files,   175775 states
+     independent groups: 48022 (of 50777 units); largest group: 28 units
+   regmb:
+     train        1824 units (80.7%),   3366 games,   6732 files,    69761 states
+     validation    199 units ( 8.8%),    366 games,    732 files,     7799 states
+     test          237 units (10.5%),    435 games,    870 files,     9254 states
+     independent groups: 2218 (of 2260 units); largest group: 6 units
+   wrote splits.json
+   ```
+   If your numbers differ, the data in `wpa_states/` is different from the
+   data this runbook was written against. That is not necessarily a problem,
+   but note it in your report.
+
+3. **How to read it.**
+   - A **unit** is the thing that is never split: one best-of-three set
+     counts as one unit, and a single game counts as one unit. A game is one
+     battle; it has two **files** (one per player's point of view); a
+     **state** is one decision point within it.
+   - The percentages are close to 80 / 10 / 10 but not exact, and the
+     smaller format wanders more (Regulation M-B validation is 8.8%). That
+     is expected: whole groups of linked games move together, so the
+     splitter cannot slice the data to the exact percent. Do not try to
+     "fix" it.
+   - `dropped: 6 files, 71 states` is the best-of-5 match from Section 9. It
+     is outside the format, so it is left out of every split. Any other
+     number here means something changed - stop and report it.
+   - **Independent groups** is how many separate clumps of linked games
+     there are. Many small groups is good; one giant group would make the
+     split impossible.
+
+4. **What `splits.json` is.** It lists which split every game belongs to,
+   and it is what the metric report (Section 11) reads. Running the
+   splitter again on the same data gives the identical answer every time,
+   so it is safe to delete and regenerate. Do **not** commit it to Git, and
+   do **not** put it inside `wpa_states/` (see "If something goes wrong").
+   If `wpa_states/` changes, for example after a new re-parse, run the
+   splitter again and use the new file - never mix an old `splits.json`
+   with new data.
+
+5. **Leave the settings alone.** `--salt`, `--train`, `--validation` and
+   `--test` change who lands in which split, which makes every earlier
+   number impossible to compare with later ones. Only change them if the
+   project has agreed to.
+
+There is also an experimental `--archetype_holdout 0.1` option that sets
+aside whole kinds of team (instead of random games) as the test set, to
+check how a model copes with teams it has never seen. That definition is a
+*proposal* awaiting sign-off - see `docs/WEEK4-DISPATCH.md` - so do not use
+numbers from it for anything official.
+
+---
+
+## 11. Running the metric report (the v0 baseline)
+
+This is the project's yardstick. A deliberately simple, hand-written
+predictor - no machine learning - guesses each side's chance of winning at
+every decision point, and the report grades those guesses against what
+actually happened. Any later, smarter model has to beat these numbers to
+earn its place. The report is always **per format**; the two formats are
+never averaged into one headline number.
+
+The predictor is simple: count each side's remaining health (plus one point
+for every Pokémon it brought that we haven't seen yet) and turn the
+difference into a percentage. It is known to ignore many things - timers
+such as Tailwind and Trick Room, speed, and the team sheet - and it prints a
+list of those at the top of the report.
+
+It needs `wpa_states/` (Section 9) and `splits.json` (Section 10). It does
+not need the local server.
+
+1. **Run the tests first:**
+   ```
+   python -m pytest tests\test_metrics.py tests\test_baseline.py
+   ```
+   The last line should say `75 passed`. (On a computer without the
+   `poke_env` package two tests are skipped, giving `73 passed, 2 skipped`;
+   that is fine too.) Anything "failed" means stop and report it.
+
+2. **Run the report:**
+   ```
+   python -m wpa.baseline --splits splits.json
+   ```
+   It reads the validation games only (about 18,000 files), so it is
+   quicker than the splitter - expect several minutes. If you leave out
+   `--splits splits.json` it works the splits out for itself first, which
+   adds the splitter's whole running time, so use the file.
+
+   The report starts with the baseline's list of known blind spots, then one
+   block per format. Here is the Regulation M-A part from the first run
+   (the trend table is shortened):
+   ```
+   regma: 161435 undecided states in 8694 games (17388 decided states set aside)
+     Brier 0.2198 (coin flip 0.25; skill +0.121); including decided states 0.1984
+     0.0-0.1  n=592      predicted 0.078  observed 0.064  gap 0.014
+     0.1-0.2  n=5360     predicted 0.160  observed 0.132  gap 0.028
+     0.2-0.3  n=13107    predicted 0.257  observed 0.257  gap 0.000
+     0.3-0.4  n=17276    predicted 0.352  observed 0.372  gap 0.020
+     0.4-0.5  n=20228    predicted 0.450  observed 0.486  gap 0.035
+     0.5-0.6  n=71258    predicted 0.514  observed 0.519  gap 0.005
+     0.6-0.7  n=16312    predicted 0.647  observed 0.709  gap 0.061  <-- outside tolerance
+     0.7-0.8  n=11461    predicted 0.743  observed 0.817  gap 0.074  <-- outside tolerance
+     0.8-0.9  n=5136     predicted 0.840  observed 0.921  gap 0.080  <-- outside tolerance
+     0.9-1.0  n=705      predicted 0.924  observed 0.974  gap 0.051  <-- outside tolerance
+     calibration bins outside tolerance: 4
+     trend (reported, not a gate): mean predicted WP by Pokemon remaining ...
+       ...
+     trend: WP rose in 100% of 12 'opponent loses one Pokemon' steps
+   ```
+
+3. **How to read it.**
+   - **Brier** is the average squared miss between the predicted chance and
+     what happened (1 for a win, 0 for a loss). Lower is better. A predictor
+     that always says "50%" scores 0.25, which is printed as the coin flip.
+     **Skill** is how far below that coin flip we are: 0 means no better
+     than guessing, higher is better. Here +0.121 means "somewhat better
+     than a coin flip", not "good".
+   - **Undecided vs decided states.** Once a game is already over (nobody
+     has a Pokémon left on one side), predicting the winner is trivial. The
+     headline Brier leaves those states out so the baseline does not get
+     credit for easy questions; the number "including decided states" is
+     there for completeness only.
+   - **The calibration table** asks: when the predictor said "60 to 70%",
+     did that side really win about 65% of the time? Each row is one band of
+     predictions, with how many states fell in it (`n`), the average
+     prediction, the real win rate (`observed`) and the difference (`gap`).
+     A row is flagged `<-- outside tolerance` when the gap is bigger than
+     the tolerance. The tolerance of 0.05 is a placeholder to show how the
+     flag works; the project has not agreed a real one. Bands with fewer
+     than 100 states say `(too few to judge)` and are never flagged.
+   - **The pattern to notice:** in every flagged row the observed rate is
+     higher than predicted, so the baseline is under-confident whenever a
+     side is ahead.
+   - `n` counts states, and states from the same game are not independent,
+     so the real amount of evidence is closer to the number of games.
+   - **`SMALL SAMPLE`** appears when a format has fewer than 500 games in
+     the split (Regulation M-B does). Read every number for that format with
+     that in mind.
+   - **Trend** checks that the prediction goes up when the opponent loses a
+     Pokémon. It is reported, not pass/fail.
+   - The **POOLED** line at the very end is a secondary check only. It is
+     never a headline.
+
+4. **Numbers to expect.** On the first run, with the default settings and the
+   splits from Section 10:
+
+   | Format | States scored | Games | Brier | Skill |
+   |---|---|---|---|---|
+   | Regulation M-A | 161,435 | 8,694 | 0.2198 | +0.121 |
+   | Regulation M-B | 7,067 | 366 | 0.2143 | +0.143 |
+
+   The baseline is hand-written and deterministic, so with the same data and
+   the same `splits.json` you should get these exact figures. If you do not,
+   stop and report it rather than re-running.
+
+5. **Leave the other options alone.** `--split test` scores the final exam;
+   look at it only when asked to, never to tune anything. `--k`,
+   `--tolerance` and `--min_count` change the baseline's scale and the report's
+   thresholds - the defaults are the agreed ones.
+
+---
+
+## 12. Checking your changes before you push
+
+Every push to GitHub runs three style and type checks (the "lint" job in
+the Actions tab), and the push shows a red X if any of them fails. You can
+run the same checks yourself first. They need the dev install from Section
+1 (`pip install -e ".[dev]"`), which installs the exact versions GitHub
+uses. Use the `python -m` form so it works even if the plain commands are
+not found on your PATH:
+
+```
+python -m ruff check .
+python -m ruff format --check .
+python -m pyright
+```
+
+- `ruff check` looks for mistakes such as unused imports and lines over 88
+  characters. A healthy run ends `All checks passed!`.
+- `ruff format --check` checks the code layout. A healthy run says every
+  file is "already formatted". If it lists files it "would reformat", run
+  `python -m ruff format .`, then run the tests again, then commit the
+  result.
+- `pyright` is the type checker. The first run downloads a component and can
+  take a minute. Errors that only say an import of `poke_env` or
+  `imitation` "could not be resolved" mean the packages are not installed in
+  your environment - they are not a problem in the code. Anything else is a
+  real error.
+
+Then run `python -m pytest` (Section 4) as usual.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
@@ -442,6 +682,39 @@ practice; if it does, something changed.
 Don't try to work around it by re-running or changing test files. Write
 down the exact error message and stop - see
 `docs/WEEK1-DISPATCH.md`'s rules of engagement for what to do next.
+
+**The splitter or the report (Sections 10-11) stops with `not a state file:`
+and a file name.**
+Something that is not a battle record is sitting inside `wpa_states/` - most
+often `splits.json` saved there by mistake. Both tools refuse to guess, and
+stop. Move the file out (`splits.json` belongs in the repo's top-level
+folder) and run the command again. Do not delete anything else in
+`wpa_states/`.
+
+**The splitter stops with `UnknownFormatError: unrecognised battle tag`.**
+A file in `wpa_states/` belongs to a battle format the project has not been
+told about, and it will not guess which one. Stop and report the exact tag
+in the message; adding a format is a small code change, not something to
+work around.
+
+**The splitter stops with `CannotSplitError: cannot give every format its
+own train, validation and test sets`.**
+One format has too few independent games to fill all three splits. This is
+the splitter refusing to produce a split that would be unreliable. Stop and
+report the whole message.
+
+**The report (Section 11) prints different numbers from the ones listed
+there.**
+With the same data and the same `splits.json` the numbers should match
+exactly. Check that `wpa_states/` is the full re-parse (Section 9) and that
+`splits.json` was made from it, then stop and report both sets of numbers
+rather than re-running.
+
+**`ruff` or `pyright` "is not recognized" (Section 12).**
+Use `python -m ruff ...` and `python -m pyright` instead. If that says "No
+module named ruff", the dev install has not been done on this computer: run
+`pip install -e ".[dev]"` from the repo root (Section 1, step 5) and try
+again.
 
 **Nothing here covers the problem.**
 Same answer: stop and ask rather than guessing, especially for anything
