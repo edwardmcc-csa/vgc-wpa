@@ -171,7 +171,8 @@ def test_a_pairing_is_order_independent_even_with_one_perspective_on_disk():
     for trial in range(50):
         s1, s2 = 700000 + 10 * trial + 1, 700000 + 10 * trial + 2
         files = [
-            f for f in bo3(MA_BO3, s1, (1, 2), a, b) + bo3(MA_BO3, s2, (1, 2), b, a)
+            f
+            for f in bo3(MA_BO3, s1, (1, 2), a, b) + bo3(MA_BO3, s2, (1, 2), b, a)
             if f.role == "p1"
         ]
         result = assign_splits(files + corpus(60, 60, 0, 0), salt=f"o{trial}")
@@ -219,9 +220,21 @@ def test_the_split_does_not_depend_on_the_interpreter_hash_seed(tmp_path):
         out = tmp_path / f"manifest-{seed}.json"
         env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONDONTWRITEBYTECODE": "1"}
         subprocess.run(
-            [sys.executable, "-m", "wpa.splits", "--dir", str(data), "--out", str(out),
-             "--num_workers", "1"],
-            cwd=REPO_ROOT, env=env, check=True, capture_output=True,
+            [
+                sys.executable,
+                "-m",
+                "wpa.splits",
+                "--dir",
+                str(data),
+                "--out",
+                str(out),
+                "--num_workers",
+                "1",
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            check=True,
+            capture_output=True,
         )
         outputs.append(json.loads(out.read_text(encoding="utf-8")))
     assert outputs[0]["games"] == outputs[1]["games"]
@@ -237,9 +250,7 @@ def test_each_format_has_its_own_non_empty_train_validation_and_test():
     files = corpus()
     result = assign_splits(files)
     for fmt in (FORMAT_MA, FORMAT_MB):
-        used = {
-            result.assignments[key(f)] for f in files if format_of(f.tag) == fmt
-        }
+        used = {result.assignments[key(f)] for f in files if format_of(f.tag) == fmt}
         assert used == set(SPLITS), fmt
     counts = result.counts
     for fmt in (FORMAT_MA, FORMAT_MB):
@@ -310,11 +321,11 @@ def test_an_unrecognised_tag_raises_and_is_never_defaulted():
 def test_single_games_are_independent_units_and_sets_stay_whole():
     files = corpus(0, 600, 0, 0)
     for i in range(100):
-        files += bo3(MA_BO3, 30000 + i, (1, 2, 3), team(5000 + 2 * i), team(5001 + 2 * i))
+        files += bo3(
+            MA_BO3, 30000 + i, (1, 2, 3), team(5000 + 2 * i), team(5001 + 2 * i)
+        )
     result = assign_splits(files)
-    single_splits = {
-        result.assignments[key(f)] for f in files if f.set_id is None
-    }
+    single_splits = {result.assignments[key(f)] for f in files if f.set_id is None}
     assert single_splits == set(SPLITS)  # singles are not tied to one another
     for i in range(100):
         sid = f"{MA_BO3}-{30000 + i}"
@@ -327,7 +338,11 @@ def test_a_set_that_lives_in_the_single_log_files_is_still_a_set():
     # set; the unit is the set id when there is one, the battle tag otherwise.
     sets = []
     for i in range(150):
-        sets.append(bo3(MA_SINGLE, 800000 + i, (1, 2, 3), team(7000 + 2 * i), team(7001 + 2 * i)))
+        sets.append(
+            bo3(
+                MA_SINGLE, 800000 + i, (1, 2, 3), team(7000 + 2 * i), team(7001 + 2 * i)
+            )
+        )
     files = corpus(60, 60, 60, 60) + [f for group in sets for f in group]
     result = assign_splits(files)
     for group in sets:
@@ -341,8 +356,18 @@ def test_set_ids_with_a_private_room_password_are_ordinary_sets():
     for trial in range(40):
         sid = f"{MA_BO3}-{600000 + trial}-q4mk6d2nr63emwdihwxco5c8fi1lnacpw"
         games.append(
-            _game(f"{MA_BO3}-{600000 + trial}1", sid, team(9000 + 2 * trial), team(9001 + 2 * trial))
-            + _game(f"{MA_BO3}-{600000 + trial}2", sid, team(9000 + 2 * trial), team(9001 + 2 * trial))
+            _game(
+                f"{MA_BO3}-{600000 + trial}1",
+                sid,
+                team(9000 + 2 * trial),
+                team(9001 + 2 * trial),
+            )
+            + _game(
+                f"{MA_BO3}-{600000 + trial}2",
+                sid,
+                team(9000 + 2 * trial),
+                team(9001 + 2 * trial),
+            )
         )
     result = assign_splits(corpus(60, 60, 60, 60) + [f for g in games for f in g])
     assert pw_set.endswith("pw")
@@ -381,7 +406,9 @@ def test_single_games_have_no_set_id_by_design_and_are_not_dropped():
 
 
 def test_a_bo3_file_with_only_some_states_missing_a_set_id_is_kept_and_counted():
-    mixed = _game(f"{MA_BO3}-77", f"{MA_BO3}-7", team(1), team(2), n_states=10, no_set=3)
+    mixed = _game(
+        f"{MA_BO3}-77", f"{MA_BO3}-7", team(1), team(2), n_states=10, no_set=3
+    )
     result = assign_splits(corpus(100, 100, 30, 30) + mixed)
     assert all(key(f) in result.assignments for f in mixed)
     assert result.dropped_files == []
@@ -447,8 +474,13 @@ def test_changing_the_proportions_changes_the_split():
 
 def _pokemon(species):
     return [
-        {"species": s, "hp_fraction": 1.0, "fainted": False, "active": False,
-         "gimmick": None}
+        {
+            "species": s,
+            "hp_fraction": 1.0,
+            "fainted": False,
+            "active": False,
+            "gimmick": None,
+        }
         for s in species
     ]
 

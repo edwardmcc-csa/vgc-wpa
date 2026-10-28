@@ -52,7 +52,6 @@ from wpa.metrics import (
     terminal_failures,
 )
 
-
 # --------------------------------------------------------------------------
 # Builders
 # --------------------------------------------------------------------------
@@ -154,7 +153,9 @@ def test_calibration_bins_cover_zero_to_one_and_count_every_state():
 
 
 def test_calibration_reports_predicted_and_observed_per_bin_with_counts():
-    table = calibration_table([0.62, 0.68, 0.64, 0.66], [True, True, False, True], n_bins=10)
+    table = calibration_table(
+        [0.62, 0.68, 0.64, 0.66], [True, True, False, True], n_bins=10
+    )
     b = table[6]
     assert b.n == 4
     assert b.mean_predicted == pytest.approx(0.65)
@@ -176,10 +177,14 @@ def _sample(n, seed, bias=0.0):
 
 def test_a_calibrated_predictor_passes_and_a_miscalibrated_one_fails():
     preds, labels = _sample(100_000, seed=2)
-    ok = calibration_failures(calibration_table(preds, labels), tolerance=0.03, min_count=200)
+    ok = calibration_failures(
+        calibration_table(preds, labels), tolerance=0.03, min_count=200
+    )
     assert ok == []
     preds, labels = _sample(100_000, seed=3, bias=0.2)
-    bad = calibration_failures(calibration_table(preds, labels), tolerance=0.03, min_count=200)
+    bad = calibration_failures(
+        calibration_table(preds, labels), tolerance=0.03, min_count=200
+    )
     assert len(bad) >= 5
     assert all(b.gap is not None and abs(b.gap) > 0.03 for b in bad)
 
@@ -198,7 +203,9 @@ def test_calibration_needs_a_sensible_bin_count(n_bins):
         calibration_table([0.5], [True], n_bins=n_bins)
 
 
-@pytest.mark.parametrize("tolerance, min_count", [(-0.1, 10), (1.5, 10), (0.1, 0), (0.1, -5)])
+@pytest.mark.parametrize(
+    "tolerance, min_count", [(-0.1, 10), (1.5, 10), (0.1, 0), (0.1, -5)]
+)
 def test_calibration_failure_thresholds_are_validated(tolerance, min_count):
     table = calibration_table([0.5], [True])
     with pytest.raises(ValueError):
@@ -226,7 +233,10 @@ def test_a_perfectly_mirrored_state_has_equal_sides_and_is_undecided():
     p = perfectly_mirrored(s)
     assert p.our_pokemon == p.opp_pokemon == s.our_pokemon
     assert p.outcome is None
-    assert p.set_score_entering_game is None or p.set_score_entering_game[0] == p.set_score_entering_game[1]
+    assert (
+        p.set_score_entering_game is None
+        or p.set_score_entering_game[0] == p.set_score_entering_game[1]
+    )
 
 
 STATES = [
@@ -261,7 +271,10 @@ def test_terminal_check_requires_exactly_one_for_won_and_zero_for_lost():
     live = state(side(1.0), side(1.0))
     assert terminal_failures(good_predictor, [won, lost, live]) == []
     soft = lambda s: 0.99 if s.outcome else (0.01 if s.outcome is False else 0.5)  # noqa: E731
-    assert terminal_failures(soft, [won, lost, live]) == [won, lost]  # the live one is ignored
+    assert terminal_failures(soft, [won, lost, live]) == [
+        won,
+        lost,
+    ]  # the live one is ignored
     assert terminal_failures(lambda s: 0.5, [live]) == []
 
 
@@ -277,11 +290,20 @@ def test_bring_size_is_four_and_remaining_counts_from_it_not_from_six():
     assert pokemon_remaining(side(1.0, 0.5, 0.0, 0.0, fainted=0)) == 4
     assert pokemon_remaining(side(1.0, 0.0, 0.0, 0.0, fainted=2)) == 2
     assert pokemon_remaining(side(fainted=4)) == 0
-    assert pokemon_remaining(tuple(mon(f"x{i}", 0.0, fainted=True) for i in range(6))) == 0  # clamped
+    assert (
+        pokemon_remaining(tuple(mon(f"x{i}", 0.0, fainted=True) for i in range(6))) == 0
+    )  # clamped
 
 
 def _scored(fmt, our, opp, pred, label=True, game="g"):
-    return Scored(format=fmt, game=game, pred=pred, label=label, our_remaining=our, opp_remaining=opp)
+    return Scored(
+        format=fmt,
+        game=game,
+        pred=pred,
+        label=label,
+        our_remaining=our,
+        opp_remaining=opp,
+    )
 
 
 def test_trend_table_counts_and_averages_each_cell_per_format():
@@ -305,7 +327,11 @@ def test_trend_rising_fraction_is_one_when_wp_rises_as_the_opponent_loses_pokemo
         rows += [_scored(FORMAT_MA, 4, opp, 0.4 + 0.1 * (4 - opp))] * 50
     t = remaining_trend(rows, min_count=30)[FORMAT_MA]
     assert t.rising_fraction == 1.0
-    falling = [_scored(FORMAT_MA, 4, opp, 0.4 - 0.1 * (4 - opp)) for opp in (4, 3, 2, 1) for _ in range(50)]
+    falling = [
+        _scored(FORMAT_MA, 4, opp, 0.4 - 0.1 * (4 - opp))
+        for opp in (4, 3, 2, 1)
+        for _ in range(50)
+    ]
     assert remaining_trend(falling, min_count=30)[FORMAT_MA].rising_fraction == 0.0
 
 
@@ -321,7 +347,11 @@ def test_trend_ignores_cells_below_the_minimum_count_and_is_never_a_gate():
     assert t.rising_fraction is None  # only one cell is big enough: no steps to judge
     assert (4, 3) in t.cells  # still reported, with its count
     # a perverse trend is reported, not raised
-    perverse = [_scored(FORMAT_MA, 4, o, 0.9 - 0.2 * (4 - o)) for o in (4, 3, 2) for _ in range(40)]
+    perverse = [
+        _scored(FORMAT_MA, 4, o, 0.9 - 0.2 * (4 - o))
+        for o in (4, 3, 2)
+        for _ in range(40)
+    ]
     remaining_trend(perverse, min_count=30)
 
 
@@ -336,7 +366,14 @@ def _scored_set(fmt, n, seed, bias=0.0, games=20):
     for i in range(n):
         p = rng.random()
         out.append(
-            Scored(fmt, f"{fmt}-{i % games}", p, rng.random() < min(1, max(0, p + bias)), 4, 4)
+            Scored(
+                fmt,
+                f"{fmt}-{i % games}",
+                p,
+                rng.random() < min(1, max(0, p + bias)),
+                4,
+                4,
+            )
         )
     return out
 
@@ -353,7 +390,9 @@ def test_evaluate_scores_each_format_from_only_its_own_states():
         brier_score([r.pred for r in mb], [r.label for r in mb])
     )
     assert report.per_format[FORMAT_MA].calibration_failures == []
-    assert report.per_format[FORMAT_MB].calibration_failures  # M-B is miscalibrated here
+    assert report.per_format[
+        FORMAT_MB
+    ].calibration_failures  # M-B is miscalibrated here
     assert report.per_format[FORMAT_MA].n_states == 6000
     assert report.per_format[FORMAT_MA].n_games == 20
 
@@ -431,7 +470,13 @@ def test_the_report_says_plainly_when_there_are_no_labelled_positions():
 
 
 def _pk(species, hp=1.0, fainted=False, active=False):
-    return {"species": species, "hp_fraction": hp, "fainted": fainted, "active": active, "gimmick": None}
+    return {
+        "species": species,
+        "hp_fraction": hp,
+        "fainted": fainted,
+        "active": active,
+        "gimmick": None,
+    }
 
 
 def _state_dict(turn, outcome, set_id=None):
@@ -469,7 +514,9 @@ def test_the_light_view_matches_the_real_battlestate_schema():
 
     from wpa.state import BattleState, PokemonState
 
-    assert {f.name for f in fields(PokemonView)} == {f.name for f in fields(PokemonState)}
+    assert {f.name for f in fields(PokemonView)} == {
+        f.name for f in fields(PokemonState)
+    }
     needed = {f.name for f in fields(StateView)}
     assert needed <= {f.name for f in fields(BattleState)}
 
@@ -491,9 +538,16 @@ def test_load_split_yields_the_chosen_split_and_format_with_the_games_label(tmp_
 
 def test_every_state_of_a_game_gets_the_games_final_outcome_as_its_label(tmp_path):
     _write(tmp_path, f"{MA}-1", "p1", [None, None, None, True])
-    rows = list(load_split(tmp_path, {f"{MA}-1": "test"}, "test", FORMAT_MA, LoadStats()))
+    rows = list(
+        load_split(tmp_path, {f"{MA}-1": "test"}, "test", FORMAT_MA, LoadStats())
+    )
     assert [label for *_x, label in rows] == [True] * 4
-    assert [s.outcome for _f, _g, s, _l in rows] == [None, None, None, True]  # states keep theirs
+    assert [s.outcome for _f, _g, s, _l in rows] == [
+        None,
+        None,
+        None,
+        True,
+    ]  # states keep theirs
 
 
 def test_incomplete_games_are_dropped_and_counted_not_scored(tmp_path):
@@ -522,7 +576,9 @@ def test_load_split_rejects_an_unknown_split_name(tmp_path):
 def test_load_split_streams_one_file_at_a_time(tmp_path):
     _write(tmp_path, f"{MA}-1", "p1", [None, True])
     _write(tmp_path, f"{MA}-2", "p1", [None, True])
-    gen = load_split(tmp_path, {f"{MA}-1": "test", f"{MA}-2": "test"}, "test", FORMAT_MA, LoadStats())
+    gen = load_split(
+        tmp_path, {f"{MA}-1": "test", f"{MA}-2": "test"}, "test", FORMAT_MA, LoadStats()
+    )
     next(gen)  # a generator, not a list: nothing else has been read into memory yet
     assert hasattr(gen, "__next__")
 
@@ -539,7 +595,15 @@ def _mixed_rows(fmt=FORMAT_MA, n_open=100, n_decided=50):
         Scored(fmt, f"{fmt}-{i % 10}", 0.5, i % 2 == 0, 4, 4) for i in range(n_open)
     ]
     rows += [
-        Scored(fmt, f"{fmt}-{i % 10}", 1.0 if i % 2 == 0 else 0.0, i % 2 == 0, 2, 0, decided=True)
+        Scored(
+            fmt,
+            f"{fmt}-{i % 10}",
+            1.0 if i % 2 == 0 else 0.0,
+            i % 2 == 0,
+            2,
+            0,
+            decided=True,
+        )
         for i in range(n_decided)
     ]
     return rows
@@ -550,7 +614,11 @@ def test_scored_marks_decided_states_and_defaults_to_undecided():
     s = state(side(1.0), side(1.0), outcome=True)
     row = list(score_states(lambda x: 1.0, [(FORMAT_MA, "g", s, True)]))[0]
     assert row.decided is True
-    row = list(score_states(lambda x: 0.5, [(FORMAT_MA, "g", state(side(1.0), side(1.0)), True)]))[0]
+    row = list(
+        score_states(
+            lambda x: 0.5, [(FORMAT_MA, "g", state(side(1.0), side(1.0)), True)]
+        )
+    )[0]
     assert row.decided is False
 
 

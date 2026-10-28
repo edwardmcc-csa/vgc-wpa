@@ -141,7 +141,9 @@ class SplitResult:
             "group_stats": {f: vars(g) for f, g in self.group_stats.items()},
             "archetype_holdout": self.archetype_holdout,
             "min_shared": self.min_shared,
-            "archetype_stats": {f: a.summary() for f, a in self.archetype_stats.items()},
+            "archetype_stats": {
+                f: a.summary() for f, a in self.archetype_stats.items()
+            },
             "held_out_archetypes": {
                 f: sorted(ids) for f, ids in self.held_out_archetypes.items()
             },
@@ -254,6 +256,7 @@ def assign_splits(
     props = _validate_proportions(
         DEFAULT_PROPORTIONS if proportions is None else proportions
     )
+    remainder_props: dict[str, float] = {}
     if archetype_holdout is not None:
         if (
             isinstance(archetype_holdout, bool)
@@ -452,7 +455,7 @@ def split_directory(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--dir", type=Path, default=Path("wpa_states"))
     parser.add_argument("--num_workers", type=int, default=4)
     for s in SPLITS:

@@ -46,7 +46,6 @@ on the validation split.
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import math
 from pathlib import Path
@@ -64,8 +63,8 @@ from wpa.metrics import (
 BASELINE_K = 1.0
 
 LIMITATIONS = (
-    "It cannot represent timers: Tailwind, Trick Room, screens, weather or terrain turns "
-    "left, Encore, Disable, sleep or freeze counters.",
+    "It cannot represent timers: Tailwind, Trick Room, screens, weather or terrain "
+    "turns left, Encore, Disable, sleep or freeze counters.",
     "It cannot represent speed relationships, so it cannot tell a faster pair from a "
     "slower one.",
     "It knows nothing about the open team sheet: species, moves, items and abilities "
@@ -78,7 +77,7 @@ LIMITATIONS = (
 
 
 def strength(side) -> float:
-    """Revealed living Pokemon's hit points, plus 1.0 per brought Pokemon not yet seen."""
+    """Revealed living Pokemon's hit points, plus 1.0 per unseen brought Pokemon."""
     seen_alive = [p for p in side if not p.fainted and (p.active or p.hp_fraction > 0)]
     unseen_alive = max(0, pokemon_remaining(side) - len(seen_alive))
     return sum(p.hp_fraction for p in seen_alive) + float(unseen_alive)
@@ -93,7 +92,12 @@ def _sigmoid(x: float) -> float:
 
 def make_predictor(k: float):
     """The baseline with scale k (win-probability steepness per Pokemon of lead)."""
-    if isinstance(k, bool) or not isinstance(k, (int, float)) or not math.isfinite(k) or k <= 0:
+    if (
+        isinstance(k, bool)
+        or not isinstance(k, (int, float))
+        or not math.isfinite(k)
+        or k <= 0
+    ):
         raise ValueError(f"the scale must be a positive number, got {k!r}")
 
     def predict(state) -> float:
@@ -123,9 +127,13 @@ def report_split(
     def rows():
         for fmt in formats:
             stats = loads[fmt] = LoadStats()
-            yield from score_states(predictor, load_split(directory, games, split, fmt, stats))
+            yield from score_states(
+                predictor, load_split(directory, games, split, fmt, stats)
+            )
 
-    report = evaluate(rows(), claims=evaluate_kwargs.pop("claims", []), **evaluate_kwargs)
+    report = evaluate(
+        rows(), claims=evaluate_kwargs.pop("claims", []), **evaluate_kwargs
+    )
     return report, {f: s for f, s in loads.items() if s.files or s.incomplete_files}
 
 
@@ -135,7 +143,8 @@ def main() -> None:
     parser.add_argument(
         "--splits",
         type=Path,
-        help="manifest written by `python -m wpa.splits --out FILE` (computed if omitted)",
+        help="manifest written by `python -m wpa.splits --out FILE` "
+        "(computed if omitted)",
     )
     parser.add_argument("--split", default="validation")
     parser.add_argument("--k", type=float, default=BASELINE_K)
@@ -149,7 +158,9 @@ def main() -> None:
     else:
         from wpa.splits import split_directory
 
-        games = split_directory(args.dir, num_workers=args.num_workers).to_dict()["games"]
+        games = split_directory(args.dir, num_workers=args.num_workers).to_dict()[
+            "games"
+        ]
 
     print("=== wpa v0 baseline ===")
     print(
@@ -170,7 +181,8 @@ def main() -> None:
     for fmt, s in sorted(loads.items()):
         print(
             f"{fmt}: read {s.games} games, {s.files} files, {s.states} states; "
-            f"incomplete games dropped: {s.incomplete_files} files, {s.incomplete_states} states"
+            f"incomplete games dropped: {s.incomplete_files} files, "
+            f"{s.incomplete_states} states"
         )
     print()
     print(report.describe())

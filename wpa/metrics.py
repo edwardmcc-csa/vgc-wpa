@@ -93,7 +93,7 @@ def state_from_dict(d: dict) -> StateView:
     )
 
 
-Predictor = Callable[[object], float]
+Predictor = Callable[[StateView], float]
 
 
 # --------------------------------------------------------------------------
@@ -102,7 +102,12 @@ Predictor = Callable[[object], float]
 
 
 def _check_pred(p) -> float:
-    if isinstance(p, bool) or not isinstance(p, (int, float)) or math.isnan(p) or not 0.0 <= p <= 1.0:
+    if (
+        isinstance(p, bool)
+        or not isinstance(p, (int, float))
+        or math.isnan(p)
+        or not 0.0 <= p <= 1.0
+    ):
         raise ValueError(f"a prediction must be a number in [0, 1], got {p!r}")
     return float(p)
 
@@ -120,10 +125,16 @@ def _check_bins(n_bins) -> int:
 
 
 def _check_thresholds(tolerance, min_count) -> None:
-    if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or not 0 <= tolerance <= 1:
+    if (
+        isinstance(tolerance, bool)
+        or not isinstance(tolerance, (int, float))
+        or not 0 <= tolerance <= 1
+    ):
         raise ValueError(f"tolerance must be in [0, 1], got {tolerance!r}")
     if isinstance(min_count, bool) or not isinstance(min_count, int) or min_count < 1:
-        raise ValueError(f"min_count must be a whole number of at least 1, got {min_count!r}")
+        raise ValueError(
+            f"min_count must be a whole number of at least 1, got {min_count!r}"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -167,14 +178,14 @@ class CalibrationBin:
     @property
     def gap(self) -> float | None:
         """|predicted - observed|, or None for an empty bin."""
-        if self.n == 0:
+        if self.mean_predicted is None or self.observed_rate is None:
             return None
         return abs(self.mean_predicted - self.observed_rate)
 
     @property
     def signed_gap(self) -> float | None:
         """predicted - observed: positive means over-confident in winning."""
-        if self.n == 0:
+        if self.mean_predicted is None or self.observed_rate is None:
             return None
         return self.mean_predicted - self.observed_rate
 
@@ -225,7 +236,9 @@ def calibration_failures(
     than `min_count` states are reported in the table but never fail: a bin of
     ten states says nothing about calibration."""
     _check_thresholds(tolerance, min_count)
-    return [b for b in table if b.n >= min_count and b.gap > tolerance]
+    return [
+        b for b in table if b.n >= min_count and b.gap is not None and b.gap > tolerance
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -255,7 +268,9 @@ def perfectly_mirrored(state):
     )
 
 
-def symmetry_failures(predict: Predictor, states: Iterable, tolerance: float = 1e-6) -> list:
+def symmetry_failures(
+    predict: Predictor, states: Iterable, tolerance: float = 1e-6
+) -> list:
     """Perfectly mirrored versions of `states` that do not predict 0.5."""
     out = []
     for s in states:
@@ -265,17 +280,22 @@ def symmetry_failures(predict: Predictor, states: Iterable, tolerance: float = 1
     return out
 
 
-def complement_failures(predict: Predictor, states: Iterable, tolerance: float = 1e-6) -> list:
+def complement_failures(
+    predict: Predictor, states: Iterable, tolerance: float = 1e-6
+) -> list:
     """States where WP(s) + WP(mirror(s)) is not 1 (DEFINITIONS section 1:
     'the other side is 1 - WP')."""
     return [
         s
         for s in states
-        if abs(_check_pred(predict(s)) + _check_pred(predict(mirror_state(s))) - 1.0) > tolerance
+        if abs(_check_pred(predict(s)) + _check_pred(predict(mirror_state(s))) - 1.0)
+        > tolerance
     ]
 
 
-def terminal_failures(predict: Predictor, states: Iterable, tolerance: float = 1e-12) -> list:
+def terminal_failures(
+    predict: Predictor, states: Iterable, tolerance: float = 1e-12
+) -> list:
     """Decided states that are not exactly 1.0 (won) or 0.0 (lost)."""
     out = []
     for s in states:
@@ -310,7 +330,7 @@ class Scored:
 
 
 def score_states(
-    predict: Predictor, labelled: Iterable[tuple[str, str, object, bool]]
+    predict: Predictor, labelled: Iterable[tuple[str, str, StateView, bool]]
 ) -> Iterator[Scored]:
     """Run a predictor over (format, game, state, label) rows."""
     for fmt, game, state, label in labelled:
@@ -351,14 +371,21 @@ class _TrendAcc:
         c[1] += p
 
     def trend(self, min_count: int) -> Trend:
-        cells = {k: TrendCell(n=int(v[0]), mean_predicted=v[1] / v[0]) for k, v in self.cells.items()}
+        cells = {
+            k: TrendCell(n=int(v[0]), mean_predicted=v[1] / v[0])
+            for k, v in self.cells.items()
+        }
         rising = steps = 0
         for (our, opp), cell in cells.items():
             lower = cells.get((our, opp - 1))
             if lower is not None and cell.n >= min_count and lower.n >= min_count:
                 steps += 1
                 rising += lower.mean_predicted > cell.mean_predicted
-        return Trend(cells=cells, rising_fraction=(rising / steps if steps else None), steps=steps)
+        return Trend(
+            cells=cells,
+            rising_fraction=(rising / steps if steps else None),
+            steps=steps,
+        )
 
 
 def remaining_trend(scored: Iterable[Scored], min_count: int = 30) -> dict[str, Trend]:
@@ -379,8 +406,8 @@ def remaining_trend(scored: Iterable[Scored], min_count: int = 30) -> dict[str, 
 class ExpertClaim:
     claim_id: str
     description: str
-    better: object
-    worse: object
+    better: StateView
+    worse: StateView
     """Two labelled states: the one an expert says is better for the side
     analysed, and the one they say is worse."""
 
@@ -396,9 +423,13 @@ class ClaimResult:
         return self.p_better > self.p_worse  # a tie is not agreement
 
 
-def score_claims(predict: Predictor, claims: Sequence[ExpertClaim]) -> list[ClaimResult]:
+def score_claims(
+    predict: Predictor, claims: Sequence[ExpertClaim]
+) -> list[ClaimResult]:
     return [
-        ClaimResult(c.claim_id, _check_pred(predict(c.better)), _check_pred(predict(c.worse)))
+        ClaimResult(
+            c.claim_id, _check_pred(predict(c.better)), _check_pred(predict(c.worse))
+        )
         for c in claims
     ]
 
@@ -445,7 +476,9 @@ class _FormatAcc:
         self.bins.add(r.pred, r.label)
         self.trend.add(r.our_remaining, r.opp_remaining, r.pred)
 
-    def metrics(self, fmt, pooled, tolerance, min_count, trend_min_count) -> FormatMetrics:
+    def metrics(
+        self, fmt, pooled, tolerance, min_count, trend_min_count
+    ) -> FormatMetrics:
         if self.n == 0:
             raise ValueError(f"{fmt}: no undecided states to score")
         brier = self.sq / self.n
@@ -479,8 +512,9 @@ class MetricReport:
     def describe(self) -> str:
         lines = [
             "=== wpa metrics (per format) ===",
-            f"calibration tolerance {self.tolerance:.3f}; bins under {self.min_count} states "
-            "are listed but not judged; n counts states (correlated within a game)",
+            f"calibration tolerance {self.tolerance:.3f}; bins under "
+            f"{self.min_count} states are listed but not judged; "
+            "n counts states (correlated within a game)",
         ]
         for fmt in sorted(self.per_format):
             m = self.per_format[fmt]
@@ -489,9 +523,13 @@ class MetricReport:
                 f"({m.n_decided} decided states set aside)"
             )
             if m.n_games < SMALL_SAMPLE_GAMES:
-                lines.append(f"  SMALL SAMPLE: only {m.n_games} games; read every number with that in mind")
+                lines.append(
+                    f"  SMALL SAMPLE: only {m.n_games} games; "
+                    "read every number with that in mind"
+                )
             lines.append(
-                f"  Brier {m.brier:.4f} (coin flip {COIN_FLIP_BRIER:.2f}; skill {m.brier_skill:+.3f})"
+                f"  Brier {m.brier:.4f} (coin flip {COIN_FLIP_BRIER:.2f}; "
+                f"skill {m.brier_skill:+.3f})"
                 f"; including decided states {m.brier_with_decided:.4f}"
             )
             failing = {id(b) for b in m.calibration_failures}
@@ -499,17 +537,23 @@ class MetricReport:
                 if b.n == 0:
                     lines.append(f"  {b.low:.1f}-{b.high:.1f}  n=0")
                     continue
-                flag = "  <-- outside tolerance" if id(b) in failing else (
-                    "  (too few to judge)" if b.n < self.min_count else ""
+                flag = (
+                    "  <-- outside tolerance"
+                    if id(b) in failing
+                    else ("  (too few to judge)" if b.n < self.min_count else "")
                 )
                 lines.append(
-                    f"  {b.low:.1f}-{b.high:.1f}  n={b.n:<8} predicted {b.mean_predicted:.3f}  "
+                    f"  {b.low:.1f}-{b.high:.1f}  n={b.n:<8} "
+                    f"predicted {b.mean_predicted:.3f}  "
                     f"observed {b.observed_rate:.3f}  gap {b.gap:.3f}{flag}"
                 )
-            lines.append(f"  calibration bins outside tolerance: {len(m.calibration_failures)}")
+            lines.append(
+                f"  calibration bins outside tolerance: {len(m.calibration_failures)}"
+            )
             t = m.trend
             lines.append(
-                "  trend (reported, not a gate): mean predicted WP by Pokemon remaining "
+                "  trend (reported, not a gate): mean predicted WP by Pokemon "
+                "remaining "
                 "(ours/theirs: mean, n)"
             )
             for (our, opp), cell in sorted(t.cells.items(), reverse=True):
@@ -524,15 +568,20 @@ class MetricReport:
         if self.claims is not None:
             if not self.claims:
                 lines.append(
-                    "expert-claim cases: 0 labelled positions (docs/EXPERT-CLAIMS.md has claims "
+                    "expert-claim cases: 0 labelled positions "
+                    "(docs/EXPERT-CLAIMS.md has claims "
                     "written as specification only)"
                 )
             else:
                 agree = sum(c.agrees for c in self.claims)
-                lines.append(f"expert-claim cases (reported, not gated): baseline agrees with {agree} of {len(self.claims)}")
+                lines.append(
+                    "expert-claim cases (reported, not gated): baseline agrees "
+                    f"with {agree} of {len(self.claims)}"
+                )
                 for c in self.claims:
                     lines.append(
-                        f"  {c.claim_id}: better {c.p_better:.3f} vs worse {c.p_worse:.3f} "
+                        f"  {c.claim_id}: better {c.p_better:.3f} "
+                        f"vs worse {c.p_worse:.3f} "
                         f"-> {'agrees' if c.agrees else 'DISAGREES'}"
                     )
         p = self.pooled
@@ -600,11 +649,7 @@ class LoadStats:
 
 
 def load_split(
-    directory,
-    games: Mapping[str, str],
-    split: str,
-    fmt: str,
-    stats: LoadStats,
+    directory, games: Mapping[str, str], split: str, fmt: str, stats: LoadStats
 ) -> Iterator[tuple[str, str, StateView, bool]]:
     """Stream (format, game, state, label) for one split of one format.
 

@@ -25,9 +25,9 @@ import random
 
 import pytest
 
+from wpa.archetypes import DEFAULT_MIN_SHARED, archetype_id, build_archetypes
 from wpa.formats import FORMAT_MA, FORMAT_MB, format_of
 from wpa.splits import CannotSplitError, GameFile, assign_splits
-from wpa.archetypes import DEFAULT_MIN_SHARED, archetype_id, build_archetypes
 
 MA_BO3 = "gen9championsvgc2026regmabo3"
 MB_BO3 = "gen9championsvgc2026regmbbo3"
@@ -176,7 +176,9 @@ def seen_archetypes(files, assignments, splits):
 def test_a_held_out_archetype_never_appears_in_train_or_validation():
     files = arch_corpus(MA_BO3, 300, 2500, seed=1)
     result = assign_splits(files, archetype_holdout=0.1)
-    seen_in_training = seen_archetypes(files, result.assignments, ("train", "validation"))
+    seen_in_training = seen_archetypes(
+        files, result.assignments, ("train", "validation")
+    )
     seen_in_test = seen_archetypes(files, result.assignments, ("test",))
     held = seen_in_test - seen_in_training
     assert held  # something really was held out
@@ -316,9 +318,9 @@ def test_archetype_statistics_count_units_per_archetype():
     assert stats.archetypes == len(expected)
     assert stats.sizes == sorted(expected.values(), reverse=True)
     assert stats.largest[0][1] == max(expected.values())
-    assert [n for _, n in stats.largest] == sorted(
-        expected.values(), reverse=True
-    )[: len(stats.largest)]
+    assert [n for _, n in stats.largest] == sorted(expected.values(), reverse=True)[
+        : len(stats.largest)
+    ]
 
 
 def test_the_report_mentions_the_hold_out_and_the_archetype_counts():

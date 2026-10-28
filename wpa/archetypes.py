@@ -47,7 +47,8 @@ def check_min_shared(min_shared) -> int:
         or not 1 <= min_shared <= TEAM_SIZE
     ):
         raise ValueError(
-            f"min_shared must be a whole number from 1 to {TEAM_SIZE}, got {min_shared!r}"
+            f"min_shared must be a whole number from 1 to {TEAM_SIZE}, "
+            f"got {min_shared!r}"
         )
     return min_shared
 

@@ -43,12 +43,7 @@ def test_bo3_is_not_confused_with_its_single_game_prefix():
 
 @pytest.mark.parametrize(
     "tag",
-    [
-        "gen9championsvgc2026regmc-1",
-        "gen9ou-1234",
-        "gen9championsvgc2026regma",
-        "",
-    ],
+    ["gen9championsvgc2026regmc-1", "gen9ou-1234", "gen9championsvgc2026regma", ""],
 )
 def test_unrecognised_tags_raise_and_are_never_defaulted(tag):
     with pytest.raises(UnknownFormatError):
@@ -88,8 +83,7 @@ def test_summary_counts_battles_sets_and_states_per_format_and_kind(tmp_path):
     # an M-B set: one game
     for role in ("p1", "p2"):
         _write(
-            tmp_path / f"gen9championsvgc2026regmbbo3-201-{role}.json",
-            [_state(set_b)],
+            tmp_path / f"gen9championsvgc2026regmbbo3-201-{role}.json", [_state(set_b)]
         )
     # a single M-A game
     for role in ("p1", "p2"):

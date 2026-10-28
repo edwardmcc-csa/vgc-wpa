@@ -30,16 +30,6 @@ from pathlib import Path
 
 import pytest
 
-from wpa.formats import FORMAT_MA, FORMAT_MB
-from wpa.metrics import (
-    PokemonView,
-    StateView,
-    complement_failures,
-    mirror_state,
-    perfectly_mirrored,
-    symmetry_failures,
-    terminal_failures,
-)
 from wpa.baseline import (
     BASELINE_K,
     LIMITATIONS,
@@ -48,6 +38,15 @@ from wpa.baseline import (
     predict,
     report_split,
     strength,
+)
+from wpa.formats import FORMAT_MA, FORMAT_MB
+from wpa.metrics import (
+    PokemonView,
+    StateView,
+    complement_failures,
+    mirror_state,
+    symmetry_failures,
+    terminal_failures,
 )
 
 MA = "gen9championsvgc2026regma"
@@ -67,7 +66,9 @@ def side(revealed=(), fainted=0, unrevealed=2, active=()):
     """Six Pokemon the way the corpus lists them: `revealed` alive hit-point
     fractions, `fainted` fainted ones, then Pokemon never seen (hp 0.0, not
     fainted, not active). Pokemon at indexes in `active` are on the field."""
-    pokes = [mon(hp, active=(i in active), species=f"r{i}") for i, hp in enumerate(revealed)]
+    pokes = [
+        mon(hp, active=(i in active), species=f"r{i}") for i, hp in enumerate(revealed)
+    ]
     pokes += [mon(0.0, True, species=f"f{i}") for i in range(fainted)]
     pokes += [mon(0.0, species=f"u{i}") for i in range(unrevealed)]
     assert len(pokes) == 6, len(pokes)
@@ -75,11 +76,14 @@ def side(revealed=(), fainted=0, unrevealed=2, active=()):
 
 
 def state(ours, theirs, outcome=None, **kw):
-    return StateView(turn=3, our_pokemon=ours, opp_pokemon=theirs, outcome=outcome, **kw)
+    return StateView(
+        turn=3, our_pokemon=ours, opp_pokemon=theirs, outcome=outcome, **kw
+    )
 
 
 def random_state(rng, outcome=None):
     """A plausible mid-game state: each side brought four, two stayed home."""
+
     def one_side():
         fainted = rng.randint(0, 4)
         alive_brought = 4 - fainted
@@ -123,7 +127,9 @@ def test_an_undecided_state_is_never_exactly_zero_or_one():
     for s in STATES:
         assert 0.0 < predict(s) < 1.0
     # even the most lopsided legal position
-    worst = state(side(fainted=4, unrevealed=2), side([1.0] * 4, unrevealed=2, active=(0, 1)))
+    worst = state(
+        side(fainted=4, unrevealed=2), side([1.0] * 4, unrevealed=2, active=(0, 1))
+    )
     best = mirror_state(worst)
     assert 0.0 < predict(worst) < 0.5 < predict(best) < 1.0
 
@@ -134,9 +140,16 @@ def test_the_checks_have_teeth_against_an_empty_implementation():
     empty = lambda s: 0.5  # noqa: E731
     assert symmetry_failures(empty, STATES) == []
     assert complement_failures(empty, STATES) == []
-    won = state(side(fainted=1, unrevealed=2, revealed=[1.0, 0.5, 0.2]), side(fainted=4, unrevealed=2), outcome=True)
+    won = state(
+        side(fainted=1, unrevealed=2, revealed=[1.0, 0.5, 0.2]),
+        side(fainted=4, unrevealed=2),
+        outcome=True,
+    )
     assert terminal_failures(empty, [won]) == [won]
-    assert abs(empty(STATES[0]) - predict(STATES[0])) > 1e-6 or abs(empty(STATES[1]) - predict(STATES[1])) > 1e-6
+    assert (
+        abs(empty(STATES[0]) - predict(STATES[0])) > 1e-6
+        or abs(empty(STATES[1]) - predict(STATES[1])) > 1e-6
+    )
 
 
 # --------------------------------------------------------------------------
@@ -145,10 +158,15 @@ def test_the_checks_have_teeth_against_an_empty_implementation():
 
 
 def test_equal_sides_are_even_and_a_known_lead_has_a_known_value():
-    even = state(side([1.0, 1.0], unrevealed=2, fainted=2), side([1.0, 1.0], unrevealed=2, fainted=2))
+    even = state(
+        side([1.0, 1.0], unrevealed=2, fainted=2),
+        side([1.0, 1.0], unrevealed=2, fainted=2),
+    )
     assert predict(even) == 0.5
     # we have all four (strength 4.0), they have lost one (strength 3.0)
-    ahead = state(side([1.0, 1.0], unrevealed=4), side([1.0, 1.0], fainted=1, unrevealed=3))
+    ahead = state(
+        side([1.0, 1.0], unrevealed=4), side([1.0, 1.0], fainted=1, unrevealed=3)
+    )
     assert predict(ahead) == pytest.approx(expected(1.0))
 
 
@@ -167,7 +185,8 @@ def test_hit_points_of_zero_are_unrevealed_not_nearly_fainted():
     # The corpus shows hp 0.0 for every Pokemon off the field, brought or not.
     fresh = state(side(unrevealed=6), side(unrevealed=6))
     assert predict(fresh) == 0.5
-    # A Pokemon on the field at hp 0.0 that has not fainted is revealed and contributes 0
+    # A Pokemon on the field at hp 0.0 that has not fainted is revealed and
+    # contributes 0
     low = side([0.0, 1.0], unrevealed=4, active=(0, 1))
     assert strength(low) == pytest.approx(0.0 + 1.0 + 2.0)  # 4 remain: 2 seen, 2 unseen
 
@@ -219,7 +238,10 @@ class _GuardedState:
 
 
 def test_the_baseline_reads_only_hit_points_fainted_active_and_outcome():
-    for s in STATES[:50] + [replace(STATES[0], outcome=True), replace(STATES[0], outcome=False)]:
+    for s in STATES[:50] + [
+        replace(STATES[0], outcome=True),
+        replace(STATES[0], outcome=False),
+    ]:
         assert predict(_GuardedState(s)) == predict(s)
 
 
@@ -236,14 +258,22 @@ def test_which_unrevealed_pokemon_were_brought_cannot_change_the_prediction():
     # change nothing: there is nothing to learn from them.
     rng = random.Random(7)
     for s in STATES[:100]:
+
         def scramble(poke_side):
             seen = [m for m in poke_side if m.hp_fraction > 0 or m.fainted or m.active]
             hidden = [m for m in poke_side if m not in seen]
             rng.shuffle(hidden)
-            hidden = [replace(m, species=f"zz{rng.random()}", gimmick=rng.choice([None, "mega"])) for m in hidden]
+            hidden = [
+                replace(
+                    m, species=f"zz{rng.random()}", gimmick=rng.choice([None, "mega"])
+                )
+                for m in hidden
+            ]
             return tuple(seen + hidden)
 
-        s2 = replace(s, opp_pokemon=scramble(s.opp_pokemon), our_pokemon=scramble(s.our_pokemon))
+        s2 = replace(
+            s, opp_pokemon=scramble(s.opp_pokemon), our_pokemon=scramble(s.our_pokemon)
+        )
         assert predict(s2) == predict(s)
 
 
@@ -251,7 +281,12 @@ def test_nothing_about_the_set_or_the_turn_changes_the_prediction():
     s = STATES[3]
     for variant in (
         replace(s, turn=99, decision_index=4),
-        replace(s, set_id="gen9championsvgc2026regmabo3-1", game_index=3, set_score_entering_game=(1, 1)),
+        replace(
+            s,
+            set_id="gen9championsvgc2026regmabo3-1",
+            game_index=3,
+            set_score_entering_game=(1, 1),
+        ),
     ):
         assert predict(variant) == predict(s)
 
@@ -276,7 +311,13 @@ def test_it_works_on_the_real_battlestate_too():
 
 
 def _pk(hp, fainted=False, active=False):
-    return {"species": "x", "hp_fraction": hp, "fainted": fainted, "active": active, "gimmick": None}
+    return {
+        "species": "x",
+        "hp_fraction": hp,
+        "fainted": fainted,
+        "active": active,
+        "gimmick": None,
+    }
 
 
 def _state_dict(turn, outcome, ours, theirs):
@@ -305,7 +346,9 @@ def _write_game(directory: Path, tag, we_win: bool):
             _state_dict(2, None, mine, theirs),
             _state_dict(3, wins, mine if wins else gone, gone if wins else theirs),
         ]
-        (directory / f"{tag}-{role}.json").write_text(json.dumps(states), encoding="utf-8")
+        (directory / f"{tag}-{role}.json").write_text(
+            json.dumps(states), encoding="utf-8"
+        )
 
 
 def _corpus(tmp_path, n_ma=6, n_mb=3):
@@ -352,7 +395,9 @@ def test_the_command_line_prints_the_limits_the_counts_and_a_per_format_report(
     data = tmp_path / "states"
     data.mkdir()
     games = _corpus(data)
-    manifest = tmp_path / "splits.json"  # outside the data folder: a stray .json there is an error
+    manifest = (
+        tmp_path / "splits.json"
+    )  # outside the data folder: a stray .json there is an error
     manifest.write_text(json.dumps({"games": games}), encoding="utf-8")
     monkeypatch.setattr(
         sys, "argv", ["wpa.baseline", "--dir", str(data), "--splits", str(manifest)]
