@@ -111,7 +111,24 @@ def test_regenerator_heals_a_third_on_switching_out():
     ).replace("Rock||Leftovers|Sturdy|", "Rock||Leftovers|Regenerator|")
     g = D.build_game(log, EMPTY)
     start3 = [s for s in g.states["p1"] if s["turn"] == 3][0]
-    assert start3["our_pokemon"][1]["hp_fraction"] == pytest.approx(0.40 + 1 / 3, abs=0.01)
+    assert start3["our_pokemon"][1]["hp_fraction"] == pytest.approx(
+        0.40 + 1 / 3, abs=0.01
+    )
+
+
+def test_mega_evolution_is_tracked_on_the_board():
+    log = game(
+        "|t:|1\n|detailschange|p2a: Inci|Inci-Mega, L50\n|-mega|p2a: Inci|Inci|Incinite\n"
+        "|move|p2a: Inci|Fake Out|p1b: Rock\n|move|p1a: Whim|Tailwind|p1a: Whim\n"
+        "|move|p1b: Rock|Rock Slide|p2a: Inci\n|move|p2b: Fini|Moonblast|p1a: Whim",
+        "|upkeep\n|turn|2",
+        "|win|A",
+    )
+    g = D.build_game(log, EMPTY)
+    start1 = [s for s in g.states["p1"] if s["turn"] == 1][0]
+    start2 = [s for s in g.states["p1"] if s["turn"] == 2][0]
+    assert start1["opp_pokemon"][0]["mega"] is False
+    assert start2["opp_pokemon"][0]["mega"] is True
 
 
 def test_hit_points_parse_with_status_and_stray_characters():

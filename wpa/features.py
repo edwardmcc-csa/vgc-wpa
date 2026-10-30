@@ -45,7 +45,7 @@ ALLOWED_STATE_FIELDS = (
     "set_score_entering_game",
     "observations",
 )
-ALLOWED_POKEMON_FIELDS = ("species", "hp_fraction", "fainted", "active")
+ALLOWED_POKEMON_FIELDS = ("species", "hp_fraction", "fainted", "active", "mega")
 SIDES = ("our", "their")
 BRING = 4
 
@@ -182,12 +182,36 @@ def _cols_e() -> list[str]:
     return out
 
 
-_BUILDERS = {"A": _cols_a, "B": _cols_b, "C": _cols_c, "D": _cols_d, "E": _cols_e}
+_F_SIDE = (
+    "active_speed_max",
+    "active_speed_min",
+    "bench_speed_max",
+    "unseen_speed_max",
+    "unseen_speed_min",
+    "scarf_active",
+    "outspeeds",
+    "first",
+    "unseen_outspeeds",
+)
+
+
+def _cols_f() -> list[str]:
+    return [f"f_{s}_{k}" for s in SIDES for k in _F_SIDE] + ["f_trickroom"]
+
+
+_BUILDERS = {
+    "A": _cols_a,
+    "B": _cols_b,
+    "C": _cols_c,
+    "D": _cols_d,
+    "E": _cols_e,
+    "F": _cols_f,
+}
 
 
 def columns(groups: str) -> list[str]:
     out: list[str] = []
-    for g in "ABCDE":
+    for g in "ABCDEF":
         if g in groups:
             out += _BUILDERS[g]()
     return out
@@ -340,6 +364,88 @@ def _group_de(
     return out
 
 
+def _speeds(side, sheet, dex: Dex, tailwind: bool):
+    """(where, effective speed, has Scarf) for each Pokemon on one side."""
+    from wpa.team_sheets import form_of, match_to_state
+
+    out = []
+    for p, idx in zip(side, match_to_state(sheet, side)):
+        if idx is None or p["fainted"]:
+            continue
+        mon = sheet[idx]
+        entry = form_of(mon, dex) if p.get("mega") else dex.species.get(mon.species, {})
+        base = float((entry.get("baseStats") or {}).get("spe", 0))
+        scarf = mon.item == "choicescarf"
+        v = base * (1.5 if scarf else 1.0) * (2.0 if tailwind else 1.0)
+        where = (
+            "active" if p["active"] else ("bench" if p["hp_fraction"] > 0 else "unseen")
+        )
+        out.append((where, v, scarf))
+    return out
+
+
+def _group_f(
+    s: Mapping,
+    role: str,
+    joined: JoinedTimers | None,
+    sheets: Mapping[str, Sequence[SheetMon]],
+    dex: Dex,
+) -> dict[str, float]:
+    """Speed: base Speed (Mega form once Mega Evolved), Choice Scarf x1.5,
+    Tailwind x2, and who acts first with Trick Room reversing it. Priority,
+    paralysis and stat stages are not included."""
+    out = dict.fromkeys(_cols_f(), 0.0)
+    other = "p2" if role == "p1" else "p1"
+    j = joined or JoinedTimers()
+    tw = {
+        "our": any(e == "tailwind" and lo > 0 for e, _t, lo, _h in j.ours),
+        "their": any(e == "tailwind" and lo > 0 for e, _t, lo, _h in j.theirs),
+    }
+    tr = any(e == "trickroom" and lo > 0 for e, _t, lo, _h in j.field)
+    out["f_trickroom"] = float(tr)
+    sp = {
+        "our": _speeds(s["our_pokemon"], sheets[role], dex, tw["our"]),
+        "their": _speeds(s["opp_pokemon"], sheets[other], dex, tw["their"]),
+    }
+
+    def before(a: float, b: float) -> bool:
+        return a < b if tr else a > b
+
+    def best(vs: list[float]) -> float | None:
+        if not vs:
+            return None
+        return min(vs) if tr else max(vs)
+
+    act = {k: [v for w, v, _ in rows if w == "active"] for k, rows in sp.items()}
+    for side, rival in (("our", "their"), ("their", "our")):
+        rows = sp[side]
+        a = act[side]
+        bench = [v for w, v, _ in rows if w == "bench"]
+        unseen = [v for w, v, _ in rows if w == "unseen"]
+        if a:
+            out[f"f_{side}_active_speed_max"] = max(a)
+            out[f"f_{side}_active_speed_min"] = min(a)
+        if bench:
+            out[f"f_{side}_bench_speed_max"] = max(bench)
+        if unseen:
+            out[f"f_{side}_unseen_speed_max"] = max(unseen)
+            out[f"f_{side}_unseen_speed_min"] = min(unseen)
+        out[f"f_{side}_scarf_active"] = float(
+            sum(1 for w, _v, sc in rows if w == "active" and sc)
+        )
+        out[f"f_{side}_outspeeds"] = float(
+            sum(before(x, y) for x in a for y in act[rival])
+        )
+        mine, theirs = best(a), best(act[rival])
+        if mine is not None and theirs is not None:
+            out[f"f_{side}_first"] = float(before(mine, theirs))
+        if theirs is not None:
+            out[f"f_{side}_unseen_outspeeds"] = float(
+                sum(before(x, theirs) for x in unseen)
+            )
+    return out
+
+
 def state_features(
     states: Sequence[dict],
     k: int,
@@ -361,6 +467,8 @@ def state_features(
         row.update(_group_c(joined, table))
     if "D" in groups or "E" in groups:
         row.update(_group_de(s, role, sheets, dex, groups))
+    if "F" in groups:
+        row.update(_group_f(s, role, joined, sheets, dex))
     return {c: float(row[c]) for c in columns(groups)}
 
 
@@ -539,6 +647,98 @@ def build_shard(
     return counts
 
 
+# --------------------------------------------------------------------------
+# Building from our own decision table (Week 6)
+# --------------------------------------------------------------------------
+
+
+def split_logs_into_shards(
+    games: Iterable[tuple[str, str]],
+    splits: Mapping[str, str],
+    out_dir: Path,
+    shards: int,
+) -> dict[str, int]:
+    """Write the logs of games that have a split into `shards` files by tag hash,
+    so each shard can be built on its own without reading every log again."""
+    import gzip
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = [
+        gzip.open(out_dir / f"part-{i:03d}.jsonl.gz", "wt", encoding="utf-8")
+        for i in range(shards)
+    ]
+    counts = {"games": 0, "unassigned": 0}
+    try:
+        for tag, log in games:
+            if tag not in splits:
+                counts["unassigned"] += 1
+                continue
+            files[shard_of(tag, shards)].write(
+                json.dumps({"tag": tag, "log": log}) + "\n"
+            )
+            counts["games"] += 1
+    finally:
+        for f in files:
+            f.close()
+    return counts
+
+
+def build_shard_from_logs(
+    shard: int,
+    shards: int,
+    *,
+    logs_dir: Path,
+    splits: Mapping[str, str],
+    dexes: Mapping[str, Dex],
+    tables: Mapping[str, Durations],
+    out_dir: Path,
+    groups: str = "ABCDEF",
+) -> dict[str, int]:
+    """One shard of games, from our decision table (`wpa.decisions`)."""
+    import gzip
+
+    from wpa.decisions import build_game
+    from wpa.formats import format_of
+    from wpa.team_sheets import sheets_from_log
+
+    cols = columns(groups)
+    rows: dict[tuple[str, str], list[Row]] = {}
+    counts = {"games": 0, "rows": 0, "no_result": 0}
+    with gzip.open(
+        logs_dir / f"part-{shard:03d}.jsonl.gz", "rt", encoding="utf-8"
+    ) as f:
+        for line in f:
+            d = json.loads(line)
+            tag, log = d["tag"], d["log"]
+            fmt = format_of(tag)
+            table = tables[fmt]
+            game = build_game(log, table)
+            sheets = sheets_from_log(log)
+            counts["games"] += 1
+            for role in ("p1", "p2"):
+                states = game.states[role]
+                if states[-1]["outcome"] is None:
+                    counts["no_result"] += 1
+                    continue
+                got = rows_for_file(
+                    tag,
+                    role,
+                    states,
+                    game.joined[role],
+                    sheets,
+                    dexes[fmt],
+                    table,
+                    groups,
+                )
+                rows.setdefault((fmt, splits[tag]), []).extend(got)
+                counts["rows"] += len(got)
+    for (fmt, split), rs in rows.items():
+        d = out_dir / fmt / split
+        d.mkdir(parents=True, exist_ok=True)
+        write_rows(d / f"part-{shard:03d}-of-{shards:03d}.npz", rs, cols)
+    return counts
+
+
 def _build_one(args: tuple) -> dict[str, int]:
     shard, shards, opts = args
     from wpa.durations import load_all
@@ -547,6 +747,17 @@ def _build_one(args: tuple) -> dict[str, int]:
     dexes = load_dexes(opts["showdown"])
     tables = load_all(opts["showdown"])
     splits = json.loads(Path(opts["splits"]).read_text(encoding="utf-8"))["games"]
+    if opts.get("from_logs"):
+        return build_shard_from_logs(
+            shard,
+            shards,
+            logs_dir=Path(opts["from_logs"]),
+            splits=splits,
+            dexes=dexes,
+            tables=tables,
+            out_dir=Path(opts["out"]),
+            groups=opts.get("groups") or "ABCDEF",
+        )
     return build_shard(
         shard,
         shards,
@@ -574,7 +785,31 @@ def main() -> None:
     p.add_argument("--shards", type=int, default=64)
     p.add_argument("--only", type=str, help="build only these shards, e.g. 0-7")
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument(
+        "--split-logs",
+        type=str,
+        help="write the logs into shard files in this folder, then stop",
+    )
+    p.add_argument("--logs", default="battle_logs")
+    p.add_argument(
+        "--from-logs",
+        type=str,
+        help="build from our decision table, reading shard files from here",
+    )
+    p.add_argument("--groups", default="")
     a = p.parse_args()
+    if a.split_logs:
+        from wpa.timers import iter_log_file
+
+        splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
+
+        def games() -> Iterable[tuple[str, str]]:
+            for path in sorted(Path(a.logs).glob("logs_*.json")):
+                for tag, (_ts, log) in iter_log_file(path):
+                    yield tag, log
+
+        print(split_logs_into_shards(games(), splits, Path(a.split_logs), a.shards))
+        return
     opts = vars(a)
     wanted = range(a.shards)
     if a.only:

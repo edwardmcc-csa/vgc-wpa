@@ -208,7 +208,21 @@ def abilities_of(mon: SheetMon, dex: Dex) -> set[str]:
     return out
 
 
+_CAP_CACHE: dict[tuple[SheetMon, int], frozenset[str]] = {}
+
+
 def capabilities(mon: SheetMon, dex: Dex) -> set[str]:
+    """Cached wrapper: the same Pokemon is asked about at every decision."""
+    key = (mon, id(dex))
+    hit = _CAP_CACHE.get(key)
+    if hit is None:
+        if len(_CAP_CACHE) > 200_000:
+            _CAP_CACHE.clear()
+        hit = _CAP_CACHE[key] = frozenset(_capabilities(mon, dex))
+    return set(hit)
+
+
+def _capabilities(mon: SheetMon, dex: Dex) -> set[str]:
     """What this Pokemon can do that matters to the doubles game, by rule.
 
     * moves: Tailwind; Trick Room; Rain Dance, Sunny Day, Sandstorm, Snowscape

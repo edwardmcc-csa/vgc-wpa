@@ -237,3 +237,40 @@ def test_real_timers_show_up_in_group_c():
     k3 = next(i for i, s in enumerate(states) if s["turn"] == 3)
     row = F.state_features(states, k3, "p1", joined[k3], sheets, DEX, table, "C")
     assert row["c_field_raindance"] >= 1  # Drizzle at turn 2, five turns
+
+
+def test_building_from_the_logs_writes_rows_from_our_decision_table(tmp_path):
+    from wpa import decisions as Dn
+
+    splits = {tag: "train" for tag in LOGS}
+    logs_dir = tmp_path / "logs"
+    F.split_logs_into_shards(
+        [(tag, log) for tag, log in LOGS.items()], splits, logs_dir, shards=2
+    )
+    assert sorted(p.name for p in logs_dir.iterdir()) == [
+        "part-000.jsonl.gz",
+        "part-001.jsonl.gz",
+    ]
+    out = tmp_path / "features"
+    total = 0
+    for shard in range(2):
+        counts = F.build_shard_from_logs(
+            shard,
+            2,
+            logs_dir=logs_dir,
+            splits=splits,
+            dexes={"regma": DEX, "regmb": DEX},
+            tables={"regma": TABLE, "regmb": TABLE},
+            out_dir=out,
+            groups="ABCDEF",
+        )
+        total += counts["rows"]
+    want = 0
+    for tag, log in LOGS.items():
+        g = Dn.build_game(log, TABLE)
+        want += sum(len(g.states[r]) - 1 for r in ("p1", "p2"))
+    assert total == want
+    parts = list(out.glob("*/train/*.npz"))
+    t = F.concat(F.read_rows(p) for p in parts)
+    assert t.columns == F.columns("ABCDEF")
+    assert len(t.y) == want

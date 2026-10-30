@@ -82,7 +82,8 @@ class _Board:
         self.abilities[role] = [to_id(m.ability) for m in mons]
         self.species[role] = [to_id(m.species) for m in mons]
         self.mons[role] = [
-            {"hp": 0.0, "fainted": False, "active": False, "seen": False} for _ in mons
+            {"hp": 0.0, "fainted": False, "active": False, "seen": False, "mega": False}
+            for _ in mons
         ]
 
     def _index(self, role: str, ident: str, details: str = "") -> int | None:
@@ -144,6 +145,10 @@ class _Board:
                 for s, v in self.slots[role].items():
                     if v == idx:
                         self.slots[role][s] = None
+        elif t == "-mega":
+            idx = self._index(role, ident)
+            if idx is not None:
+                self.mons[role][idx]["mega"] = True
         elif t == "swap":
             a, b = self.slots[role]["a"], self.slots[role]["b"]
             self.slots[role]["a"], self.slots[role]["b"] = b, a
@@ -166,6 +171,7 @@ class _Board:
                 "fainted": m["fainted"],
                 "active": m["active"],
                 "gimmick": None,
+                "mega": m["mega"],
             }
             for sp, m in zip(self.species.get(role, []), self.mons.get(role, []))
         ]
