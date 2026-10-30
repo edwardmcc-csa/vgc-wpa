@@ -1,0 +1,132 @@
+"""Tests for wpa/evaluate.py (Week 5 Task 7): evaluation, ablation and the gate.
+
+The gate's own tests run on tiny synthetic tables, so CI never needs the data.
+"""
+
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+
+from wpa import evaluate as E
+from wpa import features as F
+from wpa.baseline import predict as v0_predict
+from wpa.durations import Durations
+from wpa.metrics import state_from_dict
+from wpa.team_sheets import Dex, sheets_from_log
+from wpa.timer_join import align
+from wpa.timers import track_decisions
+
+FIXTURES = Path(__file__).parent / "fixtures" / "w5"
+LOGS = json.loads((FIXTURES / "logs" / "logs.json").read_text(encoding="utf-8"))
+EMPTY = Durations("e", timed={})
+DEX = Dex(species={}, moves={}, items={})
+
+
+def fixture_rows(groups="ABCDE"):
+    rows, states_by_row = [], []
+    for tag in sorted(LOGS):
+        for role in ("p1", "p2"):
+            states = json.loads(
+                (FIXTURES / f"{tag}-{role}.json").read_text(encoding="utf-8")
+            )
+            joined = align(states, track_decisions(LOGS[tag], EMPTY)[role], role)
+            got = F.rows_for_file(
+                tag,
+                role,
+                states,
+                joined,
+                sheets_from_log(LOGS[tag]),
+                DEX,
+                EMPTY,
+                groups,
+            )
+            rows += got
+            states_by_row += states[: len(got)]
+    return rows, states_by_row
+
+
+def to_table(rows, groups="ABCDE"):
+    cols = F.columns(groups)
+    return F.Table(
+        np.array([r.values for r in rows], dtype=np.float32),
+        np.array([r.label for r in rows], dtype=np.int8),
+        np.array([r.tag for r in rows]),
+        np.array([r.role for r in rows]),
+        np.array([r.unit for r in rows]),
+        np.array([r.turn for r in rows], dtype=np.int16),
+        cols,
+    )
+
+
+def test_v0_from_the_table_equals_the_v0_baseline_on_the_states():
+    rows, states = fixture_rows()
+    table = to_table(rows)
+    got = E.v0_from_table(table)
+    want = [v0_predict(state_from_dict({**s, "outcome": None})) for s in states]
+    assert np.allclose(got, want)
+
+
+def test_selecting_groups_keeps_their_columns_in_order():
+    rows, _ = fixture_rows()
+    t = E.select(to_table(rows), "AC")
+    assert t.columns == F.columns("AC")
+    assert t.X.shape[1] == len(F.columns("AC"))
+
+
+def synthetic(n_units=2000, rows_per=5, seed=0):
+    """Calibrated "good" predictions (the true chance per unit) and a coin flip."""
+    rng = np.random.default_rng(seed)
+    units = np.repeat([f"u{i}" for i in range(n_units)], rows_per)
+    chance = np.repeat(rng.uniform(0.05, 0.95, n_units), rows_per)
+    y = (rng.random(len(chance)) < chance).astype(np.int8)
+    return units, y, chance, np.full(len(y), 0.5)
+
+
+def test_unit_bootstrap_gives_an_interval_around_the_brier():
+    units, y, p, _ = synthetic()
+    b, lo, hi = E.brier_ci(p, y, units, draws=200, seed=1)
+    assert lo <= b <= hi
+    assert hi - lo < 0.05
+
+
+def test_paired_difference_interval_excludes_zero_when_one_model_is_clearly_better():
+    units, y, good, bad = synthetic()
+    d, lo, hi = E.difference_ci(good, bad, y, units, draws=200, seed=1)
+    assert d < 0 and hi < 0
+
+
+def test_the_gate_passes_a_good_model_and_names_what_fails():
+    units, y, good, bad = synthetic()
+    ok = E.gate_failures({"regma": E.score(good, y, units, bad)})
+    assert ok == []
+    bad_fails = E.gate_failures({"regma": E.score(bad, y, units, good)})
+    assert any("v0" in f for f in bad_fails)
+    assert any("0.25" in f for f in bad_fails)
+
+
+def test_the_gate_flags_a_calibration_bin_outside_the_tolerance():
+    units, y, good, _ = synthetic()
+    skewed = np.clip(good + 0.2, 0, 1)
+    fails = E.gate_failures({"regma": E.score(skewed, y, units, np.full(len(y), 0.5))})
+    assert any("calibration" in f for f in fails)
+
+
+def test_opening_the_test_split_is_recorded_and_counted(tmp_path):
+    log = tmp_path / "test_openings.json"
+    assert E.record_test_opening(log, {"note": "first"}) == 1
+    assert E.record_test_opening(log, {"note": "again"}) == 2
+    records = json.loads(log.read_text(encoding="utf-8"))
+    assert [r["note"] for r in records] == ["first", "again"]
+    assert all("date" in r and "commit" in r for r in records)
+
+
+def test_unit_sampling_keeps_whole_units():
+    units = np.array(["a", "a", "b", "b", "c", "c", "d"] * 50)
+    keep = E.sample_units(units, 0.5, seed="s")
+    for u in set(units):
+        assert len(set(keep[units == u])) == 1

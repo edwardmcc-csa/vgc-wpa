@@ -1,0 +1,557 @@
+"""Evaluation, ablation and the gate for the v1 model (Week 5 Task 7).
+
+Everything is per format. Every Brier comes with a confidence interval from
+resampling whole *units* (a best-of-three set or a single game): the states of
+one game are not independent, so resampling states would claim far more
+certainty than the data holds.
+
+The test split is opened by one command, which records the date and git commit
+each time it is used (`record_test_opening`); it is never used to choose
+anything.
+
+Commands (all from the repository folder, after building the feature table):
+
+    python -m wpa.evaluate train --format regma
+    python -m wpa.evaluate ablation --format regma
+    python -m wpa.evaluate check
+    python -m wpa.evaluate final
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import hashlib
+import json
+import math
+import subprocess
+from pathlib import Path
+
+import numpy as np
+
+from wpa.features import Table, columns, concat, read_rows
+from wpa.metrics import calibration_failures, calibration_table
+
+COIN_FLIP = 0.25
+TOLERANCE = 0.05  # calibration gap per bin (placeholder carried from Week 4)
+MIN_BIN = 100
+GROUP_STEPS = ("A", "AB", "ABC", "ABCD", "ABCDE")
+
+
+# --------------------------------------------------------------------------
+# Tables
+# --------------------------------------------------------------------------
+
+
+def load_table(
+    features_dir: Path | str, fmt: str, split: str, sample: float = 1.0
+) -> Table:
+    """All parts of one format and split; `sample` keeps that fraction of units
+    (whole), part by part, so a sample never needs the full table in memory."""
+    parts = sorted((Path(features_dir) / fmt / split).glob("part-*.npz"))
+    if not parts:
+        raise FileNotFoundError(f"no feature files for {fmt}/{split} in {features_dir}")
+    if sample >= 1.0:
+        return concat(read_rows(p) for p in parts)
+    return concat(
+        subset(t, sample_units(t.unit, sample)) for t in map(read_rows, parts)
+    )
+
+
+def select(table: Table, groups: str) -> Table:
+    """Only the columns of these feature groups, in the standard order."""
+    wanted = columns(groups)
+    index = {c: i for i, c in enumerate(table.columns)}
+    idx = [index[c] for c in wanted]
+    return Table(
+        table.X[:, idx], table.y, table.tag, table.role, table.unit, table.turn, wanted
+    )
+
+
+def sample_units(
+    units: np.ndarray, fraction: float, seed: str = "wpa-sample"
+) -> np.ndarray:
+    """Boolean mask keeping a fixed fraction of units, whole."""
+    uniq, inverse = np.unique(units, return_inverse=True)
+    keep = np.array(
+        [
+            int.from_bytes(hashlib.sha256(f"{seed}|{u}".encode()).digest()[:4], "big")
+            / 2**32
+            < fraction
+            for u in uniq
+        ]
+    )
+    return keep[inverse]
+
+
+def subset(table: Table, mask: np.ndarray) -> Table:
+    return Table(
+        table.X[mask],
+        table.y[mask],
+        table.tag[mask],
+        table.role[mask],
+        table.unit[mask],
+        table.turn[mask],
+        table.columns,
+    )
+
+
+# --------------------------------------------------------------------------
+# The v0 baseline, from the same rows
+# --------------------------------------------------------------------------
+
+
+def v0_from_table(table: Table) -> np.ndarray:
+    """wpa.baseline's prediction, computed from group A columns.
+
+    strength = hit points of revealed living Pokemon + 1 per unseen brought one
+    (four brought, minus fainted, minus revealed living); p = sigmoid(diff).
+    """
+    c = {name: i for i, name in enumerate(table.columns)}
+
+    def strength(side: str) -> np.ndarray:
+        hp = table.X[:, c[f"a_{side}_hp_seen"]].astype(np.float64)
+        remaining = table.X[:, c[f"a_{side}_remaining"]].astype(np.float64)
+        seen = table.X[:, c[f"a_{side}_seen_alive"]].astype(np.float64)
+        return hp + np.maximum(0.0, remaining - seen)
+
+    d = strength("our") - strength("their")
+    return 1.0 / (1.0 + np.exp(-d))
+
+
+# --------------------------------------------------------------------------
+# Brier with unit-bootstrap intervals
+# --------------------------------------------------------------------------
+
+
+def _per_unit(err: np.ndarray, units: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    _, inverse = np.unique(units, return_inverse=True)
+    sums = np.bincount(inverse, weights=err)
+    counts = np.bincount(inverse).astype(np.float64)
+    return sums, counts
+
+
+def _bootstrap(
+    sums: np.ndarray, counts: np.ndarray, draws: int, seed: int
+) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    n = len(sums)
+    out = np.empty(draws)
+    for i in range(draws):
+        pick = rng.integers(0, n, n)
+        out[i] = sums[pick].sum() / counts[pick].sum()
+    return out
+
+
+def brier_ci(
+    p, y, units, draws: int = 500, seed: int = 0
+) -> tuple[float, float, float]:
+    err = (np.asarray(p, dtype=np.float64) - np.asarray(y, dtype=np.float64)) ** 2
+    sums, counts = _per_unit(err, np.asarray(units))
+    boot = _bootstrap(sums, counts, draws, seed)
+    return (
+        float(err.mean()),
+        float(np.percentile(boot, 2.5)),
+        float(np.percentile(boot, 97.5)),
+    )
+
+
+def difference_ci(
+    p, q, y, units, draws: int = 500, seed: int = 0
+) -> tuple[float, float, float]:
+    """Brier(p) - Brier(q), paired, with a unit-bootstrap interval."""
+    y = np.asarray(y, dtype=np.float64)
+    diff = (np.asarray(p) - y) ** 2 - (np.asarray(q) - y) ** 2
+    sums, counts = _per_unit(diff, np.asarray(units))
+    boot = _bootstrap(sums, counts, draws, seed)
+    return (
+        float(diff.mean()),
+        float(np.percentile(boot, 2.5)),
+        float(np.percentile(boot, 97.5)),
+    )
+
+
+def score(p, y, units, v0, draws: int = 500) -> dict:
+    """Everything the report and the gate need for one format and one model."""
+    p = np.asarray(p, dtype=np.float64)
+    b, lo, hi = brier_ci(p, y, units, draws)
+    b0, lo0, hi0 = brier_ci(v0, y, units, draws)
+    d, dlo, dhi = difference_ci(p, v0, y, units, draws)
+    table = calibration_table(list(p), [bool(v) for v in y])
+    fails = calibration_failures(table, TOLERANCE, MIN_BIN)
+    return {
+        "rows": int(len(y)),
+        "units": int(len(np.unique(units))),
+        "brier": b,
+        "brier_ci": [lo, hi],
+        "skill": 1 - b / COIN_FLIP,
+        "v0_brier": b0,
+        "v0_brier_ci": [lo0, hi0],
+        "minus_v0": d,
+        "minus_v0_ci": [dlo, dhi],
+        "calibration": [
+            {
+                "low": c.low,
+                "high": c.high,
+                "n": c.n,
+                "predicted": c.mean_predicted,
+                "observed": c.observed_rate,
+            }
+            for c in table
+        ],
+        "calibration_failures": [[c.low, c.high] for c in fails],
+    }
+
+
+def gate_failures(results: dict[str, dict]) -> list[str]:
+    """Why the gate fails, per format (empty: it passes)."""
+    out = []
+    for fmt, r in sorted(results.items()):
+        if not r["brier"] < r["v0_brier"]:
+            out.append(
+                f"{fmt}: v1 Brier {r['brier']:.4f} does not beat v0 {r['v0_brier']:.4f}"
+            )
+        if not r["brier"] < COIN_FLIP:
+            out.append(
+                f"{fmt}: v1 Brier {r['brier']:.4f} does not beat the coin flip 0.25"
+            )
+        for low, high in r["calibration_failures"]:
+            out.append(
+                f"{fmt}: calibration bin {low:.1f}-{high:.1f} is outside the "
+                f"tolerance {TOLERANCE}"
+            )
+    return out
+
+
+def trend(p: np.ndarray, table: Table) -> list[tuple[int, int, int, float]]:
+    """(our remaining, their remaining, rows, mean predicted): reported, not gated."""
+    c = {n: i for i, n in enumerate(table.columns)}
+    our = table.X[:, c["a_our_remaining"]].astype(int)
+    their = table.X[:, c["a_their_remaining"]].astype(int)
+    out = []
+    for a in range(5):
+        for b in range(5):
+            m = (our == a) & (their == b)
+            if m.sum() >= 30:
+                out.append((a, b, int(m.sum()), float(p[m].mean())))
+    return out
+
+
+# --------------------------------------------------------------------------
+# The test split's log
+# --------------------------------------------------------------------------
+
+
+def _commit() -> str:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def record_test_opening(path: Path | str, info: dict) -> int:
+    """Append a record of opening the test split; return how many times it has been."""
+    path = Path(path)
+    records = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    records.append(
+        {
+            "date": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+            "commit": _commit(),
+            **info,
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(records, indent=1), encoding="utf-8")
+    return len(records)
+
+
+def _fmt_ci(x: float, ci) -> str:
+    return f"{x:.4f} [{ci[0]:.4f}, {ci[1]:.4f}]"
+
+
+def describe(fmt: str, name: str, r: dict) -> str:
+    small = "  SMALL SAMPLE" if r["units"] < 500 else ""
+    lines = [
+        f"{fmt} {name}: {r['rows']} decision points in {r['units']} units{small}",
+        f"  Brier {_fmt_ci(r['brier'], r['brier_ci'])}  skill {r['skill']:+.3f}",
+        f"  v0    {_fmt_ci(r['v0_brier'], r['v0_brier_ci'])}",
+        f"  v1 - v0 {_fmt_ci(r['minus_v0'], r['minus_v0_ci'])}",
+    ]
+    for c in r["calibration"]:
+        if c["n"]:
+            flag = (
+                "  <-- outside tolerance"
+                if [c["low"], c["high"]] in r["calibration_failures"]
+                else ""
+            )
+            lines.append(
+                f"  {c['low']:.1f}-{c['high']:.1f} n={c['n']:<7d} predicted "
+                f"{c['predicted']:.3f} observed {c['observed']:.3f}{flag}"
+            )
+    return "\n".join(lines)
+
+
+def _isnan(x) -> bool:
+    return isinstance(x, float) and math.isnan(x)
+
+
+# --------------------------------------------------------------------------
+# Command line
+# --------------------------------------------------------------------------
+
+
+def _paths(models: Path, fmt: str) -> Path:
+    d = models / fmt
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _train_until(train, val, params, ckpt: Path, seconds: float):
+    import time
+
+    from wpa.model import fit
+
+    start = time.time()
+    while True:
+        model, info = fit(train, val, params, checkpoint=ckpt, max_steps=1)
+        if info["done"] or (seconds and time.time() - start > seconds):
+            return model, info
+
+
+def _cmd_train(a) -> None:
+    import time
+
+    from wpa.model import GRID, save
+
+    if not hasattr(a, "deadline"):
+        a.deadline = time.time() + a.seconds if a.seconds else 0.0
+
+    d = _paths(a.models, a.format)
+    train = select(load_table(a.features, a.format, "train", a.sample), a.groups)
+    val = select(load_table(a.features, a.format, "validation"), a.groups)
+    which = range(len(GRID)) if a.grid == "all" else [int(a.grid)]
+    for i in which:
+        name = f"grid{i}" if a.groups == "ABCDE" else f"ablation_{a.groups}"
+        if (d / f"{name}.json").exists():
+            print(f"{a.format} {name}: already done")
+            continue
+        params = GRID[i]
+        left = a.deadline - time.time() if a.deadline else 0.0
+        if a.deadline and left <= 0:
+            print(f"{a.format} {name}: out of time; run the same command again")
+            return
+        model, info = _train_until(train, val, params, d / f"{name}.ckpt", left)
+        if model is None:
+            print(
+                f"{a.format} {name}: not finished after {info['curve'][-1][0]} rounds; "
+                "run the same command again to carry on"
+            )
+            return
+        save(model, d / f"{name}.pkl")
+        info.update(
+            {
+                "grid": i,
+                "groups": a.groups,
+                "sample": a.sample,
+                "train_rows": int(len(train.y)),
+                "train_units": int(len(np.unique(train.unit))),
+            }
+        )
+        (d / f"{name}.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
+        (d / f"{name}.ckpt").unlink(missing_ok=True)
+        print(
+            f"{a.format} {name}: validation Brier {info['best_validation_brier']:.4f} "
+            f"after {info['n_iter']} rounds"
+        )
+
+
+def _cmd_select(a) -> None:
+    from wpa.model import load, recalibrate, save
+
+    d = _paths(a.models, a.format)
+    runs = []
+    for p in sorted(d.glob("grid*.json")):
+        info = json.loads(p.read_text(encoding="utf-8"))
+        runs.append((info["best_validation_brier"], p.stem, info))
+    if not runs:
+        raise SystemExit("no finished grid runs; run `train` first")
+    runs.sort()
+    brier, name, info = runs[0]
+    val = select(load_table(a.features, a.format, "validation"), "ABCDE")
+    model = load(d / f"{name}.pkl", val.columns)
+    before = score(model.predict(val.X), val.y, val.unit, v0_from_table(val))
+    chosen = {
+        "from": name,
+        "params": info["params"],
+        "n_iter": info["n_iter"],
+        "sample": info["sample"],
+        "recalibrated": False,
+        "grid": [(r[1], r[0]) for r in runs],
+    }
+    if before["calibration_failures"]:
+        recal = recalibrate(model, val)
+        after = score(recal.predict(val.X), val.y, val.unit, v0_from_table(val))
+        if after["brier"] <= before["brier"] and len(
+            after["calibration_failures"]
+        ) <= len(before["calibration_failures"]):
+            model, chosen["recalibrated"] = recal, True
+            chosen["before_recalibration"] = {
+                "brier": before["brier"],
+                "failures": before["calibration_failures"],
+            }
+    save(model, d / "v1.pkl")
+    (d / "v1.json").write_text(json.dumps(chosen, indent=1), encoding="utf-8")
+    print(
+        f"{a.format}: chose {name} (validation Brier {brier:.4f}); "
+        f"recalibrated: {chosen['recalibrated']}"
+    )
+
+
+def _cmd_ablation(a) -> None:
+    import time
+
+    from wpa.model import GRID
+
+    a.deadline = time.time() + a.seconds if a.seconds else 0.0
+    d = _paths(a.models, a.format)
+    chosen = json.loads((d / "v1.json").read_text(encoding="utf-8"))
+    a.grid = str(GRID.index(chosen["params"]))
+    for groups in a.steps:
+        if groups == "ABCDE":
+            continue
+        a.groups = groups
+        if a.deadline and time.time() > a.deadline:
+            print(f"{a.format}: out of time; run the same command again")
+            return
+        _cmd_train(a)
+
+
+def _validation_results(a, fmt: str) -> tuple[dict, list, tuple]:
+    from wpa.model import load
+
+    d = a.models / fmt
+    val_full = load_table(a.features, fmt, "validation")
+    v0 = v0_from_table(val_full)
+    model = load(d / "v1.pkl", columns("ABCDE"))
+    p = model.predict(select(val_full, "ABCDE").X)
+    rows = [("v0", score(v0, val_full.y, val_full.unit, v0))]
+    for groups in GROUP_STEPS:
+        name = "v1.pkl" if groups == "ABCDE" else f"ablation_{groups}.pkl"
+        if not (d / name).exists():
+            continue
+        m = load(d / name, columns(groups))
+        q = p if groups == "ABCDE" else m.predict(select(val_full, groups).X)
+        rows.append((groups, score(q, val_full.y, val_full.unit, v0)))
+    return rows[-1][1] if rows[-1][0] == "ABCDE" else {}, rows, (p, val_full)
+
+
+def _cmd_report(a) -> None:
+    out = ["=== v1 on the validation split ==="]
+    for fmt in a.formats:
+        if not (a.models / fmt / "v1.pkl").exists():
+            continue
+        v1, rows, (p, val) = _validation_results(a, fmt)
+        chosen = json.loads((a.models / fmt / "v1.json").read_text(encoding="utf-8"))
+        out.append(
+            f"\n{fmt}: model {chosen['from']}, {chosen['n_iter']} rounds, "
+            f"training sample {chosen['sample']:.0%} of units, recalibrated "
+            f"{chosen['recalibrated']}"
+        )
+        out.append("  ablation (validation Brier [95% interval by unit], minus v0):")
+        for name, r in rows:
+            out.append(
+                f"    {name:6s} {_fmt_ci(r['brier'], r['brier_ci'])}  "
+                f"minus v0 {_fmt_ci(r['minus_v0'], r['minus_v0_ci'])}"
+            )
+        if v1:
+            out.append(describe(fmt, "v1 (ABCDE)", v1))
+            out.append("  trend (our left, their left, rows, mean predicted):")
+            for t in trend(p, select(val, "A")):
+                out.append(f"    {t[0]} v {t[1]}: n={t[2]:<7d} {t[3]:.3f}")
+    text = "\n".join(out) + "\n"
+    print(text)
+    (a.models / "report.txt").write_text(text, encoding="utf-8")
+
+
+def _cmd_check(a) -> None:
+    results = {}
+    for fmt in a.formats:
+        v1, _rows, _ = _validation_results(a, fmt)
+        results[fmt] = v1
+        print(describe(fmt, "v1", v1))
+    fails = gate_failures(results)
+    for f in fails:
+        print("FAIL", f)
+    print("gate: " + ("FAILED" if fails else "passed"))
+    raise SystemExit(1 if fails else 0)
+
+
+def _cmd_final(a) -> None:
+    from wpa.model import load
+
+    n = record_test_opening(a.models / "test_openings.json", {"formats": a.formats})
+    if n > 1:
+        print(f"NOTE: the test split has now been opened {n} times")
+    out = []
+    for fmt in a.formats:
+        test = load_table(a.features, fmt, "test")
+        model = load(a.models / fmt / "v1.pkl", columns("ABCDE"))
+        r = score(
+            model.predict(select(test, "ABCDE").X),
+            test.y,
+            test.unit,
+            v0_from_table(test),
+        )
+        (a.models / fmt / "test.json").write_text(
+            json.dumps(r, indent=1), encoding="utf-8"
+        )
+        out.append(describe(fmt, "v1 on the TEST split", r))
+    print("\n".join(out))
+
+
+def main() -> None:
+    import argparse
+    import sys
+
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+
+    p = argparse.ArgumentParser(description="Train and evaluate the v1 model.")
+    p.add_argument(
+        "command", choices=["train", "select", "ablation", "report", "check", "final"]
+    )
+    p.add_argument("--format", default="regma")
+    p.add_argument("--formats", nargs="+", default=["regma", "regmb"])
+    p.add_argument("--features", type=Path, default=Path("features"))
+    p.add_argument("--models", type=Path, default=Path("models"))
+    p.add_argument("--grid", default="all", help="grid entry to train, or all")
+    p.add_argument("--groups", default="ABCDE")
+    p.add_argument("--steps", nargs="+", default=list(GROUP_STEPS))
+    p.add_argument(
+        "--sample",
+        type=float,
+        default=1.0,
+        help="fraction of training units to use (1.0 = all)",
+    )
+    p.add_argument(
+        "--seconds",
+        type=float,
+        default=0,
+        help="stop after this long and carry on next time (0 = run to the end)",
+    )
+    a = p.parse_args()
+    {
+        "train": _cmd_train,
+        "select": _cmd_select,
+        "ablation": _cmd_ablation,
+        "report": _cmd_report,
+        "check": _cmd_check,
+        "final": _cmd_final,
+    }[a.command](a)
+
+
+if __name__ == "__main__":
+    main()
