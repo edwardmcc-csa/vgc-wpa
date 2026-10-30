@@ -26,6 +26,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable, Mapping, Sequence
 from itertools import combinations
+from pathlib import Path
 
 from wpa.timer_join import JoinedTimers
 
@@ -100,10 +101,10 @@ def follow_up(
         op, key, i = e[0], e[1], e[2]
         p = s[key][i]
         if op == "faint":
-            p.update(hp_fraction=0.0, fainted=True, active=False)
+            p.update(hp_fraction=0.0, fainted=True, active=False, boosts={}, status="")
             gone[key].add(p["species"])
         elif op == "bring_in":
-            p.update(active=True, hp_fraction=p["hp_fraction"] or 1.0)
+            p.update(active=True, hp_fraction=p["hp_fraction"] or 1.0, boosts={})
         elif op == "damage":
             p["hp_fraction"] = max(0.01, p["hp_fraction"] - e[3])
         else:
@@ -127,16 +128,20 @@ def follow_up(
     return [*before, s], t
 
 
-def features_at(states, k, role, j, sheets, dex, table, groups) -> dict[str, float]:
+def features_at(
+    states, k, role, j, sheets, dex, table, groups, ctx=None
+) -> dict[str, float]:
     from wpa.features import state_features
 
-    return state_features(states, k, role, j, sheets, dex, table, groups)
+    return state_features(states, k, role, j, sheets, dex, table, groups, ctx)
 
 
-def _leaf(states, k, role, j, sheets, dex, table, groups) -> Callable:
+def _leaf(states, k, role, j, sheets, dex, table, groups, ctx=None) -> Callable:
+    """Features of a follow-up; the spreads stay those at the decision."""
+
     def f(edits):
         ss, jj = follow_up(states, k, j, edits)
-        return features_at(ss, len(ss) - 1, role, jj, sheets, dex, table, groups)
+        return features_at(ss, len(ss) - 1, role, jj, sheets, dex, table, groups, ctx)
 
     return f
 
@@ -180,10 +185,10 @@ def is_ec001(states: Sequence[Mapping], k: int, j: JoinedTimers) -> bool:
     )
 
 
-def ec001_tree(states, k, role, j, sheets, dex, table, groups) -> dict:
+def ec001_tree(states, k, role, j, sheets, dex, table, groups, ctx=None) -> dict:
     """double_ko: both of theirs faint and the reserve comes in; single_ko: we
     pick which one faints (outer), they pick who comes in (inner); stall."""
-    f = _leaf(states, k, role, j, sheets, dex, table, groups)
+    f = _leaf(states, k, role, j, sheets, dex, table, groups, ctx)
     s = states[k]
     act, back = _active(s, THEIR), reserve(states, k, THEIR)
     faint_all = [("faint", THEIR, a) for a in act]
@@ -240,10 +245,12 @@ def is_ec002(states: Sequence[Mapping], k: int, j: JoinedTimers) -> bool:
     )
 
 
-def ec002_tree(states, k, role, j, sheets, dex, table, groups, damage=0.5) -> dict:
+def ec002_tree(
+    states, k, role, j, sheets, dex, table, groups, ctx=None, damage=0.5
+) -> dict:
     """sacrifice: the spent one faints and we pick who comes in (outer);
     keep: the spent one lives and the strong one takes `damage`."""
-    f = _leaf(states, k, role, j, sheets, dex, table, groups)
+    f = _leaf(states, k, role, j, sheets, dex, table, groups, ctx)
     pair = _spent_strong(states[k])
     assert pair is not None
     spent, strong = pair
@@ -254,6 +261,22 @@ def ec002_tree(states, k, role, j, sheets, dex, table, groups, damage=0.5) -> di
         ],
         "keep": [[f([("damage", OUR, strong, damage)])]],
     }
+
+
+def ec001_damage_premise(now: Mapping[str, float], tree: Mapping) -> bool:
+    """The claim in damage terms (group G): their active pair cannot take 40% of
+    either of ours, and after a double knock-out some way in for their reserve
+    knocks one of ours out this turn."""
+    return now["g_their_best_dmg"] < 0.4 and any(
+        r["g_their_ko_n"] >= 1 for r in tree["double_ko"][0]
+    )
+
+
+def ec002_damage_premise(tree: Mapping) -> bool:
+    """EC-002's advantage in damage terms (group G, which carries type match-ups):
+    some sacrifice leaves us hitting their board harder than keeping does."""
+    keep = tree["keep"][0][0]["g_our_dmg_board"]
+    return any(o[0]["g_our_dmg_board"] > keep for o in tree["sacrifice"])
 
 
 def ec002_premise(tree: Mapping) -> bool:
@@ -285,19 +308,25 @@ def scan_shard(
     tables: Mapping,
     formats: Sequence[str],
     per_shard: int,
+    groups: str = GROUPS,
+    usage_dir=None,
 ) -> list[dict]:
     """Every EC-001 position and up to `per_shard` EC-002 positions per format
-    in one shard of validation games, with their follow-ups' features."""
+    in one shard of validation games, with their follow-ups' features. With
+    `usage_dir`, each position has its damage context (real Speed, group G)."""
     import gzip
     import json
 
     from wpa.decisions import build_game
-    from wpa.features import columns
+    from wpa.features import _worker_tools, columns, damage_contexts
     from wpa.formats import format_of
     from wpa.team_sheets import sheets_from_log
 
-    cols = columns(GROUPS)
+    cols = columns(groups)
     vec = lambda r: [round(r[c], 6) for c in cols]  # noqa: E731
+    calc = store = None
+    if usage_dir is not None:
+        calc, store = _worker_tools(usage_dir)
     out: list[dict] = []
     ec002_count = dict.fromkeys(formats, 0)
     with gzip.open(
@@ -311,6 +340,18 @@ def scan_shard(
                 continue
             game = build_game(log, tables[fmt])
             sheets = sheets_from_log(log)
+            contexts: dict | None = None  # worked out at the game's first position
+
+            def context(role: str, k: int):
+                nonlocal contexts
+                if calc is None or len(sheets) != 2:
+                    return None
+                if contexts is None:
+                    contexts = damage_contexts(
+                        tag, log, game, sheets, dexes[fmt], calc, store
+                    )
+                return contexts[role][k]
+
             for role in ("p1", "p2"):
                 states, joined = game.states[role], game.joined[role]
                 if states[-1]["outcome"] is None:
@@ -330,7 +371,8 @@ def scan_shard(
                             sheets,
                             dexes[fmt],
                             tables[fmt],
-                            GROUPS,
+                            groups,
+                            context(role, k),
                         )
                         now = features_at(*args)
                         tree = build(*args)
@@ -339,6 +381,13 @@ def scan_shard(
                             if claim == "EC-001"
                             else ec002_premise(tree)
                         )
+                        damage = None
+                        if "G" in groups and args[-1] is not None:
+                            damage = (
+                                ec001_damage_premise(now, tree)
+                                if claim == "EC-001"
+                                else ec002_damage_premise(tree)
+                            )
                         if claim == "EC-002":
                             ec002_count[fmt] += 1
                         out.append(
@@ -349,6 +398,7 @@ def scan_shard(
                                 "role": role,
                                 "turn": states[k]["turn"],
                                 "premise": premise,
+                                "damage_premise": damage,
                                 "now": vec(now),
                                 "tree": {
                                     n: [[vec(r) for r in inner] for inner in outer]
@@ -359,16 +409,17 @@ def scan_shard(
     return out
 
 
-def _predictors(fmt: str, models_v1, models_v2) -> dict[str, Callable]:
-    """name -> predict(X with the ABCDEF columns) for v0, v1 and v2."""
+def _predictors(fmt: str, groups: str, models_v1, specs) -> dict[str, Callable]:
+    """name -> predict(X with the columns of `groups`) for v0, v1 and each
+    `NAME=FOLDER:GROUPS` in `specs` (the Reg M-A model, or the pooled one for
+    Reg M-B, recalibrated if it was)."""
     import numpy as np
 
     from wpa.evaluate import v0_from_table, with_format_flag
     from wpa.features import Table, columns
     from wpa.model import load
 
-    cols = columns(GROUPS)
-    sub = [cols.index(c) for c in columns("ABCDE")]
+    cols = columns(groups)
 
     def table(X, cs):
         n = len(X)
@@ -383,23 +434,30 @@ def _predictors(fmt: str, models_v1, models_v2) -> dict[str, Callable]:
             list(cs),
         )
 
-    which = "regma" if fmt == "regma" else "pooled"
-    d = models_v2 / which
-    path = d / f"{GROUPS}.recal.pkl"
-    path = path if path.exists() else d / f"{GROUPS}.pkl"
-    if which == "pooled":
-        v2_cols = [*cols, "z_format_regmb"]
-        v2 = load(path, v2_cols)
-        v2_predict = lambda X: v2.predict(with_format_flag(table(X, cols), 1.0).X)  # noqa: E731
-    else:
-        v2 = load(path, cols)
-        v2_predict = v2.predict
+    def subset(gs):
+        return [cols.index(c) for c in columns(gs)]
+
+    out: dict[str, Callable] = {"v0": lambda X: v0_from_table(table(X, cols))}
     v1 = load(models_v1 / fmt / "v1.pkl", columns("ABCDE"))
-    return {
-        "v0": lambda X: v0_from_table(table(X, cols)),
-        "v1": lambda X: v1.predict(X[:, sub]),
-        "v2": v2_predict,
-    }
+    s1 = subset("ABCDE")
+    out["v1"] = lambda X: v1.predict(X[:, s1])
+    which = "regma" if fmt == "regma" else "pooled"
+    for spec in specs:
+        name, _, rest = spec.partition("=")
+        folder, _, gs = rest.partition(":")
+        d = Path(folder) / which
+        path = d / f"{gs}.recal.pkl"
+        path = path if path.exists() else d / f"{gs}.pkl"
+        sub = subset(gs)
+        if which == "pooled":
+            m = load(path, [*columns(gs), "z_format_regmb"])
+            out[name] = lambda X, m=m, sub=sub, gs=gs: m.predict(
+                with_format_flag(table(X[:, sub], columns(gs)), 1.0).X
+            )
+        else:
+            m = load(path, columns(gs))
+            out[name] = lambda X, m=m, sub=sub: m.predict(X[:, sub])
+    return out
 
 
 def score(records: Sequence[dict], predict: Callable) -> list[dict[str, float]]:
@@ -479,7 +537,18 @@ def main() -> None:
     )
     p.add_argument("--formats", nargs="+", default=["regma", "regmb"])
     p.add_argument("--models-v1", type=Path, default=Path("models"))
-    p.add_argument("--models-v2", type=Path, default=Path("models_v2"))
+    p.add_argument(
+        "--model",
+        action="append",
+        help="NAME=FOLDER:GROUPS, e.g. v3=models_v3:ABCDEFG (repeatable; "
+        "default v2=models_v2:ABCDEF)",
+    )
+    p.add_argument("--groups", default=GROUPS, help="feature groups to record")
+    p.add_argument(
+        "--usage",
+        type=Path,
+        help="Smogon usage statistics: spreads, real Speed and damage (G)",
+    )
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     if a.command == "scan":
@@ -504,6 +573,8 @@ def main() -> None:
                 tables=tables,
                 formats=a.formats,
                 per_shard=a.per_shard,
+                groups=a.groups,
+                usage_dir=a.usage,
             )
             tmp = path.with_suffix(".tmp")
             with gzip.open(tmp, "wt", encoding="utf-8") as fh:
@@ -521,14 +592,19 @@ def main() -> None:
     lines = [f"Expert claims on the decision table ({scanned} shards scanned)"]
     from wpa.features import columns
 
-    first = columns(GROUPS).index("f_their_first")
-    subsets = {
+    first = columns(a.groups).index("f_their_first")
+    subsets: dict = {
         "EC-001": {
             "threat": lambda r: all(v[first] == 1 for v in r["tree"]["double_ko"][0])
-        }
+        },
+        "EC-002": {},
     }
+    if "G" in a.groups:
+        for claim in subsets:
+            subsets[claim]["damage"] = lambda r: bool(r.get("damage_premise"))
+    specs = a.model or ["v2=models_v2:ABCDEF"]
     for fmt in a.formats:
-        models = _predictors(fmt, a.models_v1, a.models_v2)
+        models = _predictors(fmt, a.groups, a.models_v1, specs)
         for claim, (_is, _build, better, worse) in CLAIMS.items():
             rs = [r for r in records if r["format"] == fmt and r["claim"] == claim]
             for name, predict in models.items():
@@ -538,6 +614,7 @@ def main() -> None:
                     ("all", "all positions"),
                     ("premise", "claim's premise holds"),
                     ("threat", "their reserve acts first after a double knock-out"),
+                    ("damage", "the claim's premise in damage terms"),
                 ):
                     if part not in s:
                         continue

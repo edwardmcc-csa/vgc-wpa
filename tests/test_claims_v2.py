@@ -150,8 +150,8 @@ def test_a_follow_up_is_the_next_turn_start_and_leaves_the_game_untouched():
     )
     s = states[-1]
     assert s["turn"] == 4 and s["decision_index"] == 0 and s["moment"] == "turn_start"
-    assert s["opp_pokemon"][0] == pk("mid", 0.0, fainted=True)
-    assert s["opp_pokemon"][2] == pk("fast", 1.0, True)
+    for i, want in ((0, pk("mid", 0.0, fainted=True)), (2, pk("fast", 1.0, True))):
+        assert {k: s["opp_pokemon"][i][k] for k in want} == want
     assert states[-2]["observations"] == []  # the decided turn's own end is not known
     assert g[0]["opp_pokemon"][0]["active"] and g[0]["observations"]
     assert j.theirs == (("tailwind", "side", 1, 1),)
@@ -302,3 +302,33 @@ def test_a_summary_can_report_extra_subsets():
     values = [{"a": 0.5, "b": 0.4}, {"a": 0.1, "b": 0.3}]
     s = C.summarise(records, values, ("a",), "b", {"other": lambda r: not r["premise"]})
     assert s["other"]["positions"] == 1 and s["other"]["agrees"] == 0.0
+
+
+def test_fainting_or_coming_in_clears_stat_stages():
+    g = game()
+    g[0]["opp_pokemon"][0]["boosts"] = {"atk": 2}
+    states, _ = C.follow_up(
+        g, 0, TW(2), [("faint", "opp_pokemon", 0), ("bring_in", "opp_pokemon", 2)]
+    )
+    assert states[-1]["opp_pokemon"][0]["boosts"] == {}
+    assert states[-1]["opp_pokemon"][2]["boosts"] == {}
+    assert g[0]["opp_pokemon"][0]["boosts"] == {"atk": 2}
+
+
+def test_ec001_damage_premise_their_pair_is_harmless_and_their_reserve_is_not():
+    now = {"g_their_best_dmg": 0.3}
+    tree = {"double_ko": [[{"g_their_ko_n": 1.0}, {"g_their_ko_n": 0.0}]]}
+    assert C.ec001_damage_premise(now, tree)  # one way in can knock one of ours out
+    assert not C.ec001_damage_premise({"g_their_best_dmg": 0.6}, tree)
+    assert not C.ec001_damage_premise(now, {"double_ko": [[{"g_their_ko_n": 0.0}]]})
+
+
+def test_ec002_damage_premise_a_sacrifice_that_hits_harder():
+    keep = {"g_our_dmg_board": 0.8}
+    tree = {
+        "keep": [[keep]],
+        "sacrifice": [[{"g_our_dmg_board": 1.2}], [{"g_our_dmg_board": 0.5}]],
+    }
+    assert C.ec002_damage_premise(tree)
+    tree["sacrifice"] = [[{"g_our_dmg_board": 0.5}]]
+    assert not C.ec002_damage_premise(tree)
