@@ -694,7 +694,9 @@ def _group_names(full: str, base: str) -> str:
 def _cmd_v2_report(a) -> None:
     from wpa.model import recalibrate, save
 
-    out = ["=== v2 on our decision table: validation split ==="]
+    out = [
+        f"=== {a.models.name} ({a.full}) on our decision table: validation split ==="
+    ]
     results = {}
     for fmt, which in (("regma", "regma"), ("regmb", "pooled")):
         d = a.models / which
@@ -715,7 +717,7 @@ def _cmd_v2_report(a) -> None:
                 r, note = r2, "recalibrated on validation"
         results[fmt] = r
         out.append(f"\n{fmt} ({which} model, groups {a.full}, {note})")
-        out.append(describe(fmt, "v2", r))
+        out.append(describe(fmt, a.models.name, r))
         base = _base_groups(a.full, a.base)
         if base != a.full and (d / f"{base}.pkl").exists():
             _m0, _raw0, x0 = _v2_predict(a, which, base, "validation")
@@ -752,7 +754,7 @@ def _cmd_v2_final(a) -> None:
             model = load(recal, list(x.columns))
         r = score(model.predict(x.X), raw.y, raw.unit, v0_from_table(raw))
         (d / "test.json").write_text(json.dumps(r, indent=1), encoding="utf-8")
-        print(describe(fmt, f"v2 ({which}) on the TEST split", r))
+        print(describe(fmt, f"{a.models.name} ({which}) on the TEST split", r))
 
 
 def main() -> None:
