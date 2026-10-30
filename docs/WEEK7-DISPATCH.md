@@ -27,6 +27,7 @@ on three things we don't model yet:
    game reveals.**
    - **Starting point:** Smogon's usage statistics for the same format and month.
      The "chaos" files list spreads in stat points, e.g. `Adamant:32/32/0/0/2/0`.
+     The 1500 rating cutoff, Smogon's standard weighting (PO, 30 Oct).
    - **Refinement:** the damage we deal to a Pokemon shows its bulk; the damage it
      deals shows its offence; who moved first shows its Speed.
    - Only what happened before the decision is used.
@@ -130,8 +131,8 @@ on three things we don't model yet:
       computer (runbook). Reg M-B uses the pooled model.
 - [ ] Ablation: v2 (with real Speed) against v3 (adding G), as a paired difference
       per format. Gate on validation.
-- [ ] The test split is opened for v3 only if the PO says so. It would be the
-      fourth opening, logged.
+- [ ] The test split is opened once for v3, when everything above is settled
+      (PO agreed 30 Oct). It will be the fourth opening, logged.
 - [ ] Expert claims re-scored:
       - **EC-001:** "the opposing pair has little damage potential" becomes
         measurable, as does the reserve's knock-out threat.
@@ -154,10 +155,11 @@ on three things we don't model yet:
   apart.
 - Build time: millions of calculations, so the cache has to carry it.
 
-## For the PO before starting
-1. **Rating cutoff for the starting spreads:** 1500 (recommended; Smogon's standard
-   weighting), 0 (everyone) or 1760 (top players only).
-2. **Your team export:** not needed this week. It is needed when we analyse your
+## Settled with the PO (30 Oct)
+1. **Rating cutoff for the starting spreads:** 1500.
+2. **Test split for v3:** yes, once.
+3. **Your team export:** not needed this week. It is needed when we analyse your
    own games.
-3. **Still open from Week 6:** full Reg M-A training of v2 on your computer
-   (runbook Section 15, step 7).
+4. **Week 6 carry-over:** the PO runs full Reg M-A training of v2 on their computer
+   (runbook Section 15, step 7). Its result decides whether v3 is also trained on
+   the full set.
