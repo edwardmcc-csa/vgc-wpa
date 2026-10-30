@@ -142,6 +142,8 @@ CAPABILITIES = (
     "spread",
     "trapping",
     "perishsong",
+    "pivot",
+    "escape",
 )
 
 # capability -> moves that give it
@@ -157,6 +159,16 @@ _BY_MOVE = {
     "screens": {"lightscreen", "reflect", "auroraveil"},
     "trapping": {"meanlook", "block", "spiderweb"},
     "perishsong": {"perishsong"},
+    "pivot": {
+        "uturn",
+        "voltswitch",
+        "flipturn",
+        "partingshot",
+        "teleport",
+        "batonpass",
+        "shedtail",
+        "chillyreception",
+    },
 }
 # capability -> abilities that give it
 _BY_ABILITY = {
@@ -169,6 +181,17 @@ _BY_ABILITY = {
     "trapping": {"shadowtag", "arenatrap"},
 }
 _SPREAD_TARGETS = {"allAdjacentFoes", "allAdjacent"}
+
+
+def form_of(mon: SheetMon, dex: Dex) -> dict:
+    """The species entry, as its Mega form when it holds its own Mega Stone."""
+    stone = dex.items.get(mon.item, {}).get("megaStone") or {}
+    if isinstance(stone, str):
+        stone = {"": stone}
+    for base, mega in stone.items():
+        if (not base or to_id(base) == mon.species) and to_id(mega) in dex.species:
+            return dex.species[to_id(mega)]
+    return dex.species.get(mon.species, {})
 
 
 def abilities_of(mon: SheetMon, dex: Dex) -> set[str]:
@@ -197,7 +220,11 @@ def capabilities(mon: SheetMon, dex: Dex) -> set[str]:
       (rain), Drought, Orichalcum Pulse or Desolate Land (sun), Sand Stream,
       Snow Warning, Prankster, Intimidate;
     * trapping: Shadow Tag or Arena Trap (Gengarite gives Mega Gengar's Shadow
-      Tag), Mean Look, Block or Spider Web; Perish Song is its own capability.
+      Tag), Mean Look, Block or Spider Web; Perish Song is its own capability;
+    * pivot: U-turn, Volt Switch, Flip Turn, Parting Shot, Teleport, Baton Pass,
+      Shed Tail, Chilly Reception;
+    * escape: can leave a trap: a pivot move, a Ghost type (never trapped), or
+      Shed Shell. (Arena Trap also misses Flying types and Levitate; not counted.)
     """
     caps: set[str] = set()
     moves = set(mon.moves)
@@ -216,6 +243,12 @@ def capabilities(mon: SheetMon, dex: Dex) -> set[str]:
     for cap, names in _BY_ABILITY.items():
         if abilities & names:
             caps.add(cap)
+    # a way out of a trap (PO, 29 Oct): a pivot move, being a Ghost type (never
+    # trapped, Mega form included), or Shed Shell
+    types = set(dex.species.get(mon.species, {}).get("types") or ())
+    types |= set(form_of(mon, dex).get("types") or ())
+    if "pivot" in caps or "Ghost" in types or mon.item == "shedshell":
+        caps.add("escape")
     return caps
 
 

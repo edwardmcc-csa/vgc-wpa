@@ -179,6 +179,35 @@ def test_trapping_counts_a_mega_stones_shadow_tag_and_perish_song_is_its_own():
     assert "trapping" in S.capabilities(looker, dex)
 
 
+def test_ways_out_of_a_trap_are_a_pivot_move_or_being_a_ghost():
+    # PO, 29 Oct: a trapped Pokemon can still leave with a pivot move (U-turn,
+    # Parting Shot ...), and Ghost types can never be trapped.
+    dex = S.Dex(
+        species={
+            **MINI.species,
+            "gengar": {
+                "name": "Gengar",
+                "types": ["Ghost", "Poison"],
+                "abilities": {"0": "Cursed Body"},
+            },
+            "incineroar": {
+                "name": "Incineroar",
+                "types": ["Fire", "Dark"],
+                "abilities": {"0": "Intimidate"},
+            },
+        },
+        moves={**MINI.moves, "partingshot": move("Status"), "uturn": move(bp=70)},
+        items={**MINI.items, "shedshell": {"name": "Shed Shell", "megaStone": None}},
+    )
+    assert "escape" in S.capabilities(mon(1, "gengar", moves=["protect"]), dex)
+    pivot = mon(2, "incineroar", moves=["partingshot", "fakeout"])
+    assert {"escape", "pivot"} <= S.capabilities(pivot, dex)
+    stuck = mon(3, "incineroar", moves=["fakeout", "protect"])
+    assert "escape" not in S.capabilities(stuck, dex)
+    shell = mon(4, "incineroar", item="shedshell", moves=["fakeout"])
+    assert "escape" in S.capabilities(shell, dex)
+
+
 def test_fake_out_and_protect_are_not_counted_as_priority_attacks():
     caps = S.capabilities(mon(1, "charizard", moves=["fakeout", "protect"]), MINI)
     assert "priority" not in caps and "fakeout" in caps

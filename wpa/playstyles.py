@@ -18,7 +18,7 @@ from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from itertools import combinations
 
-from wpa.team_sheets import Dex, SheetMon, abilities_of, capabilities, to_id
+from wpa.team_sheets import Dex, SheetMon, abilities_of, capabilities, form_of
 
 TAGS = (
     "tailroom",
@@ -41,7 +41,7 @@ HO_SPEED_WITH_PRIORITY_TAILWIND = 80  # ... or this, with a priority Tailwind us
 # Proposals, to be moved by the PO from the report
 HO_MIN_FAST_DAMAGE_DEALERS = 3
 HO_MAX_DISRUPTERS = 2
-HO_MAX_AVERAGE_BULK = 85.0  # mean of (HP + Def + SpD) / 3 over the six
+HO_MAX_AVERAGE_BULK = 88.0  # PO, 29 Oct: mean of (HP + Def + SpD) / 3 over six
 HEAVY_SPREAD_POWER = 80  # Heat Wave 95, Hyper Voice 90; Rock Slide (75) is below
 HARD_TR_MIN_SETTERS = 2
 HARD_TR_MAX_AVERAGE_SPEED = 70.0
@@ -121,13 +121,7 @@ _SPREAD_TARGETS = {"allAdjacentFoes", "allAdjacent"}
 
 def species_of(mon: SheetMon, dex: Dex) -> dict:
     """The species entry, as its Mega form when it holds its own Mega Stone."""
-    stone = dex.items.get(mon.item, {}).get("megaStone") or {}
-    if isinstance(stone, str):
-        stone = {"": stone}
-    for base, mega in stone.items():
-        if (not base or to_id(base) == mon.species) and to_id(mega) in dex.species:
-            return dex.species[to_id(mega)]
-    return dex.species.get(mon.species, {})
+    return form_of(mon, dex)
 
 
 def _stats(mon: SheetMon, dex: Dex) -> dict:
@@ -245,20 +239,27 @@ def measures(team: Sequence[SheetMon], dex: Dex) -> dict[str, float]:
     }
 
 
-HO_CONDITIONS = ("fast_damage_dealers", "heavy_spread", "low_disruption", "low_bulk")
+HO_CONDITIONS = (
+    "fast_damage_dealers",
+    "heavy_spread",
+    "low_disruption",
+    "low_bulk",
+    "no_defensive_items",
+)
 
 
 def ho_failures(s: Mapping[str, float]) -> list[str]:
     """The Hyper Offense conditions this team misses (empty: it is HO).
 
-    Defensive items are not a condition (PO, 29 Oct 2026: Assault Vest,
-    Eviolite and Rocky Helmet are not in Reg M-A or M-B); they stay a measure.
+    Defensive items stay a condition (PO, 29 Oct 2026): Assault Vest, Eviolite
+    and Rocky Helmet are not in Reg M-A or M-B yet, but will come back.
     """
     ok = {
         "fast_damage_dealers": s["fast_damage_dealers"] >= HO_MIN_FAST_DAMAGE_DEALERS,
         "heavy_spread": s["heavy_spread_users"] >= 1,
         "low_disruption": s["disrupters"] <= HO_MAX_DISRUPTERS,
         "low_bulk": s["average_bulk"] <= HO_MAX_AVERAGE_BULK,
+        "no_defensive_items": s["defensive_items"] == 0,
     }
     return [k for k in HO_CONDITIONS if not ok[k]]
 
@@ -389,6 +390,7 @@ class Report:
         ho["heavy_spread"] += s["heavy_spread_users"] >= 1
         ho["low_disruption"] += s["disrupters"] <= HO_MAX_DISRUPTERS
         ho["low_bulk"] += s["average_bulk"] <= HO_MAX_AVERAGE_BULK
+        ho["no_defensive_items"] += s["defensive_items"] == 0
         ho["all"] += _ho(s)
         wb = self.weather_by.setdefault(fmt, Counter())
         for m in team:
@@ -443,6 +445,7 @@ class Report:
                         "heavy_spread",
                         "low_disruption",
                         "low_bulk",
+                        "no_defensive_items",
                         "all",
                     )
                 )

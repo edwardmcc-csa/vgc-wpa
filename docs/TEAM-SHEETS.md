@@ -38,6 +38,8 @@ adds its Mega form's ability (Charizardite Y gives Drought, so sun).
 | spread | a damaging move that hits both foes | 95.7% | 96.3% |
 | trapping | Shadow Tag, Arena Trap (Gengarite gives Mega Gengar's Shadow Tag), Mean Look, Block, Spider Web | 8.0% | 3.2% |
 | perishsong | Perish Song | 5.4% | 2.6% |
+| pivot | U-turn, Volt Switch, Flip Turn, Parting Shot, Teleport, Baton Pass, Shed Tail, Chilly Reception | 58.4% | 62.9% |
+| escape | can leave a trap (PO, 29 Oct): a pivot move, a Ghost type (never trapped; Mega form included), or Shed Shell. Arena Trap also misses Flying types and Levitate; not modelled | 88.9% | 91.4% |
 
 (169,476 Reg M-A and 8,334 Reg M-B team sheets, two per game.)
 

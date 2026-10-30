@@ -143,9 +143,9 @@ def test_eighty_speed_is_enough_only_with_a_priority_tailwind_user():
     assert "hyperoffense" not in P.team_tags(no_prankster, DEX)
 
 
-def test_defensive_items_do_not_decide_hyper_offense():
+def test_defensive_items_still_rule_out_hyper_offense():
     # PO, 29 Oct: Assault Vest, Eviolite and Rocky Helmet are not in Reg M-A or
-    # M-B, so the item test is dropped; low base bulk stays.
+    # M-B yet, but will come back, so the test stays.
     vest = tuple(
         SheetMon(
             x.position,
@@ -157,7 +157,12 @@ def test_defensive_items_do_not_decide_hyper_offense():
         )
         for x in HO
     )
-    assert "hyperoffense" in P.team_tags(vest, DEX)
+    assert "hyperoffense" not in P.team_tags(vest, DEX)
+    assert "no_defensive_items" in P.ho_failures(P.measures(vest, DEX))
+
+
+def test_the_bulk_cut_off_is_the_product_owners_88():
+    assert P.HO_MAX_AVERAGE_BULK == 88.0
 
 
 def test_heavy_disruption_rules_out_hyper_offense():
