@@ -20,3 +20,4 @@ models/
 logs_shards/
 features_v2/
 models_v2/
+claims_v2/

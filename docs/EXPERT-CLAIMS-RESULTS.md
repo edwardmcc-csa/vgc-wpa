@@ -32,3 +32,65 @@ Pokemon alive in 93-94% of positions: it has learned that a Pokemon on the board
 is worth more than half a Pokemon's hit points. The claim's own condition
 ("a speed or type advantage") is not in the features. Like EC-001, it needs speed
 and type match-ups before it can be judged.
+
+---
+
+## Week 6: re-scored with v2 (speed features, decision table)
+
+Week 6 Task 5. Code: `wpa/claims_v2.py` (`python -m wpa.claims_v2 scan`, then
+`python -m wpa.claims_v2 report`). Nothing here gates.
+
+**What changed in the method.** Week 5 edited feature rows, so whoever came in was
+anonymous. Now the follow-ups are made on the board itself and every feature is
+computed again by the same code that builds the training table:
+
+- Who comes in is the real reserve: the Pokemon that side actually brought (the
+  ones that appear at some point in the game). A position is used only when all
+  four of the side that changes are known.
+- Choices are a small game tree: we pick which of theirs to knock out (our best),
+  they pick who comes in (their best reply). For EC-002 we pick who comes in.
+- A turn passing takes a turn off every timer, so Tailwind with one turn left is
+  gone when the replacements arrive and Tailwind with two turns left still runs.
+- Approximations, the same for every follow-up: nobody else takes damage,
+  counters such as Protect's reset, and the end-of-turn field record of the turn
+  being decided is not used.
+
+Positions come from the validation split: every EC-001 position, and up to 12 EC-002
+positions per log shard and format. Percentages are how often the model prefers the
+claim's choice.
+
+| | Reg M-A v0 | Reg M-A v1 | Reg M-A v2 | Reg M-B v0 | Reg M-B v1 | Reg M-B v2 |
+|---|---|---|---|---|---|---|
+| EC-001, all positions | 0% of 138 | 0% of 138 | 0% of 138 | 0% of 2 | 0% of 2 | 0% of 2 |
+| EC-001, their reserve acts first after a double KO | 0% of 105 | 0% of 105 | 0% of 105 | 0% of 1 | 0% of 1 | 0% of 1 |
+| EC-001, the claim's full premise | none found | | | none found | | |
+| EC-002, all positions | 100% of 768 | 22% of 768 | 37% of 768 | 100% of 399 | 16% of 399 | 35% of 399 |
+| EC-002, the sacrifice gains speed | 100% of 182 | 26% of 182 | 49% of 182 | 100% of 97 | 10% of 97 | 52% of 97 |
+
+**EC-001.** The claim's full situation never turns up in the validation games: in
+the 8 positions where our pair outspeeds their Tailwind pair, their reserve does not
+outspeed us after a double knock-out. The narrower situation the claim warns about
+(after a double knock-out, their reserve acts before our fastest) is common: 105 of
+138 positions in Reg M-A, 81 of them with Tailwind still running when the
+reserve arrives. In every one of them, all three models prefer the double
+knock-out. v2 gives a mean of 0.79 for the double knock-out, 0.67 for the single
+and 0.55 for a stall.
+
+So the speed features do not change the verdict. The models have now seen the
+speed of the incoming Pokemon and still value two knock-outs above tempo. Either
+the claim holds only in narrower cases than these positions (the claim also
+says "the opposing pair has little damage potential", which no feature measures),
+or what makes the reserve dangerous is damage, not just speed. Nothing estimates
+how hard the incoming Pokemon hit or how much our side can take. That is the next
+feature this claim needs.
+
+**EC-002.** v1 strongly preferred keeping the spent Pokemon (16-22% agreement).
+v2 moves towards the claim, and the move comes from speed. Where bringing in the
+replacement leaves us outspeeding more of their Pokemon, v2 is split almost
+evenly: 49% in Reg M-A and 52% in Reg M-B, with mean win probability for sacrifice
+and keep within 0.01. Without that speed gain it still prefers to keep. That is
+what the claim says: the sacrifice is worth it *when* it buys an advantage. The
+claim's other condition, a type advantage, is still not in the features.
+
+v0 always prefers the sacrifice, but only because it adds up hit points. That is not
+evidence for the claim.
