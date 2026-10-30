@@ -777,6 +777,79 @@ built Showdown submodule.
 
 ---
 
+## 15. The v2 model on our own decision table (Week 6)
+
+v2 is built from our own decision table (`wpa/decisions.py`, see
+`docs/DECISION-TABLE.md`) instead of the parser's stored states, and adds the
+speed features (group F). It needs `splits.json`, the `battle_logs` folder, Node
+and the built Showdown submodule, and the model library from Section 14 step 1.
+
+1. **Split the logs into 64 parts** (once; about 90 MB, not committed):
+   ```
+   python -m wpa.features --split-logs logs_shards --shards 64
+   ```
+   It ends with a line such as `{'games': 88901, 'unassigned': ...}`.
+
+2. **Build the v2 feature table** (about 85 MB, not committed):
+   ```
+   python -m wpa.features --from-logs logs_shards --out features_v2 --shards 64 --workers 4
+   ```
+   Each part prints `shard N: {...}`. If it stops, add `--only 20-63` (the parts
+   still missing) and run it again.
+
+3. **Train.** One command per model. `--sample 0.2` trains on 20% of the Reg M-A
+   sets; that is what fits on the development machine and what the Week 6 report
+   uses. Leave it out to train on everything (see step 7):
+   ```
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEF --sample 0.2 --features features_v2 --models models_v2
+   python -m wpa.evaluate v2-train --format regma --groups ABCDE --sample 0.2 --features features_v2 --models models_v2
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEF --sample 0.2 --features features_v2 --models models_v2
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDE --sample 0.2 --features features_v2 --models models_v2
+   ```
+   `pooled` is the Reg M-B model: trained on Reg M-A and Reg M-B together with a
+   format flag, judged on Reg M-B only. `ABCDE` is the same model without speed,
+   kept only to measure what speed adds. Each command ends
+   `validation Brier 0.19.. after N rounds`. If one prints `not finished ... run
+   the same command again`, do exactly that.
+
+4. **Report and gate** (validation split):
+   ```
+   python -m wpa.evaluate v2-report --features features_v2 --models models_v2
+   ```
+   For each format: the Brier with its 95% interval, v0, `model - v0` (below zero
+   means v2 is better), the calibration table, and what adding speed changes. It
+   ends `gate: passed` or `gate: FAILED`. Saved as `models_v2\report.txt`.
+
+5. **The test split - once.** Logged in `models\test_openings.json` like every
+   opening:
+   ```
+   python -m wpa.evaluate v2-final --features features_v2 --models models_v2
+   ```
+
+6. **Expert claims** (report only, about 4 minutes):
+   ```
+   python -m wpa.claims_v2 scan
+   python -m wpa.claims_v2 report
+   ```
+   Saved as `claims_v2\report.txt`. `docs/EXPERT-CLAIMS-RESULTS.md` explains it.
+
+7. **Training Reg M-A on all of its sets (your computer).** The development machine
+   does not have the memory for this: it needs about 4 GB free. Use a new models
+   folder so the 20% models stay as they are:
+   ```
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEF --features features_v2 --models models_v2_full
+   python -m wpa.evaluate v2-train --format regma --groups ABCDE --features features_v2 --models models_v2_full
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEF --features features_v2 --models models_v2_full
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDE --features features_v2 --models models_v2_full
+   python -m wpa.evaluate v2-report --features features_v2 --models models_v2_full
+   ```
+   Expect somewhere between 15 minutes and an hour for each training command.
+   Compare its `models_v2_full\report.txt` with `models_v2\report.txt`. Do not run
+   `v2-final` on it unless you decide to: it would be a fourth test opening, and
+   it is logged.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
