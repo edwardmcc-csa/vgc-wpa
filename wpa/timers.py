@@ -22,12 +22,13 @@ full corpus); ``--shard i/n`` and ``--out`` split a run into parts and
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from typing import Iterator
 
 from wpa.durations import (
     ACTION,
@@ -99,6 +100,15 @@ class GameTimers:
     counters: list[CounterObservation] = field(default_factory=list)
     # turn -> ((id, target, turns remaining), ...) as known at the start of that turn
     snapshots: dict[int, tuple[tuple[str, str, int], ...]] = field(default_factory=dict)
+    # turn -> ((id, target, fewest turns left, most turns left), ...); the two
+    # differ only for random lengths (trap moves, rampage moves)
+    ranges: dict[int, tuple[tuple[str, str, int, int], ...]] = field(
+        default_factory=dict
+    )
+    # turn -> ((counter id, target, attempts prevented so far), ...)
+    counter_state: dict[int, tuple[tuple[str, str, int], ...]] = field(
+        default_factory=dict
+    )
 
 
 def to_id(text: str) -> str:
@@ -169,6 +179,41 @@ def _mon_key(ident: str) -> str:
     return f"{side}:{name}"
 
 
+# Protocol lines that do not move the battle on: a decision right after |turn|
+# followed only by these is still at the start of the turn.
+_QUIET = {
+    "",
+    "t:",
+    "inactive",
+    "inactiveoff",
+    "c",
+    "c:",
+    "j",
+    "J",
+    "l",
+    "L",
+    "n",
+    "N",
+    "raw",
+    "html",
+    "uhtml",
+    "uhtmlchange",
+    "-message",
+    "-hint",
+    "chat",
+    "timer",
+    "message",
+}
+
+
+def _moment(walker: "_Walker") -> str:
+    if walker.turn == 0:
+        return "preview"
+    if walker.phase == AFTER_RESIDUAL:
+        return "after_turn"
+    return "turn_start" if walker.at_turn_start else "mid_turn"
+
+
 class _Walker:
     def __init__(self, table: Durations) -> None:
         self.table = table
@@ -187,6 +232,9 @@ class _Walker:
         self.line = 0
         self.lines: list[str] = []
         self.counters: dict[tuple[str, str], _Counter] = {}
+        self.pending_field_end: int | None = None
+        # nothing but chat or timer lines since the last |turn| line
+        self.at_turn_start = False
         self.out = GameTimers()
 
     # --- bookkeeping -----------------------------------------------------
@@ -217,14 +265,44 @@ class _Walker:
 
     def snapshot(self) -> None:
         rows = []
+        spans = []
         for a in self.active.values():
-            remaining = min(
+            left = [
                 turns_remaining(self.turn, a.start_turn, a.start_phase, d)
                 for d in a.durations
-            )
-            if remaining > 0:
-                rows.append((a.effect.id, a.target, remaining))
+            ]
+            if min(left) > 0:
+                rows.append((a.effect.id, a.target, min(left)))
+                spans.append((a.effect.id, a.target, min(left), max(left)))
         self.out.snapshots[self.turn] = tuple(sorted(rows))
+        self.out.ranges[self.turn] = tuple(sorted(spans))
+        self.out.counter_state[self.turn] = tuple(
+            sorted((c.id, c.target, c.attempts) for c in self.counters.values())
+        )
+
+    def now(
+        self,
+    ) -> tuple[tuple[tuple[str, str, int, int], ...], tuple[tuple[str, str, int], ...]]:
+        """Timers and counters at this point of the log, for a decision here.
+
+        After the turn's residual (`|upkeep|`) the turn is over, so turns left
+        are counted from the next turn. An effect that is still active (its end
+        message has not been broadcast) has at least one turn left, which
+        settles a random length that has run past its shortest value.
+        """
+        current = self.turn + (1 if self.phase == AFTER_RESIDUAL else 0)
+        spans = []
+        for a in self.active.values():
+            left = [
+                turns_remaining(current, a.start_turn, a.start_phase, d)
+                for d in a.durations
+            ]
+            if max(left) > 0:
+                spans.append((a.effect.id, a.target, max(1, min(left)), max(left)))
+        counters = tuple(
+            sorted((c.id, c.target, c.attempts) for c in self.counters.values())
+        )
+        return tuple(sorted(spans)), counters
 
     def source_of(self, effect_id: str, fields: list[str]) -> str | None:
         for f in fields:
@@ -364,91 +442,122 @@ class _Walker:
         )
 
     def run(self, log: str) -> GameTimers:
-        lines = log.split("\n")
-        self.lines = lines
-        for i, line in enumerate(lines):
-            self.line = i
-            if not line.startswith("|"):
-                continue
-            p = line.split("|")
-            if len(p) < 2:
-                continue
-            t = p[1]
-            if t == "showteam" and len(p) > 3:
-                self.read_sheet(p)
-            elif t in ("switch", "drag") and len(p) > 3:
-                self.enter(p)
-            elif t == "turn" and len(p) > 2:
-                self.turn = int(p[2])
-                self.phase = ACTION
-                self.moved.clear()
-                self.entered.clear()
-                self.snapshot()
-            elif t == "upkeep":
-                self.phase = AFTER_RESIDUAL
-            elif t == "move" and len(p) > 3:
-                key = _mon_key(p[2])
-                self.moved.add(key)
-                self.last_move = (key, to_id(p[3]))
-                if to_id(p[3]) == "wish":
-                    self.start("start", "Wish", p[2], key, p[4:])
-            elif t == "cant" and len(p) > 3:
-                self.moved.add(_mon_key(p[2]))
-                c = self.counters.get((p[3], _mon_key(p[2])))
-                if c is not None and p[3] in ("slp", "frz"):
-                    c.attempts += 1
-            elif t == "faint" and len(p) > 2:
-                key = _mon_key(p[2])
-                self.close_where(
-                    lambda a: a.target_key == key and a.key[0] == "mon", "fainted"
-                )
-                self._drop_counters(key)
-            elif t == "-sidestart" and len(p) > 3:
-                self.start(
-                    "sidestart", p[3], p[2].split(":")[0], p[2].split(":")[0], p[4:]
-                )
-            elif t == "-sideend" and len(p) > 3:
-                self.end_event(("side", to_id(_strip(p[3])), p[2].split(":")[0]), p[4:])
-            elif t == "-fieldstart" and len(p) > 2:
-                self.start("fieldstart", p[2], "field", "field", p[3:])
-            elif t == "-fieldend" and len(p) > 2:
-                fid = to_id(_strip(p[2]))
-                nxt = lines[i + 1].split("|") if i + 1 < len(lines) else []
-                replaced = (
-                    len(nxt) > 2
-                    and nxt[1] == "-fieldstart"
-                    and to_id(_strip(nxt[2])) != fid
-                )
-                self.end_event(("field", fid), p[3:], replaced=replaced)
-            elif t == "-weather" and len(p) > 2:
-                self.weather_event(p)
-            elif t == "-start" and len(p) > 3:
-                self.start_event(p)
-            elif t == "-end" and len(p) > 3:
-                self.end_volatile(p)
-            elif t == "-activate" and len(p) > 3 and p[3] == "confusion":
-                c = self.counters.get(("confusion", _mon_key(p[2])))
-                if c is not None:
-                    c.attempts += 1
-            elif t == "-status" and len(p) > 3:
-                self.status_event(p)
-            elif t == "-curestatus" and len(p) > 3:
-                k = (p[3], _mon_key(p[2]))
-                if k in self.counters:
-                    natural = "[msg]" in p[4:] and not any(
-                        f.startswith("[from]") for f in p[4:]
-                    )
-                    self._finish_counter(k, completed=natural)
-            elif t == "-enditem" and len(p) > 2:
-                self.items[_mon_key(p[2])] = None
-            elif t == "-heal" and any(f == "[from] move: Wish" for f in p[4:]):
-                self.end_slot("wish", p[2][:2])
-            elif t == "win":
-                self.finish("game_over")
+        for line in log.split("\n"):
+            self.feed(line)
+        return self.result()
+
+    def feed(self, line: str) -> None:
+        """Take the next line of the battle, as the live path does.
+
+        A field ending is held back one line, because whether it was *replaced*
+        (another terrain starts straight after) is only known from the next line.
+        Everything else is handled at once, so a decision point sees the timers
+        as of the `|turn|` line it follows.
+        """
+        self.lines.append(line)
+        index = len(self.lines) - 1
+        if self.pending_field_end is not None:
+            held = self.pending_field_end
+            self.pending_field_end = None
+            self.handle(held, line)
+        if line.startswith("|-fieldend|"):
+            self.pending_field_end = index
+            return
+        self.handle(index, None)
+
+    def flush(self) -> None:
+        if self.pending_field_end is not None:
+            held = self.pending_field_end
+            self.pending_field_end = None
+            self.handle(held, None)
+
+    def result(self) -> GameTimers:
+        self.flush()
         self.finish("game_over")
         for k in list(self.counters):
             self._finish_counter(k, completed=False)
         return self.out
+
+    def handle(self, i: int, nxt: str | None) -> None:
+        line = self.lines[i]
+        self.line = i
+        if not line.startswith("|"):
+            return
+        p = line.split("|")
+        if len(p) < 2:
+            return
+        t = p[1]
+        if t not in _QUIET:
+            self.at_turn_start = t == "turn"
+        if t == "showteam" and len(p) > 3:
+            self.read_sheet(p)
+        elif t in ("switch", "drag") and len(p) > 3:
+            self.enter(p)
+        elif t == "turn" and len(p) > 2:
+            self.turn = int(p[2])
+            self.phase = ACTION
+            self.moved.clear()
+            self.entered.clear()
+            self.snapshot()
+        elif t == "upkeep":
+            self.phase = AFTER_RESIDUAL
+        elif t == "move" and len(p) > 3:
+            key = _mon_key(p[2])
+            self.moved.add(key)
+            self.last_move = (key, to_id(p[3]))
+            if to_id(p[3]) == "wish":
+                self.start("start", "Wish", p[2], key, p[4:])
+        elif t == "cant" and len(p) > 3:
+            self.moved.add(_mon_key(p[2]))
+            c = self.counters.get((p[3], _mon_key(p[2])))
+            if c is not None and p[3] in ("slp", "frz"):
+                c.attempts += 1
+        elif t == "faint" and len(p) > 2:
+            key = _mon_key(p[2])
+            self.close_where(
+                lambda a: a.target_key == key and a.key[0] == "mon", "fainted"
+            )
+            self._drop_counters(key)
+        elif t == "-sidestart" and len(p) > 3:
+            self.start("sidestart", p[3], p[2].split(":")[0], p[2].split(":")[0], p[4:])
+        elif t == "-sideend" and len(p) > 3:
+            self.end_event(("side", to_id(_strip(p[3])), p[2].split(":")[0]), p[4:])
+        elif t == "-fieldstart" and len(p) > 2:
+            self.start("fieldstart", p[2], "field", "field", p[3:])
+        elif t == "-fieldend" and len(p) > 2:
+            fid = to_id(_strip(p[2]))
+            after = nxt.split("|") if nxt is not None else []
+            replaced = (
+                len(after) > 2
+                and after[1] == "-fieldstart"
+                and to_id(_strip(after[2])) != fid
+            )
+            self.end_event(("field", fid), p[3:], replaced=replaced)
+        elif t == "-weather" and len(p) > 2:
+            self.weather_event(p)
+        elif t == "-start" and len(p) > 3:
+            self.start_event(p)
+        elif t == "-end" and len(p) > 3:
+            self.end_volatile(p)
+        elif t == "-activate" and len(p) > 3 and p[3] == "confusion":
+            c = self.counters.get(("confusion", _mon_key(p[2])))
+            if c is not None:
+                c.attempts += 1
+        elif t == "-status" and len(p) > 3:
+            self.status_event(p)
+        elif t == "-curestatus" and len(p) > 3:
+            k = (p[3], _mon_key(p[2]))
+            if k in self.counters:
+                natural = "[msg]" in p[4:] and not any(
+                    f.startswith("[from]") for f in p[4:]
+                )
+                self._finish_counter(k, completed=natural)
+        elif t == "-enditem" and len(p) > 2:
+            self.items[_mon_key(p[2])] = None
+        elif t == "-heal" and any(f == "[from] move: Wish" for f in p[4:]):
+            self.end_slot("wish", p[2][:2])
+        elif t == "win":
+            self.finish("game_over")
 
     def finish(self, reason: str) -> None:
         for key in list(self.active):
@@ -574,6 +683,266 @@ class _Walker:
 def track_game(log: str, table: Durations) -> GameTimers:
     """Replay one battle log: every timed effect, counted status, and snapshot."""
     return _Walker(table).run(log)
+
+
+class TimerTracker:
+    """The same tracker, fed one protocol line at a time (the live path).
+
+    ``feed`` takes the lines of the battle in order, as they arrive. After the
+    ``|turn|N`` line, ``current()`` is what a decision at turn N may know: built
+    from the start turns and the duration table only. ``result()`` ends the game
+    and gives exactly what ``track_game`` gives for the same lines.
+    """
+
+    def __init__(self, table: Durations) -> None:
+        self._walker = _Walker(table)
+
+    def feed(self, line: str) -> None:
+        self._walker.feed(line)
+
+    def feed_text(self, text: str) -> None:
+        for line in text.split("\n"):
+            self._walker.feed(line)
+
+    def current(self) -> tuple[tuple[str, str, int], ...]:
+        """(effect id, target, turns left counting this turn), as of the last turn."""
+        w = self._walker
+        return w.out.snapshots.get(w.turn, ())
+
+    def current_ranges(self) -> tuple[tuple[str, str, int, int], ...]:
+        w = self._walker
+        return w.out.ranges.get(w.turn, ())
+
+    def current_counters(self) -> tuple[tuple[str, str, int], ...]:
+        w = self._walker
+        return w.out.counter_state.get(w.turn, ())
+
+    def result(self) -> GameTimers:
+        return self._walker.result()
+
+
+@dataclass(frozen=True)
+class DecisionTimers:
+    """Timers in force at one stored decision point of one player."""
+
+    turn: int
+    decision_index: int
+    # (effect id, target, fewest turns left, most turns left)
+    timers: tuple[tuple[str, str, int, int], ...] = ()
+    # (counter id, target, attempts prevented so far)
+    counters: tuple[tuple[str, str, int], ...] = ()
+    # preview, turn_start, mid_turn (a switch during the turn, such as after
+    # U-turn) or after_turn (a replacement after the turn's residual)
+    moment: str = "turn_start"
+
+
+def _acts(lines: list[str], role: str) -> tuple[bool, bool]:
+    """Whether each of the player's two slots acts in this block of the log.
+
+    Mirrors `vgc_bench.logs2trajs.LogReader.get_order`: a slot acts when it has
+    a move line (not one called by another effect, `[from]`), or a switch or
+    drag line; a `|swap|` line sends the search to the other slot.
+    """
+    acted = []
+    for start in ("a", "b"):
+        slot = start
+        found = False
+        for line in lines:
+            if line.startswith(f"|move|{role}{slot}: ") and "[from]" not in line:
+                found = True
+            elif line.startswith((f"|switch|{role}{slot}: ", f"|drag|{role}{slot}: ")):
+                found = True
+            elif line.startswith(f"|swap|{role}{slot}: "):
+                slot = "b" if slot == "a" else "a"
+        acted.append(found)
+    return acted[0], acted[1]
+
+
+def track_decisions(log: str, table: Durations) -> dict[str, list[DecisionTimers]]:
+    """Timers at every decision point stored for each player, in stored order.
+
+    Reproduces where `vgc_bench.logs2trajs.LogReader.follow_log` takes its
+    snapshots, so the result lines up one to one with the files in
+    `wpa_states/` (checked by `wpa.timer_join.align`):
+
+    * the log is cut into blocks at its blank `|` lines;
+    * block 1 is team preview: a snapshot for both players (turn 0);
+    * every later block with a move or switch line is a snapshot, taken before
+      the block, for each player who acts in it, unless one of the player's
+      slots did nothing and one of their Pokemon fainted in the block
+      (`LogReader.choose_move` skips those);
+    * a second turn-0 snapshot is added when both of a player's back-line
+      Pokemon appear during the game.
+
+    The timers come from the log before the snapshot only: nothing after it is
+    read to compute them (tested).
+    """
+    roles = ("p1", "p2")
+    walker = _Walker(table)
+    raw: dict[str, list[tuple]] = {r: [] for r in roles}
+    leads: dict[str, set[str]] = {r: set() for r in roles}
+    seen: dict[str, set[str]] = {r: set() for r in roles}
+    for i, block in enumerate(log.split("\n|\n")):
+        if i > 0:
+            walker.feed("|")
+        lines = block.split("\n")
+        if i == 1:
+            snap = walker.now()
+            for r in roles:
+                raw[r].append((walker.turn, *snap, _moment(walker)))
+        elif i >= 2 and ("|switch|" in block or "|move|" in block):
+            snap = None
+            for r in roles:
+                a, b = _acts(lines, r)
+                if (a and b) or ((a or b) and f"|faint|{r}" not in block):
+                    snap = snap or walker.now()
+                    raw[r].append((walker.turn, *snap, _moment(walker)))
+        for line in lines:
+            for r in roles:
+                if line.startswith((f"|switch|{r}", f"|drag|{r}")):
+                    name = line.split("|")[2].split(": ", 1)[-1]
+                    seen[r].add(name)
+                    if i == 1:
+                        leads[r].add(name)
+            walker.feed(line)
+    out: dict[str, list[DecisionTimers]] = {}
+    for r in roles:
+        rows = raw[r]
+        if rows and len(seen[r] - leads[r]) > 1:
+            rows.insert(1, rows[0])
+        decisions = []
+        last_turn, index = None, 0
+        for turn, timers, counters, moment in rows:
+            index = index + 1 if turn == last_turn else 0
+            last_turn = turn
+            decisions.append(DecisionTimers(turn, index, timers, counters, moment))
+        out[r] = decisions
+    return out
+
+
+# --------------------------------------------------------------------------
+# The side file: timers per game and turn, written once, read in training
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TurnTimers:
+    # (effect id, target, fewest turns left, most turns left)
+    timers: tuple[tuple[str, str, int, int], ...] = ()
+    # (counter id, target, attempts prevented so far)
+    counters: tuple[tuple[str, str, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class TimerRecord:
+    format: str
+    turns: dict[int, TurnTimers]
+    # role -> timers at each stored decision point, in stored order
+    decisions: dict[str, list[DecisionTimers]] = field(default_factory=dict)
+
+    def at(self, turn: int) -> TurnTimers:
+        return self.turns.get(turn, TurnTimers())
+
+
+def _record_of(game: GameTimers) -> dict[int, TurnTimers]:
+    out: dict[int, TurnTimers] = {}
+    for turn in sorted(game.ranges):
+        row = TurnTimers(game.ranges[turn], game.counter_state.get(turn, ()))
+        if row.timers or row.counters:
+            out[turn] = row
+    return out
+
+
+def write_timer_file(path: Path | str, games: Iterable[tuple]) -> int:
+    """Write one JSON line per game: only the facts known at each turn.
+
+    Each item is (tag, format, GameTimers) or (tag, format, GameTimers,
+    decisions), where decisions is `track_decisions`' result. No end turn and no
+    end reason is written, so nothing in the file can leak the future into a
+    decision point.
+    """
+    n = 0
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        for item in games:
+            tag, fmt, game = item[0], item[1], item[2]
+            decisions = item[3] if len(item) > 3 else {}
+            turns = {
+                str(t): {
+                    "t": [list(r) for r in row.timers],
+                    "c": [list(c) for c in row.counters],
+                }
+                for t, row in _record_of(game).items()
+            }
+            per_role = {
+                role: [
+                    [
+                        d.turn,
+                        d.decision_index,
+                        [list(r) for r in d.timers],
+                        [list(c) for c in d.counters],
+                        d.moment,
+                    ]
+                    for d in rows
+                ]
+                for role, rows in decisions.items()
+            }
+            record = {"tag": tag, "format": fmt, "turns": turns, "decisions": per_role}
+            f.write(json.dumps(record) + "\n")
+            n += 1
+    return n
+
+
+def iter_timer_file(path: Path | str) -> Iterator[tuple[str, TimerRecord]]:
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        for line in f:
+            d = json.loads(line)
+            turns = {
+                int(t): TurnTimers(
+                    tuple((a, b, int(lo), int(hi)) for a, b, lo, hi in row["t"]),
+                    tuple((a, b, int(n)) for a, b, n in row["c"]),
+                )
+                for t, row in d["turns"].items()
+            }
+            decisions = {
+                role: [
+                    DecisionTimers(
+                        int(row[0]),
+                        int(row[1]),
+                        tuple((a, b, int(lo), int(hi)) for a, b, lo, hi in row[2]),
+                        tuple((a, b, int(n)) for a, b, n in row[3]),
+                        row[4] if len(row) > 4 else "turn_start",
+                    )
+                    for row in rows
+                ]
+                for role, rows in d.get("decisions", {}).items()
+            }
+            yield d["tag"], TimerRecord(d["format"], turns, decisions)
+
+
+def read_timer_file(path: Path | str) -> dict[str, TimerRecord]:
+    return dict(iter_timer_file(path))
+
+
+def write_timers_from_logs(
+    logs_dir: Path,
+    tables: dict[str, Durations],
+    out: Path | str,
+    shard: tuple[int, int] = (0, 1),
+) -> int:
+    from wpa.formats import format_of
+
+    def games() -> Iterator[tuple]:
+        index = 0
+        for path in sorted(logs_dir.glob("logs_*.json")):
+            for tag, (_ts, log) in iter_log_file(path):
+                index += 1
+                if (index - 1) % shard[1] != shard[0]:
+                    continue
+                fmt = format_of(tag)
+                table = tables[fmt]
+                yield tag, fmt, track_game(log, table), track_decisions(log, table)
+
+    return write_timer_file(out, games())
 
 
 # --------------------------------------------------------------------------
@@ -1041,6 +1410,11 @@ def main() -> None:
     )
     parser.add_argument("--markdown", type=Path, help="write the report here")
     parser.add_argument(
+        "--timers-out",
+        type=Path,
+        help="write the per-game, per-turn timer side file (.jsonl.gz) from the logs",
+    )
+    parser.add_argument(
         "--classes",
         type=Path,
         help="rewrite the (a)/(b)/(c) table between the markers of this file",
@@ -1050,6 +1424,11 @@ def main() -> None:
     if args.classes:
         write_classes(args.classes, tables)
         print(f"wrote {args.classes}")
+        return
+    if args.timers_out:
+        i, n = (int(x) for x in args.shard.split("/"))
+        count = write_timers_from_logs(args.logs, tables, args.timers_out, (i, n))
+        print(f"wrote {count} games to {args.timers_out}")
         return
     if args.merge:
         tally = Tally()

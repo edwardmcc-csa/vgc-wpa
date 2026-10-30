@@ -286,3 +286,21 @@ one Week 5 task, and re-parse once.
   weather's end is not judged.
 - Reg M-B has about 5% of the data of Reg M-A; its rates carry more noise.
 - The incremental live walker does not exist yet (section 6).
+
+## 9. Built after the decision (27 Oct 2026)
+
+- **Side file:** `python -m wpa.timers --timers-out timers.jsonl.gz` writes one
+  line per game with, for each turn, the effects in force (fewest and most
+  turns left; they differ only for random lengths) and the attempts a sleep,
+  freeze or confusion has prevented so far. Read it with
+  `wpa.timers.read_timer_file`. It holds no end turn and no end reason. Run on
+  the full corpus: 88,905 games, 79,962 with at least one timer. Since Week 5
+  Task 3 it also holds the timers at every stored decision point (6.5 MB; see
+  `docs/TIMER-JOIN.md`).
+- **Live tracker:** `wpa.timers.TimerTracker` takes the battle one protocol line
+  at a time. Replay is now just the same tracker fed every line, so the two
+  paths cannot disagree; rerunning a shard of 11,000 real games gave identical
+  counts to before the change. It is not yet wired into the live bot, and
+  poke-env's own weather start turn is still wrong. The bot has to feed
+  `TimerTracker` the raw messages itself.
+

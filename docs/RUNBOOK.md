@@ -641,6 +641,57 @@ Then run `python -m pytest` (Section 4) as usual.
 
 ---
 
+## 13. Timers: how long each effect lasts
+
+Three commands, all from the repo folder. The Showdown submodule must be
+built (the `dist` folder exists) and Node must be installed.
+
+**Rebuild the duration table** (`docs/DURATIONS.md`). A test fails if this file
+is out of date, so run it whenever the Showdown submodule or `wpa/durations.py`
+changes:
+
+```
+python -m wpa.durations --out docs/DURATIONS.md
+```
+
+**Check the table against the battle logs.** This reads every game, so it
+takes a long time on one machine (the full corpus is about 89,000 games). To
+try it quickly, add `--shard 0/8`, which reads every eighth game:
+
+```
+python -m wpa.timers --shard 0/8 --markdown timers-check.md
+```
+
+A healthy run ends with `wrote timers-check.md`. Open the file: the
+"Unexplained" column should be a fraction of a percent for nearly every row.
+The full result from 27 Oct 2026 is `docs/DURATIONS-VALIDATION.md`.
+
+**Write the timer side file** that training will read. One line per game, with
+the timers in force at each turn, built from start turns and the duration table
+only (nothing from the future):
+
+```
+python -m wpa.timers --timers-out timers.jsonl.gz
+```
+
+A healthy run ends `wrote 88905 games to timers.jsonl.gz` (the number is how
+many games are in `battle_logs`). The file is about 6.5 MB. Like `splits.json`,
+it is generated, so do not commit it. It holds the timers at the start of every
+turn and at every decision point each player has in `wpa_states/`.
+
+**Check that the timers line up with the stored states.** This reads one game
+in 100 from the logs and compares them with the files in `wpa_states/`:
+
+```
+python -m wpa.timer_join --one-in 100
+```
+
+A healthy run says `aligned ... of ... state files (100.00%)` for each format,
+and the `unexplained` figure on every effect line is `0.0%`. Anything else,
+stop and report it. Expect several minutes: it reads every log file once.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**

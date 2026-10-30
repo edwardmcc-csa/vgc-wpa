@@ -593,3 +593,145 @@ def test_the_tally_names_the_causes_of_explained_removals():
     tally = T.Tally()
     tally.add_game("regma", T.track_game(log, TABLE), "tag")
     assert tally.causes[("regma", "tailwind")] == {"move: Defog": 1}
+
+
+# --------------------------------------------------------------------------
+# The live path: one message at a time, same answers as replaying the log
+# --------------------------------------------------------------------------
+
+TERRAINS = Durations(
+    "test",
+    timed={
+        **TABLE.timed,
+        "electricterrain": eff(
+            "electricterrain", "terrain", 5, [mod("item", "terrainextender", 8)]
+        ),
+        "grassyterrain": eff(
+            "grassyterrain", "terrain", 5, [mod("item", "terrainextender", 8)]
+        ),
+    },
+)
+
+
+def terrain_swap_log():
+    return (
+        head()
+        + "\n"
+        + turns(
+            t1="|move|p1a: Whim|Electric Terrain|p1a: Whim\n|-fieldstart|move: Electric Terrain",
+            t2="|move|p2a: Inci|Grassy Terrain|p2a: Inci\n|-fieldend|move: Electric Terrain\n|-fieldstart|move: Grassy Terrain",
+            t3="|move|p1a: Whim|Protect|p1a: Whim\n|\n|-fieldend|move: Grassy Terrain",
+        )
+    )
+
+
+def fed_one_line_at_a_time(log, table=TABLE):
+    tracker = T.TimerTracker(table)
+    for line in log.split("\n"):
+        tracker.feed(line)
+    return tracker
+
+
+def test_feeding_one_line_at_a_time_gives_the_same_result_as_replaying_the_log():
+    for log in (tailwind_log(3), tailwind_log(4), tailwind_log(5), terrain_swap_log()):
+        table = TERRAINS
+        assert fed_one_line_at_a_time(log, table).result() == T.track_game(log, table)
+
+
+def test_a_terrain_replaced_by_another_is_seen_as_replaced_when_fed_live():
+    game = fed_one_line_at_a_time(terrain_swap_log(), TERRAINS).result()
+    by_id = {t.id: t for t in game.timers}
+    assert by_id["electricterrain"].end_reason == "replaced"
+    assert by_id["grassyterrain"].end_reason == "ended"
+
+
+def test_a_live_tracker_knows_the_timers_at_a_decision_before_the_game_ends():
+    log = tailwind_log(end_in=4)
+    full = T.track_game(log, TABLE)
+    tracker = T.TimerTracker(TABLE)
+    for line in log.split("\n"):
+        tracker.feed(line)
+        if line == "|turn|3":
+            break
+    assert tracker.current() == full.snapshots[3]
+    assert tracker.current() == (("tailwind", "p1", 2),)
+
+
+def test_a_field_end_waiting_for_its_next_line_does_not_hide_a_decision_point():
+    log = (
+        head()
+        + "\n"
+        + turns(
+            t1="|move|p1a: Whim|Trick Room|p1a: Whim\n|-fieldstart|move: Trick Room|[of] p1a: Whim",
+            t2="|move|p2a: Inci|Trick Room|p2a: Inci\n|-fieldend|move: Trick Room",
+            t3="",
+        )
+    )
+    tracker = T.TimerTracker(TABLE)
+    lines = log.split("\n")
+    for line in lines[: lines.index("|turn|3") + 1]:
+        tracker.feed(line)
+    assert tracker.current() == ()
+
+
+def test_ranges_give_the_shortest_and_longest_for_random_lengths():
+    log = (
+        head()
+        + "\n"
+        + turns(
+            t1="|move|p1a: Whim|Fire Spin|p2a: Inci\n|-start|p2a: Inci|Fire Spin", t2=""
+        )
+    )
+    table = Durations(
+        "t", timed={"firespin": eff("firespin", "volatileStatus", 5, rnd=(5, 7))}
+    )
+    game = T.track_game(log, table)
+    # started turn 1, lasts 5 or 6: at turn 2, 4 or 5 turns remain
+    assert game.ranges[2] == (("firespin", "p2a: Inci", 4, 5),)
+    assert game.snapshots[2] == (("firespin", "p2a: Inci", 4),)
+
+
+def test_counter_state_at_each_turn_carries_attempts_so_far():
+    log = (
+        head()
+        + "\n"
+        + turns(
+            t1="|move|p1a: Whim|Spore|p2a: Inci\n|-status|p2a: Inci|slp|[from] move: Spore",
+            t2="|cant|p2a: Inci|slp",
+            t3="|cant|p2a: Inci|slp",
+            t4="",
+        )
+    )
+    game = T.track_game(log, TABLE)
+    assert game.counter_state[2] == (("slp", "p2a: Inci", 0),)
+    assert game.counter_state[3] == (("slp", "p2a: Inci", 1),)
+    assert game.counter_state[4] == (("slp", "p2a: Inci", 2),)
+
+
+def test_the_timer_file_round_trips_and_holds_nothing_from_the_future(tmp_path):
+    game = T.track_game(tailwind_log(end_in=4), TABLE)
+    path = tmp_path / "timers.jsonl.gz"
+    T.write_timer_file(path, [("gen9championsvgc2026regma-1", "regma", game)])
+    records = T.read_timer_file(path)
+    rec = records["gen9championsvgc2026regma-1"]
+    assert rec.format == "regma"
+    assert rec.at(3).timers == (("tailwind", "p1", 2, 2),)
+    assert rec.at(4).timers == (("tailwind", "p1", 1, 1),)
+    assert rec.at(5).timers == ()  # the end turn leaks nothing: it is simply gone
+    assert rec.at(99).timers == ()
+    import gzip
+
+    raw = gzip.open(path, "rt", encoding="utf-8").read()
+    assert "end_turn" not in raw and "end_reason" not in raw
+
+
+def test_the_command_writes_a_timer_file_from_a_log_directory(tmp_path):
+    logs = tmp_path / "battle_logs"
+    logs.mkdir()
+    tag = "gen9championsvgc2026regmabo3-1"
+    (logs / "logs_x.json").write_text(
+        json.dumps({tag: [1700000000, tailwind_log(4)]}), encoding="utf-8"
+    )
+    out = tmp_path / "t.jsonl.gz"
+    T.write_timers_from_logs(logs, {"regma": TABLE, "regmb": TABLE}, out)
+    assert T.read_timer_file(out)[tag].at(2).timers == (("tailwind", "p1", 3, 3),)
