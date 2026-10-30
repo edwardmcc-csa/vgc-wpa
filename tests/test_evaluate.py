@@ -130,3 +130,14 @@ def test_unit_sampling_keeps_whole_units():
     keep = E.sample_units(units, 0.5, seed="s")
     for u in set(units):
         assert len(set(keep[units == u])) == 1
+
+
+def test_a_format_flag_column_is_added_and_never_mirrored():
+    from wpa.features import mirror_permutation
+
+    rows, _ = fixture_rows()
+    t = E.with_format_flag(to_table(rows), 1.0)
+    assert t.columns[-1] == "z_format_regmb"
+    assert set(t.X[:, -1]) == {1.0}
+    perm = mirror_permutation(t.columns)
+    assert perm[-1] == len(t.columns) - 1

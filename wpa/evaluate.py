@@ -95,6 +95,21 @@ def subset(table: Table, mask: np.ndarray) -> Table:
     )
 
 
+def with_format_flag(table: Table, value: float) -> Table:
+    """Add a `z_format_regmb` column (1 for Reg M-B rows): for the secondary
+    pooled model only. The headline models never see it."""
+    flag = np.full((len(table.y), 1), value, dtype=np.float32)
+    return Table(
+        np.hstack([table.X, flag]),
+        table.y,
+        table.tag,
+        table.role,
+        table.unit,
+        table.turn,
+        [*table.columns, "z_format_regmb"],
+    )
+
+
 # --------------------------------------------------------------------------
 # The v0 baseline, from the same rows
 # --------------------------------------------------------------------------
@@ -513,6 +528,68 @@ def _cmd_final(a) -> None:
     print("\n".join(out))
 
 
+def _pooled_tables(a):
+    ma = with_format_flag(
+        select(load_table(a.features, "regma", "train", a.sample), "ABCDE"), 0.0
+    )
+    mb = with_format_flag(
+        select(load_table(a.features, "regmb", "train"), "ABCDE"), 1.0
+    )
+    val = with_format_flag(
+        select(load_table(a.features, "regmb", "validation"), "ABCDE"), 1.0
+    )
+    return concat([ma, mb]), val
+
+
+def _cmd_pooled(a) -> None:
+    """SECONDARY (PO, 29 Oct): one model on Reg M-A + Reg M-B with a format
+    flag, stopped on and scored on Reg M-B only. Same grid entry as M-B's v1."""
+    from wpa.model import save
+
+    d = _paths(a.models, "pooled")
+    if (d / "pooled.json").exists():
+        print("pooled: already trained")
+    else:
+        chosen = json.loads(
+            (a.models / "regmb" / "v1.json").read_text(encoding="utf-8")
+        )
+        train, val = _pooled_tables(a)
+        model, info = _train_until(
+            train, val, chosen["params"], d / "pooled.ckpt", a.seconds
+        )
+        if model is None:
+            print(
+                f"pooled: not finished after {info['curve'][-1][0]} rounds; run again"
+            )
+            return
+        save(model, d / "pooled.pkl")
+        info.update({"sample_regma": a.sample, "train_rows": int(len(train.y))})
+        (d / "pooled.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
+        (d / "pooled.ckpt").unlink(missing_ok=True)
+        print(
+            f"pooled: M-B validation Brier {info['best_validation_brier']:.4f} "
+            f"after {info['n_iter']} rounds"
+        )
+    from wpa.model import load
+
+    model = load(d / "pooled.pkl", [*columns("ABCDE"), "z_format_regmb"])
+    splits = ["validation"]
+    if a.test:
+        n = record_test_opening(
+            a.models / "test_openings.json", {"formats": ["regmb"], "model": "pooled"}
+        )
+        print(f"NOTE: the test split has now been opened {n} times")
+        splits.append("test")
+    for split in splits:
+        t = load_table(a.features, "regmb", split)
+        x = with_format_flag(select(t, "ABCDE"), 1.0)
+        r = score(model.predict(x.X), t.y, t.unit, v0_from_table(t))
+        (d / f"regmb_{split}.json").write_text(
+            json.dumps(r, indent=1), encoding="utf-8"
+        )
+        print(describe("regmb", f"POOLED model (secondary) on {split}", r))
+
+
 def main() -> None:
     import argparse
     import sys
@@ -521,7 +598,8 @@ def main() -> None:
 
     p = argparse.ArgumentParser(description="Train and evaluate the v1 model.")
     p.add_argument(
-        "command", choices=["train", "select", "ablation", "report", "check", "final"]
+        "command",
+        choices=["train", "select", "ablation", "report", "check", "final", "pooled"],
     )
     p.add_argument("--format", default="regma")
     p.add_argument("--formats", nargs="+", default=["regma", "regmb"])
@@ -542,6 +620,9 @@ def main() -> None:
         default=0,
         help="stop after this long and carry on next time (0 = run to the end)",
     )
+    p.add_argument(
+        "--test", action="store_true", help="pooled: also score the test split"
+    )
     a = p.parse_args()
     {
         "train": _cmd_train,
@@ -550,6 +631,7 @@ def main() -> None:
         "report": _cmd_report,
         "check": _cmd_check,
         "final": _cmd_final,
+        "pooled": _cmd_pooled,
     }[a.command](a)
 
 
