@@ -850,6 +850,69 @@ and the built Showdown submodule, and the model library from Section 14 step 1.
 
 ---
 
+## 16. The v3 model: damage, stat changes and spreads (Week 7)
+
+v3 adds what the damage calculator says (group G). Speed (group F) becomes the
+real stat, from each Pokemon's estimated spread. It needs everything from
+Section 15, plus:
+
+1. **Install the damage calculator** (once; it goes into `calc/node_modules`):
+   ```
+   npm ci --prefix calc
+   ```
+   Check it against Showdown's own damage code:
+   ```
+   python -m wpa.damage
+   ```
+   It ends with how many cases match. Every mismatch it lists is explained in
+   `docs/DAMAGE-CALC.md`.
+
+2. **Usage statistics** for the starting spreads. They are already in your
+   `usage_stats` folder. On a new computer, download them with these two
+   lines in PowerShell:
+   ```
+   mkdir usage_stats
+   foreach ($f in "2026-04/gen9championsvgc2026regma","2026-04/gen9championsvgc2026regmabo3","2026-05/gen9championsvgc2026regma","2026-05/gen9championsvgc2026regmabo3","2026-06/gen9championsvgc2026regma","2026-06/gen9championsvgc2026regmabo3","2026-06/gen9championsvgc2026regmb","2026-06/gen9championsvgc2026regmbbo3") { $m, $n = $f.Split("/"); Invoke-WebRequest "https://www.smogon.com/stats/$m/chaos/$n-1500.json" -OutFile "usage_stats\$m-$n-1500.json" }
+   ```
+
+3. **Build the v3 feature table.** This is slow, because every game's spreads are
+   worked out hit by hit. `--train-sample 0.2` takes the same 20% of Reg M-A's
+   training sets as before; leave it out to build everything:
+   ```
+   python -m wpa.features --from-logs logs_shards --out features_v3 --groups ABCDEFG --usage usage_stats --train-sample 0.2 --shards 64 --workers 4
+   ```
+   Each part prints `shard N: {...}`. If it stops, add `--only 30-63` (the
+   parts still missing) and run it again. `docs/DAMAGE-FEATURES.md` has the
+   timings.
+
+4. **Train.** The table is already the 20% sample, so there is no `--sample`
+   here:
+   ```
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFG --features features_v3 --models models_v3
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEF --features features_v3 --models models_v3
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFG --features features_v3 --models models_v3
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEF --features features_v3 --models models_v3
+   ```
+   `ABCDEF` is the same model without damage, kept to measure what damage adds.
+
+5. **Report and gate** (validation):
+   ```
+   python -m wpa.evaluate v2-report --features features_v3 --models models_v3 --full ABCDEFG
+   ```
+
+6. **The test split - once, logged:**
+   ```
+   python -m wpa.evaluate v2-final --features features_v3 --models models_v3 --full ABCDEFG
+   ```
+
+7. **Expert claims** (report only):
+   ```
+   python -m wpa.claims_v2 scan --groups ABCDEFG --usage usage_stats --out claims_v3
+   python -m wpa.claims_v2 report --groups ABCDEFG --out claims_v3 --model "v3 without damage=models_v3:ABCDEF" --model v3=models_v3:ABCDEFG
+   ```
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
