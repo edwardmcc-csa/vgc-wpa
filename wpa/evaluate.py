@@ -671,6 +671,26 @@ def _v2_predict(a, which: str, groups: str, split: str):
     return model, raw, x
 
 
+GROUP_NAMES = {
+    "A": "board",
+    "B": "earlier field",
+    "C": "timers",
+    "D": "sheet capabilities",
+    "E": "unseen positions",
+    "F": "speed",
+    "G": "damage",
+}
+
+
+def _base_groups(full: str, base: str | None) -> str:
+    """The model the report compares with: `base`, or `full` without its last group."""
+    return base or full[:-1]
+
+
+def _group_names(full: str, base: str) -> str:
+    return ", ".join(f"{GROUP_NAMES[g]} ({g})" for g in full if g not in base)
+
+
 def _cmd_v2_report(a) -> None:
     from wpa.model import recalibrate, save
 
@@ -696,15 +716,17 @@ def _cmd_v2_report(a) -> None:
         results[fmt] = r
         out.append(f"\n{fmt} ({which} model, groups {a.full}, {note})")
         out.append(describe(fmt, "v2", r))
-        base = a.full.replace("F", "")
+        base = _base_groups(a.full, a.base)
         if base != a.full and (d / f"{base}.pkl").exists():
             _m0, _raw0, x0 = _v2_predict(a, which, base, "validation")
             q = _m0.predict(x0.X)
             dd, lo, hi = difference_ci(p, q, raw.y, raw.unit)
             b0 = brier_ci(q, raw.y, raw.unit)
+            added = _group_names(a.full, base)
             out.append(
-                f"  without speed ({base}): Brier {_fmt_ci(b0[0], b0[1:])}; "
-                f"adding speed changes it by {dd:+.4f} [{lo:+.4f}, {hi:+.4f}]"
+                f"  without {added.split(' (')[0]} ({base}): Brier "
+                f"{_fmt_ci(b0[0], b0[1:])}; adding {added} changes it by "
+                f"{dd:+.4f} [{lo:+.4f}, {hi:+.4f}]"
             )
     fails = gate_failures(results)
     out += [f"FAIL {f}" for f in fails]
@@ -719,7 +741,7 @@ def _cmd_v2_final(a) -> None:
 
     n = record_test_opening(
         a.models.parent / "models" / "test_openings.json",
-        {"formats": ["regma", "regmb"], "model": f"v2 {a.full}"},
+        {"formats": ["regma", "regmb"], "model": f"{a.models.name} {a.full}"},
     )
     print(f"NOTE: the test split has now been opened {n} times in total")
     for fmt, which in (("regma", "regma"), ("regmb", "pooled")):
@@ -762,6 +784,12 @@ def main() -> None:
     p.add_argument("--grid", default="all", help="grid entry to train, or all")
     p.add_argument("--groups", default="ABCDE")
     p.add_argument("--full", default="ABCDEF", help="v2: the headline feature groups")
+    p.add_argument(
+        "--base",
+        default=None,
+        help="v2-report: the model to compare with (default: --full without its "
+        "last group)",
+    )
     p.add_argument("--steps", nargs="+", default=list(GROUP_STEPS))
     p.add_argument(
         "--sample",

@@ -192,3 +192,11 @@ def test_training_converts_the_table_to_float64_once(tmp_path):
     }
     E._train_until(t, v, params, tmp_path / "c.ckpt", 0)
     assert t.X.dtype == np.float64
+
+
+def test_the_report_compares_with_the_model_one_group_smaller():
+    assert E._base_groups("ABCDEF", None) == "ABCDE"
+    assert E._base_groups("ABCDEFG", None) == "ABCDEF"
+    assert E._base_groups("ABCDEFG", "ABCDE") == "ABCDE"
+    assert E._group_names("ABCDEFG", "ABCDEF") == "damage (G)"
+    assert E._group_names("ABCDEF", "ABCDE") == "speed (F)"

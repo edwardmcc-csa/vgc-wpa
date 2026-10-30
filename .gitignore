@@ -27,3 +27,6 @@ usage_stats/
 spreads_measure*.jsonl
 features_v3/
 build_v3*.log
+models_v2_full/
+models_v2_control/
+models_v3/
