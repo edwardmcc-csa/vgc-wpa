@@ -141,3 +141,33 @@ def test_a_format_flag_column_is_added_and_never_mirrored():
     assert set(t.X[:, -1]) == {1.0}
     perm = mirror_permutation(t.columns)
     assert perm[-1] == len(t.columns) - 1
+
+
+def _write_split(root, fmt, split, rows):
+    d = root / fmt / split
+    d.mkdir(parents=True)
+    F.write_rows(d / "part-000.npz", rows, F.columns("ABCDE"))
+
+
+def test_the_pooled_v2_model_trains_on_both_formats_and_is_judged_on_reg_mb(tmp_path):
+    from argparse import Namespace
+
+    rows, _ = fixture_rows()
+    ma, mb = rows[: len(rows) // 2], rows[len(rows) // 2 :]
+    for split in ("train", "validation"):
+        _write_split(tmp_path, "regma", split, ma)
+        _write_split(tmp_path, "regmb", split, mb)
+    pooled = Namespace(format="pooled", features=tmp_path, sample=1.0)
+
+    train = E._v2_tables(pooled, "A", "train")
+    assert train.columns == [*F.columns("A"), "z_format_regmb"]
+    assert list(train.X[:, -1]) == [0.0] * len(ma) + [1.0] * len(mb)
+
+    val = E._v2_tables(pooled, "A", "validation")
+    assert len(val.y) == len(mb)
+    assert set(val.X[:, -1]) == {1.0}
+
+    regma = Namespace(format="regma", features=tmp_path, sample=0.01)
+    val = E._v2_tables(regma, "A", "validation")
+    assert val.columns == F.columns("A")
+    assert len(val.y) == len(ma)  # the sample applies to training only

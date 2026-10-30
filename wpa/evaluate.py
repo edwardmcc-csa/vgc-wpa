@@ -294,7 +294,7 @@ def describe(fmt: str, name: str, r: dict) -> str:
         f"{fmt} {name}: {r['rows']} decision points in {r['units']} units{small}",
         f"  Brier {_fmt_ci(r['brier'], r['brier_ci'])}  skill {r['skill']:+.3f}",
         f"  v0    {_fmt_ci(r['v0_brier'], r['v0_brier_ci'])}",
-        f"  v1 - v0 {_fmt_ci(r['minus_v0'], r['minus_v0_ci'])}",
+        f"  model - v0 {_fmt_ci(r['minus_v0'], r['minus_v0_ci'])}",
     ]
     for c in r["calibration"]:
         if c["n"]:
@@ -590,6 +590,144 @@ def _cmd_pooled(a) -> None:
         print(describe("regmb", f"POOLED model (secondary) on {split}", r))
 
 
+# --------------------------------------------------------------------------
+# Week 6: v2 on our own decision table
+# --------------------------------------------------------------------------
+
+V2_GRID_ENTRY = 2  # the Week 5 winner in both formats, fixed before any v2 result
+
+
+def _v2_tables(a, groups: str, split: str):
+    """(train-or-split table) for a v2 model: Reg M-A, or pooled for Reg M-B."""
+    if a.format == "pooled":
+        if split == "train":
+            ma = with_format_flag(
+                select(load_table(a.features, "regma", "train", a.sample), groups), 0.0
+            )
+            mb = with_format_flag(
+                select(load_table(a.features, "regmb", "train"), groups), 1.0
+            )
+            return concat([ma, mb])
+        return with_format_flag(
+            select(load_table(a.features, "regmb", split), groups), 1.0
+        )
+    sample = a.sample if split == "train" else 1.0
+    return select(load_table(a.features, a.format, split, sample), groups)
+
+
+def _cmd_v2_train(a) -> None:
+    from wpa.model import GRID, save
+
+    d = _paths(a.models, a.format)
+    name = a.groups
+    if (d / f"{name}.json").exists():
+        print(f"{a.format} {name}: already done")
+        return
+    train = _v2_tables(a, a.groups, "train")
+    val = _v2_tables(a, a.groups, "validation")
+    model, info = _train_until(
+        train, val, GRID[V2_GRID_ENTRY], d / f"{name}.ckpt", a.seconds
+    )
+    if model is None:
+        print(
+            f"{a.format} {name}: not finished after {info['curve'][-1][0]} rounds; "
+            "run the same command again to carry on"
+        )
+        return
+    save(model, d / f"{name}.pkl")
+    info.update(
+        {
+            "groups": a.groups,
+            "sample": a.sample,
+            "train_rows": int(len(train.y)),
+            "train_units": int(len(np.unique(train.unit))),
+        }
+    )
+    (d / f"{name}.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
+    (d / f"{name}.ckpt").unlink(missing_ok=True)
+    print(
+        f"{a.format} {name}: validation Brier {info['best_validation_brier']:.4f} "
+        f"after {info['n_iter']} rounds"
+    )
+
+
+def _v2_predict(a, which: str, groups: str, split: str):
+    """Predictions of a saved v2 model on one Reg M-A or Reg M-B split."""
+    from wpa.model import load
+
+    fmt = "regmb" if which == "pooled" else which
+    raw = load_table(a.features, fmt, split)
+    x = select(raw, groups)
+    cols = list(x.columns)
+    if which == "pooled":
+        x = with_format_flag(x, 1.0)
+        cols = x.columns
+    model = load(a.models / which / f"{groups}.pkl", cols)
+    return model, raw, x
+
+
+def _cmd_v2_report(a) -> None:
+    from wpa.model import recalibrate, save
+
+    out = ["=== v2 on our decision table: validation split ==="]
+    results = {}
+    for fmt, which in (("regma", "regma"), ("regmb", "pooled")):
+        d = a.models / which
+        if not (d / f"{a.full}.pkl").exists():
+            continue
+        model, raw, x = _v2_predict(a, which, a.full, "validation")
+        v0 = v0_from_table(raw)
+        p = model.predict(x.X)
+        r = score(p, raw.y, raw.unit, v0)
+        note = "not recalibrated"
+        if r["calibration_failures"]:
+            recal = recalibrate(model, x)
+            r2 = score(recal.predict(x.X), raw.y, raw.unit, v0)
+            if r2["brier"] <= r["brier"] and len(r2["calibration_failures"]) <= len(
+                r["calibration_failures"]
+            ):
+                save(recal, d / f"{a.full}.recal.pkl")
+                r, note = r2, "recalibrated on validation"
+        results[fmt] = r
+        out.append(f"\n{fmt} ({which} model, groups {a.full}, {note})")
+        out.append(describe(fmt, "v2", r))
+        base = a.full.replace("F", "")
+        if base != a.full and (d / f"{base}.pkl").exists():
+            _m0, _raw0, x0 = _v2_predict(a, which, base, "validation")
+            q = _m0.predict(x0.X)
+            dd, lo, hi = difference_ci(p, q, raw.y, raw.unit)
+            b0 = brier_ci(q, raw.y, raw.unit)
+            out.append(
+                f"  without speed ({base}): Brier {_fmt_ci(b0[0], b0[1:])}; "
+                f"adding speed changes it by {dd:+.4f} [{lo:+.4f}, {hi:+.4f}]"
+            )
+    fails = gate_failures(results)
+    out += [f"FAIL {f}" for f in fails]
+    out.append("gate: " + ("FAILED" if fails else "passed"))
+    text = "\n".join(out) + "\n"
+    print(text)
+    (a.models / "report.txt").write_text(text, encoding="utf-8")
+
+
+def _cmd_v2_final(a) -> None:
+    from wpa.model import load
+
+    n = record_test_opening(
+        a.models.parent / "models" / "test_openings.json",
+        {"formats": ["regma", "regmb"], "model": f"v2 {a.full}"},
+    )
+    print(f"NOTE: the test split has now been opened {n} times in total")
+    for fmt, which in (("regma", "regma"), ("regmb", "pooled")):
+        d = a.models / which
+        model, raw, x = _v2_predict(a, which, a.full, "test")
+        recal = d / f"{a.full}.recal.pkl"
+        if recal.exists():
+            model = load(recal, list(x.columns))
+        r = score(model.predict(x.X), raw.y, raw.unit, v0_from_table(raw))
+        (d / "test.json").write_text(json.dumps(r, indent=1), encoding="utf-8")
+        print(describe(fmt, f"v2 ({which}) on the TEST split", r))
+
+
 def main() -> None:
     import argparse
     import sys
@@ -599,7 +737,18 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Train and evaluate the v1 model.")
     p.add_argument(
         "command",
-        choices=["train", "select", "ablation", "report", "check", "final", "pooled"],
+        choices=[
+            "train",
+            "select",
+            "ablation",
+            "report",
+            "check",
+            "final",
+            "pooled",
+            "v2-train",
+            "v2-report",
+            "v2-final",
+        ],
     )
     p.add_argument("--format", default="regma")
     p.add_argument("--formats", nargs="+", default=["regma", "regmb"])
@@ -607,6 +756,7 @@ def main() -> None:
     p.add_argument("--models", type=Path, default=Path("models"))
     p.add_argument("--grid", default="all", help="grid entry to train, or all")
     p.add_argument("--groups", default="ABCDE")
+    p.add_argument("--full", default="ABCDEF", help="v2: the headline feature groups")
     p.add_argument("--steps", nargs="+", default=list(GROUP_STEPS))
     p.add_argument(
         "--sample",
@@ -632,6 +782,9 @@ def main() -> None:
         "check": _cmd_check,
         "final": _cmd_final,
         "pooled": _cmd_pooled,
+        "v2-train": _cmd_v2_train,
+        "v2-report": _cmd_v2_report,
+        "v2-final": _cmd_v2_final,
     }[a.command](a)
 
 
