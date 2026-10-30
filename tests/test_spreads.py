@@ -278,10 +278,30 @@ def test_with_an_allowance_one_odd_hit_does_not_rule_a_spread_out():
 DEX2 = Dex(
     species=DEX.species,
     moves={
-        "fakeout": {"category": "Physical", "priority": 3, "type": "Normal", "flags": []},
-        "tailwind": {"category": "Status", "priority": 0, "type": "Flying", "flags": []},
-        "moonblast": {"category": "Special", "priority": 0, "type": "Fairy", "flags": []},
-        "rockslide": {"category": "Physical", "priority": 0, "type": "Rock", "flags": []},
+        "fakeout": {
+            "category": "Physical",
+            "priority": 3,
+            "type": "Normal",
+            "flags": [],
+        },
+        "tailwind": {
+            "category": "Status",
+            "priority": 0,
+            "type": "Flying",
+            "flags": [],
+        },
+        "moonblast": {
+            "category": "Special",
+            "priority": 0,
+            "type": "Fairy",
+            "flags": [],
+        },
+        "rockslide": {
+            "category": "Physical",
+            "priority": 0,
+            "type": "Rock",
+            "flags": [],
+        },
     },
     items={},
 )
@@ -306,7 +326,9 @@ def test_only_moves_in_the_same_priority_bracket_give_an_order():
 
 
 def test_a_turn_with_quick_claw_gives_no_order():
-    claw = ORDER_TURN.replace("|move|p2b: Fini", "|-activate|p2b: Fini|item: Quick Claw\n|move|p2b: Fini")
+    claw = ORDER_TURN.replace(
+        "|move|p2b: Fini", "|-activate|p2b: Fini|item: Quick Claw\n|move|p2b: Fini"
+    )
     assert orders(claw, "|upkeep\n|turn|2") == []
 
 
@@ -318,7 +340,13 @@ class SpeedCalc(StubCalc):
         for r in requests:
             if r.get("op") == "speed":
                 m = r["mon"]
-                out.append({"speed": 120 if m["species"] == "rock" else (150 if m["sps"].get("spe") else 100)})
+                out.append(
+                    {
+                        "speed": 120
+                        if m["species"] == "rock"
+                        else (150 if m["sps"].get("spe") else 100)
+                    }
+                )
             else:
                 out.append({"rolls": [50] * 16, "max_hp": 150})
         return out
@@ -329,7 +357,10 @@ def test_moving_first_shows_speed():
     hits_, orders_ = S.events_from_log(log, DEX2)
     fast = S.Spread("timid", (0, 0, 0, 32, 2, 32), 0.4)
     slow = S.Spread("modest", (32, 0, 2, 32, 0, 0), 0.6)
-    priors = {pos: [S.Spread("serious", (32, 32, 0, 0, 0, 2), 1.0)] for pos in [("p1", 0), ("p1", 1), ("p2", 0)]}
+    priors = {
+        pos: [S.Spread("serious", (32, 32, 0, 0, 0, 2), 1.0)]
+        for pos in [("p1", 0), ("p1", 1), ("p2", 0)]
+    }
     priors[("p2", 1)] = [fast, slow]
     beliefs = {}
     S.refine([*hits_, *orders_], SHEETS, DEX2, priors, SpeedCalc(), beliefs_out=beliefs)

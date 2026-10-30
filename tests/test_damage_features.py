@@ -51,27 +51,107 @@ def mon(pos, species, item, ability, moves):
 
 SHEETS = {
     "p1": (
-        mon(1, "kingambit", "blackglasses", "defiant", ["kowtowcleave", "suckerpunch", "ironhead", "protect"]),
-        mon(2, "garchomp", "", "roughskin", ["earthquake", "dragonclaw", "rockslide", "protect"]),
-        mon(3, "incineroar", "sitrusberry", "intimidate", ["fakeout", "flareblitz", "partingshot", "protect"]),
-        mon(4, "whimsicott", "focussash", "prankster", ["tailwind", "moonblast", "encore", "protect"]),
-        mon(5, "sneasler", "whiteherb", "unburden", ["closecombat", "direclaw", "fakeout", "protect"]),
-        mon(6, "pelipper", "", "drizzle", ["hurricane", "weatherball", "tailwind", "protect"]),
+        mon(
+            1,
+            "kingambit",
+            "blackglasses",
+            "defiant",
+            ["kowtowcleave", "suckerpunch", "ironhead", "protect"],
+        ),
+        mon(
+            2,
+            "garchomp",
+            "",
+            "roughskin",
+            ["earthquake", "dragonclaw", "rockslide", "protect"],
+        ),
+        mon(
+            3,
+            "incineroar",
+            "sitrusberry",
+            "intimidate",
+            ["fakeout", "flareblitz", "partingshot", "protect"],
+        ),
+        mon(
+            4,
+            "whimsicott",
+            "focussash",
+            "prankster",
+            ["tailwind", "moonblast", "encore", "protect"],
+        ),
+        mon(
+            5,
+            "sneasler",
+            "whiteherb",
+            "unburden",
+            ["closecombat", "direclaw", "fakeout", "protect"],
+        ),
+        mon(
+            6,
+            "pelipper",
+            "",
+            "drizzle",
+            ["hurricane", "weatherball", "tailwind", "protect"],
+        ),
     ),
     "p2": (
-        mon(1, "floetteeternal", "", "flowerveil", ["moonblast", "lightofruin", "dazzlinggleam", "protect"]),
-        mon(2, "corviknight", "", "pressure", ["bravebird", "bodypress", "tailwind", "roost"]),
-        mon(3, "charizard", "charizarditey", "blaze", ["heatwave", "solarbeam", "weatherball", "protect"]),
-        mon(4, "basculegion", "choicescarf", "adaptability", ["wavecrash", "lastrespects", "aquajet", "flipturn"]),
-        mon(5, "sinistcha", "", "hospitality", ["matchagotcha", "ragepowder", "trickroom", "protect"]),
-        mon(6, "rotomwash", "", "levitate", ["hydropump", "voltswitch", "willowisp", "protect"]),
+        mon(
+            1,
+            "floetteeternal",
+            "",
+            "flowerveil",
+            ["moonblast", "lightofruin", "dazzlinggleam", "protect"],
+        ),
+        mon(
+            2,
+            "corviknight",
+            "",
+            "pressure",
+            ["bravebird", "bodypress", "tailwind", "roost"],
+        ),
+        mon(
+            3,
+            "charizard",
+            "charizarditey",
+            "blaze",
+            ["heatwave", "solarbeam", "weatherball", "protect"],
+        ),
+        mon(
+            4,
+            "basculegion",
+            "choicescarf",
+            "adaptability",
+            ["wavecrash", "lastrespects", "aquajet", "flipturn"],
+        ),
+        mon(
+            5,
+            "sinistcha",
+            "",
+            "hospitality",
+            ["matchagotcha", "ragepowder", "trickroom", "protect"],
+        ),
+        mon(
+            6,
+            "rotomwash",
+            "",
+            "levitate",
+            ["hydropump", "voltswitch", "willowisp", "protect"],
+        ),
     ),
 }
 
 
 def pk(species, hp, active=False, fainted=False, **kw):
-    return {"species": species, "hp_fraction": hp, "active": active, "fainted": fainted, "mega": False,
-            "boosts": kw.get("boosts", {}), "status": kw.get("status", ""), "item": kw.get("item", "")}
+    return {
+        "species": species,
+        "hp_fraction": hp,
+        "active": active,
+        "fainted": fainted,
+        "mega": False,
+        "boosts": kw.get("boosts", {}),
+        "status": kw.get("status", ""),
+        "item": kw.get("item", ""),
+    }
 
 
 def state(their_hp=(1.0, 1.0), our_boosts=None):
@@ -81,8 +161,15 @@ def state(their_hp=(1.0, 1.0), our_boosts=None):
     our[1] = pk("garchomp", 1.0, True)
     their[0] = pk("floetteeternal", their_hp[0], True)
     their[1] = pk("corviknight", their_hp[1], True)
-    return {"turn": 3, "decision_index": 0, "game_index": None, "set_score_entering_game": None,
-            "observations": [], "our_pokemon": our, "opp_pokemon": their}
+    return {
+        "turn": 3,
+        "decision_index": 0,
+        "game_index": None,
+        "set_score_entering_game": None,
+        "observations": [],
+        "our_pokemon": our,
+        "opp_pokemon": their,
+    }
 
 
 def spreads():
@@ -96,7 +183,17 @@ def spreads():
 
 def g(calc, dex, s=None, joined=None, groups="G"):
     ctx = F.DamageContext(calc, spreads())
-    return F.state_features([s or state()], 0, "p1", joined or JoinedTimers(moment="turn_start"), SHEETS, dex, None, groups, ctx)
+    return F.state_features(
+        [s or state()],
+        0,
+        "p1",
+        joined or JoinedTimers(moment="turn_start"),
+        SHEETS,
+        dex,
+        None,
+        groups,
+        ctx,
+    )
 
 
 def test_damage_columns_exist_and_mirror():
@@ -107,7 +204,9 @@ def test_damage_columns_exist_and_mirror():
 
 
 def test_without_a_context_the_columns_are_zero(dex):
-    row = F.state_features([state()], 0, "p1", JoinedTimers(moment="turn_start"), SHEETS, dex, None, "G")
+    row = F.state_features(
+        [state()], 0, "p1", JoinedTimers(moment="turn_start"), SHEETS, dex, None, "G"
+    )
     assert set(row.values()) == {0.0}
 
 
@@ -127,7 +226,10 @@ def test_stages_and_screens_change_the_damage(calc, dex):
     assert hurt == base
     down = g(calc, dex, state(our_boosts={"atk": -2}))
     assert down["g_our_best_dmg"] <= base
-    screens = JoinedTimers(theirs=(("reflect", "side", 3, 3), ("lightscreen", "side", 3, 3)), moment="turn_start")
+    screens = JoinedTimers(
+        theirs=(("reflect", "side", 3, 3), ("lightscreen", "side", 3, 3)),
+        moment="turn_start",
+    )
     assert g(calc, dex, joined=screens)["g_our_best_dmg"] < base
 
 
@@ -151,9 +253,23 @@ def test_damage_features_read_only_public_fields(calc, dex):
         ALLOWED = GuardedMon.ALLOWED | {"mega", "boosts", "status", "item"}
 
     s = state()
-    s = dict(s, our_pokemon=[Mon(p) for p in s["our_pokemon"]], opp_pokemon=[Mon(p) for p in s["opp_pokemon"]])
+    s = dict(
+        s,
+        our_pokemon=[Mon(p) for p in s["our_pokemon"]],
+        opp_pokemon=[Mon(p) for p in s["opp_pokemon"]],
+    )
     ctx = F.DamageContext(calc, spreads())
-    F.state_features([GuardedState(s)], 0, "p1", JoinedTimers(moment="turn_start"), SHEETS, dex, None, "FG", ctx)
+    F.state_features(
+        [GuardedState(s)],
+        0,
+        "p1",
+        JoinedTimers(moment="turn_start"),
+        SHEETS,
+        dex,
+        None,
+        "FG",
+        ctx,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -168,11 +284,17 @@ def _logs():
 
     global LOGS
     if LOGS is None:
-        LOGS = json.loads((ROOT / "tests" / "fixtures" / "w5" / "logs" / "logs.json").read_text(encoding="utf-8"))
+        LOGS = json.loads(
+            (ROOT / "tests" / "fixtures" / "w5" / "logs" / "logs.json").read_text(
+                encoding="utf-8"
+            )
+        )
     return LOGS
 
 
-def test_the_spreads_at_a_decision_never_depend_on_what_comes_after(calc, dex, tmp_path):
+def test_the_spreads_at_a_decision_never_depend_on_what_comes_after(
+    calc, dex, tmp_path
+):
     from wpa.decisions import build_game
     from wpa.durations import Durations
     from wpa.spreads import UsageStore
@@ -188,7 +310,9 @@ def test_the_spreads_at_a_decision_never_depend_on_what_comes_after(calc, dex, t
     cut_at = len(blocks) // 2
     short_log = "\n|\n".join(blocks[:cut_at])
     short = build_game(short_log, empty)
-    ctx_short = F.damage_contexts(tag, short_log, short, sheets_from_log(short_log), dex, calc, store)
+    ctx_short = F.damage_contexts(
+        tag, short_log, short, sheets_from_log(short_log), dex, calc, store
+    )
     checked = 0
     for role in ("p1", "p2"):
         for k, point in enumerate(full.points[role]):
@@ -211,9 +335,15 @@ def test_rows_built_from_logs_carry_damage(calc, dex, tmp_path):
         f.write(json.dumps({"tag": tag, "log": _logs()[tag]}) + "\n")
     out = tmp_path / "out"
     counts = F.build_shard_from_logs(
-        0, 1, logs_dir=logs_dir, splits={tag: "train"}, dexes={"regma": dex, "regmb": dex},
+        0,
+        1,
+        logs_dir=logs_dir,
+        splits={tag: "train"},
+        dexes={"regma": dex, "regmb": dex},
         tables={"regma": Durations("e", timed={}), "regmb": Durations("e", timed={})},
-        out_dir=out, groups="FG", usage_dir=tmp_path / "usage",
+        out_dir=out,
+        groups="FG",
+        usage_dir=tmp_path / "usage",
     )
     t = F.read_rows(next(out.rglob("*.npz")))
     assert counts["rows"] == len(t.y) > 0
