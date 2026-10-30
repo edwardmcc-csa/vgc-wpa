@@ -34,8 +34,8 @@ turn N uses observations from earlier turns only. `docs/STATE-TIMING.md`.
 
 Each state is matched to the timers in force at its own moment, reproducing where
 the log reader takes its snapshots. In the sample checked (2,930 Reg M-A and 880
-Reg M-B state files) every file lined up exactly; in the full feature build, 4 of
-177,808 files did not and were left out. Against the observations' own record of
+Reg M-B state files) every file lined up exactly; in the full feature build, 4 files
+in the whole corpus did not and were left out. Against the observations' own record of
 weather, field and side conditions, **no disagreement is unexplained** in either
 format; the explained ones are weather changed by a switch-in before the first
 move. `docs/TIMER-JOIN.md`.
