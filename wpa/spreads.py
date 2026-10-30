@@ -692,34 +692,46 @@ def _damage_mon(
     }
 
 
-def request_for(hit: Hit, sheets, dex, a_spread: Spread, d_spread: Spread) -> dict:
+def damage_request(
+    a_mon,
+    a_state: Mapping,
+    a_spread: Spread,
+    d_mon,
+    d_state: Mapping,
+    d_spread: Spread,
+    move: str,
+    dex,
+    *,
+    spread: bool = False,
+    crit: bool = False,
+    field: Mapping | None = None,
+) -> dict:
+    """One damage request, keeping only what changes this damage."""
     from wpa.damage import request
 
-    cat = dex.moves.get(hit.move, {}).get("category", "Physical")
+    cat = dex.moves.get(move, {}).get("category", "Physical")
     attack = "atk" if cat == "Physical" else "spa"
-    defense = "def" if cat == "Physical" or hit.move in USES_DEFENSE else "spd"
-    a_mon = sheets[hit.attacker[0]][hit.attacker[1]]
-    d_mon = sheets[hit.defender[0]][hit.defender[1]]
+    defense = "def" if cat == "Physical" or move in USES_DEFENSE else "spd"
 
     def a_hp(h: float) -> float:
-        return round(h, 2) if hit.move in HP_MOVES else (1.0 if h > 1 / 3 else 0.33)
+        return round(h, 2) if move in HP_MOVES else (1.0 if h > 1 / 3 else 0.33)
 
     def d_hp(h: float) -> float:
         return 1.0 if h >= 1.0 else 0.5
 
-    a = _damage_mon(a_mon, hit.att_state, a_spread, dex, (attack,), a_hp)
-    d = _damage_mon(d_mon, hit.def_state, d_spread, dex, ("hp", defense), d_hp)
-    if a["status"] != "brn" and a["ability"] != "guts" and hit.move != "facade":
+    a = _damage_mon(a_mon, a_state, a_spread, dex, (attack,), a_hp)
+    d = _damage_mon(d_mon, d_state, d_spread, dex, ("hp", defense), d_hp)
+    if a["status"] != "brn" and a["ability"] != "guts" and move != "facade":
         a["status"] = ""
-    if hit.move not in STATUS_MOVES:
+    if move not in STATUS_MOVES:
         d["status"] = ""
-    f = hit.field
+    f = field or {}
     return request(
         a,
         d,
-        hit.move,
-        spread=hit.spread,
-        crit=hit.crit,
+        move,
+        spread=spread,
+        crit=crit,
         field={
             "weather": f.get("weather"),
             "terrain": f.get("terrain"),
@@ -730,6 +742,22 @@ def request_for(hit: Hit, sheets, dex, a_spread: Spread, d_spread: Spread) -> di
             "helpinghand": f.get("helpinghand"),
             **{k: f.get(k) for k in ("fairyaura", "darkaura", *sorted(ALLY_BOOSTS))},
         },
+    )
+
+
+def request_for(hit: Hit, sheets, dex, a_spread: Spread, d_spread: Spread) -> dict:
+    return damage_request(
+        sheets[hit.attacker[0]][hit.attacker[1]],
+        hit.att_state,
+        a_spread,
+        sheets[hit.defender[0]][hit.defender[1]],
+        hit.def_state,
+        d_spread,
+        hit.move,
+        dex,
+        spread=hit.spread,
+        crit=hit.crit,
+        field=hit.field,
     )
 
 
