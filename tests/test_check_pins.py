@@ -50,3 +50,16 @@ def test_check_drift_mismatched_shas_returns_message():
     assert "poke-env" in message
     assert "379a04628e42b2a2c94790c0788204b652f7ae1b" in message
     assert "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in message
+
+
+def test_the_damage_calculator_version_is_pinned_too(tmp_path):
+    from scripts.check_pins import calc_version, parse_version
+
+    pins = SAMPLE_PINS + "- @smogon/calc: 0.12.0\n"
+    assert parse_version(pins, "@smogon/calc") == "0.12.0"
+    lock = tmp_path / "package-lock.json"
+    lock.write_text(
+        '{"packages": {"node_modules/@smogon/calc": {"version": "0.12.0"}}}',
+        encoding="utf-8",
+    )
+    assert calc_version(lock) == "0.12.0"

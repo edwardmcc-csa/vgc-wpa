@@ -68,6 +68,9 @@ jobs:
         with:
           node-version: 18
 
+      - name: Install the damage calculator
+        run: npm ci --prefix calc
+
       - name: Cache Showdown node_modules
         uses: actions/cache@v4
         with:

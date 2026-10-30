@@ -7,6 +7,10 @@ Recorded: 2026-09-05T16:30:49Z
 - poke-env: 379a04628e42b2a2c94790c0788204b652f7ae1b
 - python: Python 3.14.3
 - node: v26.7.0
+- @smogon/calc: 0.12.0
+
+The damage calculator (`calc/`, Week 7) is pinned by `calc/package-lock.json`;
+the same check fails if the version installed there is not the one above.
 
 CI (.github/workflows/tests.yml, job "version-drift") fails the build if the
 checked-out pokemon-showdown submodule commit or the resolved poke-env

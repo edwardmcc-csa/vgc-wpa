@@ -1,0 +1,9 @@
+{
+  "name": "vgc-wpa-calc",
+  "private": true,
+  "description": "The Smogon damage calculator, pinned, for wpa/damage.py",
+  "license": "MIT",
+  "dependencies": {
+    "@smogon/calc": "0.12.0"
+  }
+}

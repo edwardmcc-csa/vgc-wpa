@@ -31,6 +31,22 @@ def parse_pin(pins_text: str, name: str) -> str:
     return match.group(1)
 
 
+def parse_version(pins_text: str, name: str) -> str:
+    """The version recorded for `name` (e.g. "- @smogon/calc: 0.12.0")."""
+    match = re.search(
+        rf"^- {re.escape(name)}: ([0-9][0-9A-Za-z.\-]*)\s*$", pins_text, re.MULTILINE
+    )
+    if not match:
+        raise ValueError(f"no version recorded for {name!r} in {PINS_FILE}")
+    return match.group(1)
+
+
+def calc_version(lock: Path = REPO_ROOT / "calc" / "package-lock.json") -> str:
+    """The @smogon/calc version calc/package-lock.json installs."""
+    data = json.loads(Path(lock).read_text(encoding="utf-8"))
+    return data["packages"]["node_modules/@smogon/calc"]["version"]
+
+
 def check_drift(name: str, expected: str, actual: str) -> str | None:
     """Return an error message if expected != actual, else None."""
     if expected == actual:
@@ -89,6 +105,13 @@ def main() -> int:
         else:
             failed = True
             print(f"FAIL: {message}", file=sys.stderr)
+    expected = parse_version(pins_text, "@smogon/calc")
+    message = check_drift("@smogon/calc", expected, calc_version())
+    if message is None:
+        print(f"OK: @smogon/calc matches pinned version {expected}")
+    else:
+        failed = True
+        print(f"FAIL: {message}", file=sys.stderr)
     return 1 if failed else 0
 
 
