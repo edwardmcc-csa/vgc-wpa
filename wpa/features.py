@@ -953,11 +953,14 @@ def build_shard_from_logs(
     groups: str = "ABCDEF",
     usage_dir: Path | None = None,
     train_sample: float = 1.0,
+    formats: Sequence[str] | None = None,
 ) -> dict[str, int]:
     """One shard of games, from our decision table (`wpa.decisions`). With
     `usage_dir` (Smogon usage statistics), each decision gets a damage context:
     real Speed in group F and the damage of group G. `train_sample` keeps that
-    fraction of the training split's units (sets), the ones `--sample` would."""
+    fraction of Reg M-A's training units (sets), the ones `wpa.evaluate --sample`
+    would; Reg M-B's training games stay whole, as the pooled model uses them all.
+    `formats`: build only these formats."""
     import gzip
     import time
 
@@ -980,7 +983,9 @@ def build_shard_from_logs(
             tag, log = d["tag"], d["log"]
             fmt = format_of(tag)
             table = tables[fmt]
-            if train_sample < 1.0 and splits.get(tag) == "train":
+            if formats is not None and fmt not in formats:
+                continue
+            if train_sample < 1.0 and fmt == "regma" and splits.get(tag) == "train":
                 unit = _set_fields(log, "p1")[0] or tag
                 if not keep_unit(unit, train_sample):
                     counts["left_out"] = counts.get("left_out", 0) + 1
@@ -1082,6 +1087,7 @@ def _build_one(args: tuple) -> dict[str, int]:
             groups=opts.get("groups") or "ABCDEF",
             usage_dir=Path(opts["usage"]) if opts.get("usage") else None,
             train_sample=opts.get("train_sample") or 1.0,
+            formats=opts.get("formats"),
         )
     return build_shard(
         shard,
@@ -1132,8 +1138,13 @@ def main() -> None:
         "--train-sample",
         type=float,
         default=1.0,
-        help="with --from-logs: keep this fraction of the training split's sets "
-        "(the ones `wpa.evaluate --sample` keeps); validation and test stay whole",
+        help="with --from-logs: keep this fraction of Reg M-A's training sets "
+        "(the ones `wpa.evaluate --sample` keeps); everything else stays whole",
+    )
+    p.add_argument(
+        "--formats",
+        nargs="+",
+        help="with --from-logs: build only these formats (regma, regmb)",
     )
     a = p.parse_args()
     if a.split_logs:

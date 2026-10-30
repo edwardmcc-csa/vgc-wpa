@@ -393,3 +393,37 @@ def test_processed_usage_statistics_are_cached_on_disk(tmp_path):
     )
     again = UsageStore(tmp_path).for_game("gen9championsvgc2026regma-1", log)
     assert again == first and "garchomp" in first
+
+
+def test_the_training_sample_is_taken_from_reg_ma_only_and_formats_can_be_picked(
+    tmp_path, dex
+):
+    import gzip
+    import json
+
+    from wpa.durations import Durations
+
+    tag = sorted(_logs())[0]  # a Reg M-A game
+    mb_tag = tag.replace("regma", "regmb")
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    with gzip.open(logs_dir / "part-000.jsonl.gz", "wt", encoding="utf-8") as f:
+        for t in (tag, mb_tag):
+            f.write(json.dumps({"tag": t, "log": _logs()[tag]}) + "\n")
+    common = dict(
+        logs_dir=logs_dir,
+        splits={tag: "train", mb_tag: "train"},
+        dexes={"regma": dex, "regmb": dex},
+        tables={"regma": Durations("e", timed={}), "regmb": Durations("e", timed={})},
+        groups="A",
+    )
+    # a sample of almost nothing leaves Reg M-B's training games whole
+    c = F.build_shard_from_logs(
+        0, 1, out_dir=tmp_path / "a", train_sample=1e-9, **common
+    )
+    assert c["games"] == 1 and c["left_out"] == 1
+    assert list((tmp_path / "a" / "regmb" / "train").glob("*.npz"))
+    c = F.build_shard_from_logs(
+        0, 1, out_dir=tmp_path / "b", formats=("regmb",), **common
+    )
+    assert c["games"] == 1 and not (tmp_path / "b" / "regma").exists()
