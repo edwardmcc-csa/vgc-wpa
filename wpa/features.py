@@ -952,14 +952,16 @@ def build_shard_from_logs(
     out_dir: Path,
     groups: str = "ABCDEF",
     usage_dir: Path | None = None,
+    train_sample: float = 1.0,
 ) -> dict[str, int]:
     """One shard of games, from our decision table (`wpa.decisions`). With
     `usage_dir` (Smogon usage statistics), each decision gets a damage context:
-    real Speed in group F and the damage of group G."""
+    real Speed in group F and the damage of group G. `train_sample` keeps that
+    fraction of the training split's units (sets), the ones `--sample` would."""
     import gzip
     import time
 
-    from wpa.decisions import build_game
+    from wpa.decisions import _set_fields, build_game
     from wpa.formats import format_of
     from wpa.team_sheets import sheets_from_log
 
@@ -978,6 +980,11 @@ def build_shard_from_logs(
             tag, log = d["tag"], d["log"]
             fmt = format_of(tag)
             table = tables[fmt]
+            if train_sample < 1.0 and splits.get(tag) == "train":
+                unit = _set_fields(log, "p1")[0] or tag
+                if not keep_unit(unit, train_sample):
+                    counts["left_out"] = counts.get("left_out", 0) + 1
+                    continue
             game = build_game(log, table)
             sheets = sheets_from_log(log)
             counts["games"] += 1
@@ -1012,6 +1019,12 @@ def build_shard_from_logs(
         d.mkdir(parents=True, exist_ok=True)
         write_rows(d / f"part-{shard:03d}-of-{shards:03d}.npz", rs, cols)
     return counts
+
+
+def keep_unit(unit: str, fraction: float, seed: str = "wpa-sample") -> bool:
+    """The same choice `wpa.evaluate.sample_units` makes for one unit."""
+    h = int.from_bytes(hashlib.sha256(f"{seed}|{unit}".encode()).digest()[:4], "big")
+    return h / 2**32 < fraction
 
 
 _WORKER: dict = {}
@@ -1068,6 +1081,7 @@ def _build_one(args: tuple) -> dict[str, int]:
             out_dir=Path(opts["out"]),
             groups=opts.get("groups") or "ABCDEF",
             usage_dir=Path(opts["usage"]) if opts.get("usage") else None,
+            train_sample=opts.get("train_sample") or 1.0,
         )
     return build_shard(
         shard,
@@ -1113,6 +1127,13 @@ def main() -> None:
         type=str,
         help="with --from-logs: Smogon usage statistics folder; turns on real "
         "Speed and the damage features (group G)",
+    )
+    p.add_argument(
+        "--train-sample",
+        type=float,
+        default=1.0,
+        help="with --from-logs: keep this fraction of the training split's sets "
+        "(the ones `wpa.evaluate --sample` keeps); validation and test stay whole",
     )
     a = p.parse_args()
     if a.split_logs:

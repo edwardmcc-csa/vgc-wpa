@@ -349,3 +349,47 @@ def test_rows_built_from_logs_carry_damage(calc, dex, tmp_path):
     assert counts["rows"] == len(t.y) > 0
     assert (t.X[:, t.columns.index("g_our_best_dmg")] > 0).any()
     assert (t.X[:, t.columns.index("g_their_best_dmg")] > 0).any()
+
+
+def test_a_training_sample_keeps_the_same_units_as_the_trainer():
+    import numpy as np
+
+    from wpa.evaluate import sample_units
+
+    units = np.array([f"set-{i}" for i in range(400)])
+    want = sample_units(units, 0.2)
+    got = np.array([F.keep_unit(u, 0.2) for u in units])
+    assert (want == got).all() and 40 < got.sum() < 120
+
+
+def test_processed_usage_statistics_are_cached_on_disk(tmp_path):
+    import json
+
+    from wpa.spreads import UsageStore
+
+    data = {
+        "data": {
+            "Garchomp": {
+                "Raw count": 10,
+                "Spreads": {"Jolly:0/32/0/0/2/32": 8.0, "Adamant:32/32/0/0/2/0": 2.0},
+            }
+        }
+    }
+    (tmp_path / "2026-05-gen9championsvgc2026regma-1500.json").write_text(
+        json.dumps(data), encoding="utf-8"
+    )
+    log = "|t:|1778000000\n"
+    first = UsageStore(tmp_path).for_game("gen9championsvgc2026regma-1", log)
+    assert list(tmp_path.glob("*.cache.pkl"))
+    (tmp_path / "2026-05-gen9championsvgc2026regma-1500.json").write_text(
+        "not json", encoding="utf-8"
+    )
+    import os
+    import time
+
+    os.utime(
+        tmp_path / "2026-05-gen9championsvgc2026regma-1500.json",
+        (time.time() - 100, time.time() - 100),
+    )
+    again = UsageStore(tmp_path).for_game("gen9championsvgc2026regma-1", log)
+    assert again == first and "garchomp" in first

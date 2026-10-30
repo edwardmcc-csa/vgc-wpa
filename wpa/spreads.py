@@ -951,8 +951,25 @@ class UsageStore:
         pick = earlier[-1] if earlier else months[0]
         key = f"{pick}-{fmt}"
         if key not in self._cache:
-            self._cache[key] = load_usage(self.folder / f"{key}-{self.cutoff}.json")
+            self._cache[key] = self._load(key)
         return self._cache[key]
+
+    def _load(self, key: str) -> dict[str, list[Spread]]:
+        """The candidates of one file, kept beside it as `.cache.pkl` once
+        worked out (doing it takes seconds per file); remade if the file is newer."""
+        import pickle
+
+        src = self.folder / f"{key}-{self.cutoff}.json"
+        cache = self.folder / f"{key}-{self.cutoff}.cache.pkl"
+        if cache.exists() and cache.stat().st_mtime >= src.stat().st_mtime:
+            with cache.open("rb") as f:
+                return pickle.load(f)
+        out = load_usage(src)
+        tmp = cache.with_suffix(".tmp")
+        with tmp.open("wb") as f:
+            pickle.dump(out, f)
+        tmp.replace(cache)
+        return out
 
 
 def priors_for(sheets, usage, dex) -> dict[tuple[str, int], list[Spread]]:
