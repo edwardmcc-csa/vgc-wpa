@@ -3,6 +3,8 @@
 Week 5 Task 4b. Code: `wpa/playstyles.py`. Tests: `tests/test_playstyles.py`.
 Report: `python -m wpa.playstyles` (needs `sheets.jsonl.gz`; about two minutes).
 **No number anywhere uses these tags until the product owner signs off the rules.**
+Example teams for each tag, and teams that barely miss Hyper Offense or Balance:
+`docs/PLAYSTYLE-EXAMPLES.md` (`python -m wpa.playstyles --examples docs/PLAYSTYLE-EXAMPLES.md`).
 
 ## The rules as written
 
@@ -17,7 +19,7 @@ form. Numbers marked PO are the product owner's; the rest are proposals.
 | Tailroom | Tailwind and Trick Room both on the team |
 | Protect the Queen | a Follow Me or Rage Powder user, plus a *different* Pokemon with a setup move (Swords Dance, Dragon Dance, Nasty Plot, Calm Mind and similar) whose attacking stat is 110+ |
 | Sun, Rain, Sand, Snow | a setter of that weather, by ability (including a Mega's) or move |
-| Hyper Offense | all of: at least 3 Pokemon with a base attacking stat of 110+ in the stat their moves use (PO) and base Speed 100+, or 80+ when the team has a Prankster or Gale Wings Tailwind user (PO); at least one damaging spread move of power 80+ (Heat Wave, Hyper Voice; Rock Slide's 75 is below); at most 2 disrupters; no Assault Vest, Eviolite or Rocky Helmet; average base bulk ((HP+Def+SpD)/3) at most 85 |
+| Hyper Offense | all of: at least 3 Pokemon with a base attacking stat of 110+ in the stat their moves use (PO) and base Speed 100+, or 80+ when the team has a Prankster or Gale Wings Tailwind user (PO); at least one damaging spread move of power 80+ (Heat Wave, Hyper Voice; Rock Slide's 75 is below); at most 2 disrupters; average base bulk ((HP+Def+SpD)/3) at most 85 |
 | Balance | not Hyper Offense, and at least 2 of 4 signals: a Fire-Water-Grass or Steel-Fairy-Fighting type core; Intimidate cycling (an Intimidate user and a pivot, or two Intimidate users); 2+ pivot users (U-turn, Volt Switch, Flip Turn, Parting Shot, Teleport, Baton Pass, Chilly Reception, Shed Tail); a mix (a 110+ attacker, 2+ disrupters, a member with bulk 90+) |
 
 Disrupters: Pokemon with Fake Out, Taunt, Encore, Disable, Imprison, Quash, a
@@ -53,21 +55,25 @@ Balance with Protect the Queen, then Balance with each weather.
    disrupters 63%), but low base bulk passes for only 15%: most teams average 85 to
    95. The bulk cut-off of 85 (proposed, not PO) is doing the work. Raise it to 90
    or drop it?
-2. **The defensive-item test does nothing.** Assault Vest, Eviolite and Rocky Helmet
-   are almost absent from this format: Reg M-A sheets lean on Focus Sash, Sitrus
-   Berry, Choice Scarf, Leftovers, White Herb and type-resist berries (Chople on 7%
-   of Pokemon). Should resist berries, Sitrus or Leftovers count as defensive
-   investment?
+2. **Defensive items: settled (PO, 29 Oct).** Assault Vest, Eviolite and Rocky
+   Helmet are not in Reg M-A or M-B (Rocky Helmet is expected in M-C), so the
+   item test is dropped from Hyper Offense. Low base bulk is the only defensive
+   test left. It is the condition that rules out most near misses
+   (`docs/PLAYSTYLE-EXAMPLES.md`).
 3. **Balance and Protect the Queen are broad.** Balance is 52% of teams with "2 of 4
    signals"; with 3 of 4 it would be about 23% (Reg M-A signal counts: 0 16%, 1 30%,
    2 31%, 3 17%, 4 6%). Protect the Queen is 22% even after requiring the setup user
    to be a 110+ attacker, because Follow Me and Rage Powder are on 40% of teams.
-4. **Snow is not uncommon in Reg M-A: 14% of teams**, almost all from Snow Warning
-   (Alolan Ninetales above all), not from moves.
+4. **Snow: 14% of Reg M-A teams**, almost all from Snow Warning (Alolan Ninetales
+   above all). PO, 29 Oct: snow ebbs as the power level rises, so this is a
+   ladder-wide figure.
 5. **Only small tags can be held out.** Holding out Balance, a weather or Protect
    the Queen would remove a third or more of all units. Hard Trick Room, Hyper
    Offense and Perish Trap remove 5-10%. In Reg M-B these are about 110 units each,
    which is too small to give a stable number on their own.
+6. **Perish Trap includes Mega Gengar (PO, 29 Oct).** Gengarite gives Shadow Tag,
+   so Gengar with Gengarite and Perish Song is Perish Trap. 8,187 Reg M-A Gengars
+   carry both. Trapping and Perish Song are also model features now (Task 4).
 
 ## The full report
 
@@ -85,7 +91,7 @@ regma: 169476 team sheets in 50781 units (sets or single games); untagged 5.5%; 
   sand               19416 teams (11.5%); held out, it would remove 11055 units (21.8%)
   snow               24458 teams (14.4%); held out, it would remove 13434 units (26.5%)
   common pairs: balance+protectthequeen 28360, balance+sun 17207, balance+rain 15484, balance+tailroom 12205, balance+snow 11225, balance+sand 10003
-  hyper offense conditions met on their own: fast_damage_dealers 34.2%, heavy_spread 91.7%, low_disruption 62.8%, no_defensive_items 100.0%, low_bulk 15.1%, all 3.2%
+  hyper offense conditions met on their own: fast_damage_dealers 34.2%, heavy_spread 91.7%, low_disruption 62.8%, low_bulk 15.1%, all 3.2%
   weather setters (Pokemon): rain:ability 27187, rain:move 12907, sand:ability 19277, sand:move 376, snow:ability 24083, snow:move 1082, sun:ability 41957, sun:move 7255
   average_bulk: 50: 0.0%, 55: 0.0%, 60: 0.0%, 65: 0.0%, 70: 0.2%, 75: 1.5%, 80: 13.2%, 85: 42.0%, 90: 35.0%, 95: 7.5%, 100: 0.6%, 105: 0.0%, 110: 0.0%
   average_speed: 20: 0.0%, 30: 0.0%, 40: 0.8%, 50: 2.3%, 60: 5.0%, 70: 14.4%, 80: 35.6%, 90: 33.5%, 100: 7.5%, 110: 0.7%, 120: 0.0%
@@ -110,7 +116,7 @@ regmb: 8334 team sheets in 2260 units (sets or single games); untagged 5.2%; two
   sand                 347 teams ( 4.2%); held out, it would remove 183 units (8.1%)
   snow                1029 teams (12.3%); held out, it would remove 522 units (23.1%)
   common pairs: balance+protectthequeen 1436, balance+sun 819, balance+rain 742, balance+tailroom 672, rain+tailroom 599, balance+snow 522
-  hyper offense conditions met on their own: fast_damage_dealers 37.2%, heavy_spread 93.4%, low_disruption 56.2%, no_defensive_items 100.0%, low_bulk 14.9%, all 2.7%
+  hyper offense conditions met on their own: fast_damage_dealers 37.2%, heavy_spread 93.4%, low_disruption 56.2%, low_bulk 14.9%, all 2.7%
   weather setters (Pokemon): rain:ability 1885, rain:move 679, sand:ability 347, snow:ability 1036, snow:move 2, sun:ability 1756, sun:move 253
   average_bulk: 60: 0.0%, 65: 0.0%, 70: 0.2%, 75: 1.7%, 80: 12.8%, 85: 43.7%, 90: 37.3%, 95: 4.0%, 100: 0.3%
   average_speed: 30: 0.0%, 40: 0.6%, 50: 1.4%, 60: 6.5%, 70: 17.8%, 80: 32.0%, 90: 31.7%, 100: 9.1%, 110: 0.8%

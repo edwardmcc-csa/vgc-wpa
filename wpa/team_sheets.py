@@ -140,6 +140,8 @@ CAPABILITIES = (
     "intimidate",
     "screens",
     "spread",
+    "trapping",
+    "perishsong",
 )
 
 # capability -> moves that give it
@@ -153,6 +155,8 @@ _BY_MOVE = {
     "redirection": {"followme", "ragepowder", "spotlight"},
     "fakeout": {"fakeout"},
     "screens": {"lightscreen", "reflect", "auroraveil"},
+    "trapping": {"meanlook", "block", "spiderweb"},
+    "perishsong": {"perishsong"},
 }
 # capability -> abilities that give it
 _BY_ABILITY = {
@@ -162,6 +166,7 @@ _BY_ABILITY = {
     "snow": {"snowwarning"},
     "prankster": {"prankster"},
     "intimidate": {"intimidate"},
+    "trapping": {"shadowtag", "arenatrap"},
 }
 _SPREAD_TARGETS = {"allAdjacentFoes", "allAdjacent"}
 
@@ -190,7 +195,9 @@ def capabilities(mon: SheetMon, dex: Dex) -> set[str]:
     * spread: a damaging move that hits both foes (or everyone adjacent);
     * abilities, including a held Mega Stone's form: Drizzle or Primordial Sea
       (rain), Drought, Orichalcum Pulse or Desolate Land (sun), Sand Stream,
-      Snow Warning, Prankster, Intimidate.
+      Snow Warning, Prankster, Intimidate;
+    * trapping: Shadow Tag or Arena Trap (Gengarite gives Mega Gengar's Shadow
+      Tag), Mean Look, Block or Spider Web; Perish Song is its own capability.
     """
     caps: set[str] = set()
     moves = set(mon.moves)

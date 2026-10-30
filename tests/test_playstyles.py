@@ -143,7 +143,9 @@ def test_eighty_speed_is_enough_only_with_a_priority_tailwind_user():
     assert "hyperoffense" not in P.team_tags(no_prankster, DEX)
 
 
-def test_defensive_items_or_heavy_disruption_rule_out_hyper_offense():
+def test_defensive_items_do_not_decide_hyper_offense():
+    # PO, 29 Oct: Assault Vest, Eviolite and Rocky Helmet are not in Reg M-A or
+    # M-B, so the item test is dropped; low base bulk stays.
     vest = tuple(
         SheetMon(
             x.position,
@@ -155,7 +157,10 @@ def test_defensive_items_or_heavy_disruption_rule_out_hyper_offense():
         )
         for x in HO
     )
-    assert "hyperoffense" not in P.team_tags(vest, DEX)
+    assert "hyperoffense" in P.team_tags(vest, DEX)
+
+
+def test_heavy_disruption_rules_out_hyper_offense():
     disruptive = HO[:3] + (
         mon(4, "support", ["fakeout", "taunt"]),
         mon(5, "support", ["fakeout", "followme"]),
@@ -227,6 +232,25 @@ def test_balance_signals_and_tag():
     assert s["pivot_users"] == 2
     tags = P.team_tags(bal, DEX)
     assert "balance" in tags and "hyperoffense" not in tags
+
+
+def test_examples_show_teams_with_a_tag_and_teams_that_barely_miss_it():
+    # only two fast 110+ attackers: misses Hyper Offense on that one condition
+    near = (
+        HO[:2]
+        + (mon(3, "support", ["protect"]),)
+        + HO[3:4]
+        + (mon(5, "support", ["protect"]),)
+        + HO[5:]
+    )
+    teams = [("g1", "p1", HO), ("g2", "p2", near)]
+    ex = P.examples(teams, DEX, per_tag=5)
+    assert [e.tag for e in ex["hyperoffense"]] == ["g1"]
+    misses = ex["near:hyperoffense"]
+    assert [e.tag for e in misses] == ["g2"]
+    assert "fast_damage_dealers" in misses[0].missed
+    text = P.describe_examples(ex, DEX)
+    assert "g1" in text and "fastphys" in text
 
 
 def test_a_team_can_carry_no_tag():

@@ -245,14 +245,26 @@ def measures(team: Sequence[SheetMon], dex: Dex) -> dict[str, float]:
     }
 
 
+HO_CONDITIONS = ("fast_damage_dealers", "heavy_spread", "low_disruption", "low_bulk")
+
+
+def ho_failures(s: Mapping[str, float]) -> list[str]:
+    """The Hyper Offense conditions this team misses (empty: it is HO).
+
+    Defensive items are not a condition (PO, 29 Oct 2026: Assault Vest,
+    Eviolite and Rocky Helmet are not in Reg M-A or M-B); they stay a measure.
+    """
+    ok = {
+        "fast_damage_dealers": s["fast_damage_dealers"] >= HO_MIN_FAST_DAMAGE_DEALERS,
+        "heavy_spread": s["heavy_spread_users"] >= 1,
+        "low_disruption": s["disrupters"] <= HO_MAX_DISRUPTERS,
+        "low_bulk": s["average_bulk"] <= HO_MAX_AVERAGE_BULK,
+    }
+    return [k for k in HO_CONDITIONS if not ok[k]]
+
+
 def _ho(s: Mapping[str, float]) -> bool:
-    return (
-        s["fast_damage_dealers"] >= HO_MIN_FAST_DAMAGE_DEALERS
-        and s["heavy_spread_users"] >= 1
-        and s["disrupters"] <= HO_MAX_DISRUPTERS
-        and s["defensive_items"] == 0
-        and s["average_bulk"] <= HO_MAX_AVERAGE_BULK
-    )
+    return not ho_failures(s)
 
 
 def balance_signals(s: Mapping[str, float]) -> int:
@@ -376,7 +388,6 @@ class Report:
         )
         ho["heavy_spread"] += s["heavy_spread_users"] >= 1
         ho["low_disruption"] += s["disrupters"] <= HO_MAX_DISRUPTERS
-        ho["no_defensive_items"] += s["defensive_items"] == 0
         ho["low_bulk"] += s["average_bulk"] <= HO_MAX_AVERAGE_BULK
         ho["all"] += _ho(s)
         wb = self.weather_by.setdefault(fmt, Counter())
@@ -431,7 +442,6 @@ class Report:
                         "fast_damage_dealers",
                         "heavy_spread",
                         "low_disruption",
-                        "no_defensive_items",
                         "low_bulk",
                         "all",
                     )
@@ -446,6 +456,88 @@ class Report:
                 cells = ", ".join(f"{v}: {c / n:.1%}" for v, c in sorted(hist.items()))
                 out.append(f"  {k}: {cells}")
         return "\n".join(out) + "\n"
+
+
+# --------------------------------------------------------------------------
+# Examples for the product owner to judge
+# --------------------------------------------------------------------------
+
+
+class Example:
+    def __init__(self, tag, role, team, s, tags, missed=()):
+        self.tag = tag
+        self.role = role
+        self.team = team
+        self.measures = s
+        self.tags = tags
+        self.missed = list(missed)
+
+
+def examples(
+    teams: Iterable[tuple[str, str, Sequence[SheetMon]]], dex: Dex, per_tag: int = 8
+) -> dict[str, list[Example]]:
+    """Up to `per_tag` teams for each tag, plus near misses.
+
+    "near:hyperoffense" holds teams that miss exactly one Hyper Offense
+    condition; "near:balance" holds non-HO teams with one Balance signal short.
+    A team whose six species were already shown is skipped, for variety.
+    """
+    out: dict[str, list[Example]] = {}
+    seen: dict[str, set[tuple[str, ...]]] = {}
+    for tag, role, team in teams:
+        s = measures(team, dex)
+        tags = team_tags(team, dex)
+        key = tuple(sorted(m.species for m in team))
+        buckets = list(tags)
+        fails = ho_failures(s)
+        if len(fails) == 1:
+            buckets.append("near:hyperoffense")
+        if not _ho(s) and balance_signals(s) == BALANCE_MIN_SIGNALS - 1:
+            buckets.append("near:balance")
+        for b in buckets:
+            rows = out.setdefault(b, [])
+            if len(rows) >= per_tag or key in seen.setdefault(b, set()):
+                continue
+            seen[b].add(key)
+            missed = fails if b == "near:hyperoffense" else ()
+            rows.append(Example(tag, role, team, s, tags, missed))
+    return out
+
+
+def _name(table: Mapping, key: str) -> str:
+    return (table.get(key) or {}).get("name", key)
+
+
+def describe_examples(ex: Mapping[str, list[Example]], dex: Dex) -> str:
+    order = list(TAGS) + ["near:hyperoffense", "near:balance"]
+    out = []
+    for b in order:
+        rows = ex.get(b, [])
+        if not rows:
+            continue
+        out += ["", f"## {b}", ""]
+        for e in rows:
+            s = e.measures
+            head = f"**{e.tag} {e.role}** - tags: {', '.join(sorted(e.tags)) or 'none'}"
+            if e.missed:
+                head += f" - misses: {', '.join(e.missed)}"
+            out.append(head)
+            out.append(
+                f"fast 110+ attackers {int(s['fast_damage_dealers'])}, heavy spread "
+                f"users {int(s['heavy_spread_users'])}, disrupters "
+                f"{int(s['disrupters'])}, average bulk {s['average_bulk']:.0f}, "
+                f"average speed {s['average_speed']:.0f}, Balance signals "
+                f"{balance_signals(s)}"
+            )
+            out.append("")
+            for m in e.team:
+                moves = ", ".join(_name(dex.moves, x) for x in m.moves)
+                out.append(
+                    f"- {_name(dex.species, m.species)} @ {_name(dex.items, m.item)}"
+                    f" ({_name(dex.abilities, m.ability)}): {moves}"
+                )
+            out.append("")
+    return "\n".join(out) + "\n"
 
 
 def _set_id(log: str) -> str | None:
@@ -476,8 +568,28 @@ def main() -> None:
     parser.add_argument("--sheets", type=Path, default=Path("sheets.jsonl.gz"))
     parser.add_argument("--logs", type=Path, default=Path("battle_logs"))
     parser.add_argument("--showdown", type=Path, default=Path("pokemon-showdown"))
+    parser.add_argument("--examples", type=Path, help="write example teams here")
+    parser.add_argument("--per-tag", type=int, default=8)
     args = parser.parse_args()
     dexes = load_dexes(args.showdown)
+    if args.examples:
+        by_fmt: dict[str, list] = {}
+        for tag, (fmt, sheets) in iter_sheet_file(args.sheets):
+            for role, team in sheets.items():
+                by_fmt.setdefault(fmt, []).append((tag, role, team))
+        text = ["# Play-style examples (PROPOSAL)", ""]
+        text.append(
+            "Generated by `python -m wpa.playstyles --examples`. For each tag, the "
+            "first teams in the corpus that carry it, skipping repeated teams; then "
+            "near misses. Reg M-A first."
+        )
+        for fmt in sorted(by_fmt):
+            text += ["", f"# {fmt}"]
+            ex = examples(by_fmt[fmt], dexes[fmt], args.per_tag)
+            text.append(describe_examples(ex, dexes[fmt]))
+        args.examples.write_text("\n".join(text), encoding="utf-8")
+        print(f"wrote {args.examples}")
+        return
     units = dict(iter_units(args.logs))
     report = Report()
     for tag, (fmt, sheets) in iter_sheet_file(args.sheets):

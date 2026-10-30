@@ -36,6 +36,8 @@ adds its Mega form's ability (Charizardite Y gives Drought, so sun).
 | intimidate | Intimidate | 38.5% | 54.4% |
 | screens | Light Screen, Reflect, Aurora Veil | 16.9% | 35.6% |
 | spread | a damaging move that hits both foes | 95.7% | 96.3% |
+| trapping | Shadow Tag, Arena Trap (Gengarite gives Mega Gengar's Shadow Tag), Mean Look, Block, Spider Web | 8.0% | 3.2% |
+| perishsong | Perish Song | 5.4% | 2.6% |
 
 (169,476 Reg M-A and 8,334 Reg M-B team sheets, two per game.)
 

@@ -152,6 +152,33 @@ def test_a_mega_stone_adds_the_mega_forms_ability():
     assert "sun" not in S.capabilities(mon(1, "charizard", ability="blaze"), MINI)
 
 
+def test_trapping_counts_a_mega_stones_shadow_tag_and_perish_song_is_its_own():
+    dex = S.Dex(
+        species={
+            **MINI.species,
+            "gengar": {"name": "Gengar", "abilities": {"0": "Cursed Body"}},
+            "gengarmega": {"name": "Gengar-Mega", "abilities": {"0": "Shadow Tag"}},
+        },
+        moves={**MINI.moves, "perishsong": move("Status"), "meanlook": move("Status")},
+        items={
+            **MINI.items,
+            "gengarite": {"name": "Gengarite", "megaStone": {"Gengar": "Gengar-Mega"}},
+        },
+    )
+    mega = mon(
+        1,
+        "gengar",
+        item="gengarite",
+        ability="cursedbody",
+        moves=["perishsong", "protect"],
+    )
+    assert {"trapping", "perishsong"} <= S.capabilities(mega, dex)
+    plain = mon(1, "gengar", ability="cursedbody", moves=["perishsong"])
+    assert "trapping" not in S.capabilities(plain, dex)
+    looker = mon(2, "gengar", ability="cursedbody", moves=["meanlook"])
+    assert "trapping" in S.capabilities(looker, dex)
+
+
 def test_fake_out_and_protect_are_not_counted_as_priority_attacks():
     caps = S.capabilities(mon(1, "charizard", moves=["fakeout", "protect"]), MINI)
     assert "priority" not in caps and "fakeout" in caps
