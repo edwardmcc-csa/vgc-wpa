@@ -11,7 +11,8 @@
 //        "boosts": {atk: 1, ...}, "status": "brn", "hp": 0.5 (fraction)}
 'use strict';
 const readline = require('readline');
-const {calculate, Generations, Pokemon, Move, Field} = require('@smogon/calc');
+const {calculate, Generations, Pokemon, Move, Field, Side} = require('@smogon/calc');
+const {getFinalSpeed} = require('@smogon/calc/dist/mechanics/util');
 
 const gen = Generations.get(0); // Champions: level 50, stat points
 const SPREAD = new Set(['allAdjacent', 'allAdjacentFoes']);
@@ -62,13 +63,21 @@ function field(f) {
     gameType: 'Doubles',
     weather: f.weather || undefined,
     terrain: f.terrain || undefined,
+    isFairyAura: !!f.fairyaura,
+    isDarkAura: !!f.darkaura,
     defenderSide: {
       isReflect: !!f.reflect,
       isLightScreen: !!f.lightscreen,
       isAuroraVeil: !!f.auroraveil,
       isFriendGuard: !!f.friendguard,
     },
-    attackerSide: {isHelpingHand: !!f.helpinghand},
+    attackerSide: {
+      isHelpingHand: !!f.helpinghand,
+      isBattery: !!f.battery,
+      isPowerSpot: !!f.powerspot,
+      isSteelySpirit: !!f.steelyspirit,
+      isFlowerGift: !!f.flowergift,
+    },
   });
 }
 
@@ -110,6 +119,11 @@ function immune(move, attacker, defender) {
 function answer(req) {
   if (req.op === 'stats') {
     return {stats: mon(req.mon).rawStats};
+  }
+  if (req.op === 'speed') {
+    const p = mon(req.mon, false);
+    if (req.mon.ability_on) p.abilityOn = true;
+    return {speed: getFinalSpeed(gen, p, field(req.field), new Side({isTailwind: !!req.tailwind}))};
   }
   const attacker = mon(req.attacker, true);
   const defender = mon(req.defender, false);

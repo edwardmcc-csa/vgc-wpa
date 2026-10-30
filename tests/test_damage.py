@@ -157,3 +157,16 @@ def test_super_fang_takes_half_the_current_hit_points_and_misses_ghosts(calc):
     assert one(calc, GAMBIT, FLOETTE, "seismictoss")["rolls"] == [50] * 16  # level 50
     assert one(calc, GAMBIT, SABLEYE, "seismictoss")["rolls"] == [0] * 16  # Ghost
     assert one(calc, GAMBIT, FLOETTE, "counter").get("unknown")
+
+
+def test_final_speed_with_tailwind_paralysis_and_scarf(calc):
+    def speed(**kw):
+        m = {**GARCHOMP, **kw.pop("mon", {})}
+        (r,) = calc.run([{"op": "speed", "mon": m, "field": {}, **kw}])
+        return r["speed"]
+
+    assert speed() == 169
+    assert speed(tailwind=True) == 338
+    assert speed(mon={"status": "par"}) == 84
+    assert speed(mon={"item": "choicescarf"}) == 253
+    assert speed(mon={"boosts": {"spe": 1}}) == 253
