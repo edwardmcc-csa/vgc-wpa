@@ -171,3 +171,24 @@ def test_the_pooled_v2_model_trains_on_both_formats_and_is_judged_on_reg_mb(tmp_
     val = E._v2_tables(regma, "A", "validation")
     assert val.columns == F.columns("A")
     assert len(val.y) == len(ma)  # the sample applies to training only
+
+
+def test_selecting_every_column_in_order_keeps_the_same_array():
+    rows, _ = fixture_rows()
+    t = to_table(rows)
+    assert E.select(t, "ABCDE").X is t.X  # no copy of a large table
+
+
+def test_training_converts_the_table_to_float64_once(tmp_path):
+    # sklearn converts to float64 on every warm-start step; converting once up
+    # front avoids holding a float32 and a float64 copy of the whole table
+    rows, _ = fixture_rows()
+    t, v = to_table(rows), to_table(rows)
+    params = {
+        "learning_rate": 0.1,
+        "max_leaf_nodes": 7,
+        "min_samples_leaf": 5,
+        "l2_regularization": 0.0,
+    }
+    E._train_until(t, v, params, tmp_path / "c.ckpt", 0)
+    assert t.X.dtype == np.float64

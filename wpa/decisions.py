@@ -25,6 +25,7 @@ old log reader also took a snapshot.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 from wpa.durations import AFTER_RESIDUAL, Durations
@@ -63,6 +64,40 @@ def _hp(text: str) -> tuple[float, bool]:
     return (num / den if den else 0.0), fainted or num == 0
 
 
+STATUSES = ("brn", "par", "slp", "frz", "psn", "tox")
+STATS = ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion")
+
+
+def _status(text: str) -> str:
+    """'55/100 par' -> 'par'; '100/100' or '0 fnt' -> ''."""
+    for tok in text.split()[1:]:
+        if tok in STATUSES:
+            return tok
+    return ""
+
+
+def _clamp(n: int) -> int:
+    return max(-6, min(6, n))
+
+
+_EFFECT_LINES = {
+    "-boost",
+    "-unboost",
+    "-setboost",
+    "-clearboost",
+    "-clearnegativeboost",
+    "-clearpositiveboost",
+    "-invertboost",
+    "-copyboost",
+    "-swapboost",
+    "-status",
+    "-curestatus",
+    "-cureteam",
+    "-enditem",
+    "-item",
+}
+
+
 class _Board:
     def __init__(self) -> None:
         self.names: dict[str, list[str]] = {}
@@ -75,6 +110,10 @@ class _Board:
         # name), learned when it switches in
         self.seen_as: dict[str, dict[str, int]] = {r: {} for r in ROLES}
         self.abilities: dict[str, list[str]] = {}
+        # for the real-data check: lines seen, stages that would pass +-6, and
+        # whether each Intimidate lowered every opposing active Pokemon's Attack
+        self.counts: Counter[str] = Counter()
+        self._intimidate: list | None = None
 
     def sheet(self, line: str) -> None:
         role, mons = parse_showteam_message(line)
@@ -82,9 +121,90 @@ class _Board:
         self.abilities[role] = [to_id(m.ability) for m in mons]
         self.species[role] = [to_id(m.species) for m in mons]
         self.mons[role] = [
-            {"hp": 0.0, "fainted": False, "active": False, "seen": False, "mega": False}
-            for _ in mons
+            {
+                "hp": 0.0,
+                "fainted": False,
+                "active": False,
+                "seen": False,
+                "mega": False,
+                "boosts": {},
+                "status": "",
+                "item": to_id(m.item),
+            }
+            for m in mons
         ]
+
+    def _mon(self, ident: str) -> dict | None:
+        role = ident[:2]
+        if role not in self.mons:
+            return None
+        idx = self._index(role, ident)
+        return None if idx is None else self.mons[role][idx]
+
+    def _effects(self, t: str, p: list[str]) -> bool:
+        """Stat stages, status and items. True if the line was one of these."""
+        if t == "-clearallboost":
+            for mons in self.mons.values():
+                for m in mons:
+                    m["boosts"] = {}
+            return True
+        if t not in _EFFECT_LINES or len(p) < 3:
+            return False
+        self.counts[t] += 1
+        m = self._mon(p[2])
+        if m is None:
+            self.counts["unmatched_" + t] += 1
+            return True
+        b = m["boosts"]
+        touched = [m]
+        if t in ("-boost", "-unboost", "-setboost") and len(p) > 4:
+            stat, n = p[3], int(p[4]) if p[4].lstrip("-").isdigit() else 0
+            if stat in STATS:
+                new = (
+                    n
+                    if t == "-setboost"
+                    else b.get(stat, 0) + (n if t == "-boost" else -n)
+                )
+                self.counts["stage_outside_6"] += new != _clamp(new)
+                b[stat] = _clamp(new)
+        elif t == "-clearboost":
+            m["boosts"] = {}
+        elif t == "-clearnegativeboost":
+            m["boosts"] = {k: v for k, v in b.items() if v > 0}
+        elif t == "-clearpositiveboost":
+            m["boosts"] = {k: v for k, v in b.items() if v < 0}
+        elif t == "-invertboost":
+            m["boosts"] = {k: -v for k, v in b.items()}
+        elif t in ("-copyboost", "-swapboost") and len(p) > 3:
+            other = self._mon(p[3])
+            if other is None:
+                return True
+            if t == "-copyboost":
+                m["boosts"] = dict(other["boosts"])
+            else:
+                stats = STATS
+                if len(p) > 4 and p[4] and not p[4].startswith("["):
+                    stats = tuple(s.strip() for s in p[4].split(","))
+                mine, theirs = dict(b), dict(other["boosts"])
+                for s in stats:
+                    mine[s], theirs[s] = other["boosts"].get(s, 0), b.get(s, 0)
+                m["boosts"] = mine
+                other["boosts"] = theirs
+                touched.append(other)
+        elif t == "-status" and len(p) > 3:
+            m["status"] = p[3] if p[3] in STATUSES else m["status"]
+        elif t == "-curestatus":
+            m["status"] = ""
+        elif t == "-cureteam":
+            for x in self.mons[p[2][:2]]:
+                x["status"] = ""
+        elif t == "-enditem":
+            m["item"] = ""
+        elif t == "-item" and len(p) > 3:
+            m["item"] = to_id(p[3])
+        for x in touched:  # keep only the stages that are not zero
+            x["boosts"] = {k: v for k, v in x["boosts"].items() if v}
+        return True
 
     def _index(self, role: str, ident: str, details: str = "") -> int | None:
         names = self.names.get(role, [])
@@ -104,7 +224,57 @@ class _Board:
                 return hits[0]
         return None
 
+    def _check_intimidate(self, p: list[str]) -> None:
+        t = p[1]
+        opens = (
+            t == "-ability"
+            and len(p) > 4
+            and to_id(p[3]) == "intimidate"
+            and p[4] == "boost"
+            and p[2][:2] in ROLES
+        )
+        it = self._intimidate
+        if it is not None and not opens:
+            if t == "-unboost" and len(p) > 3 and p[2][:2] == it[0] and p[3] == "atk":
+                it[2] += 1
+                return
+            if t == "-ability" and len(p) > 3:  # Defiant, Mirror Armor, ...
+                it[3].append(f"ability: {p[3]}")
+                return
+            if t in (
+                "-fail",
+                "-immune",
+                "-activate",
+                "-item",
+                "-boost",
+                "-miss",
+                "-block",
+            ):
+                src = next((x for x in p[3:] if x.startswith("[from]")), t)
+                it[3].append(src)
+                return
+        self.close_intimidate()
+        if opens:
+            target = "p2" if p[2][:2] == "p1" else "p1"
+            n = sum(m["active"] and not m["fainted"] for m in self.mons.get(target, []))
+            self._intimidate = [target, n, 0, []]
+
+    def close_intimidate(self) -> None:
+        it, self._intimidate = self._intimidate, None
+        if it is None:
+            return
+        if it[2] == it[1]:
+            self.counts["intimidate_all_lowered"] += 1
+        else:
+            self.counts["intimidate_not_all_lowered"] += 1
+            for why in it[3] or ["(nothing shown)"]:
+                self.counts["  because " + why] += 1
+
     def handle(self, p: list[str]) -> None:
+        if len(p) > 1:
+            self._check_intimidate(p)
+        if len(p) > 1 and self._effects(p[1], p):
+            return
         if len(p) < 3:
             return
         t = p[1]
@@ -119,8 +289,12 @@ class _Board:
                 return
             self.seen_as[role][ident.split(": ", 1)[-1]] = idx
             old = self.slots[role][slot]
+            passed: dict = {}
             if old is not None and old != idx:
+                if any(x == "[from] Baton Pass" for x in p[5:]):
+                    passed = dict(self.mons[role][old]["boosts"])
                 self.mons[role][old]["active"] = False
+                self.mons[role][old]["boosts"] = {}
                 # Regenerator heals a third on switching out; the log does not
                 # print it (the stored states apply it too)
                 if self.abilities.get(role, [""] * 6)[old] == "regenerator":
@@ -132,16 +306,20 @@ class _Board:
             m["seen"] = True
             m["hp"], fainted = _hp(p[4])
             m["fainted"] = m["fainted"] or (fainted and m["hp"] == 0)
+            m["status"] = _status(p[4])
+            m["boosts"] = passed
             self.slots[role][slot] = idx
         elif t in ("-damage", "-heal", "-sethp") and len(p) > 3:
             idx = self._index(role, ident)
             if idx is not None:
-                self.mons[role][idx]["hp"], _ = _hp(p[3])
+                m = self.mons[role][idx]
+                m["hp"], fainted = _hp(p[3])
+                m["status"] = "" if fainted else _status(p[3])
         elif t == "faint":
             idx = self._index(role, ident)
             if idx is not None:
                 m = self.mons[role][idx]
-                m.update(hp=0.0, fainted=True, active=False)
+                m.update(hp=0.0, fainted=True, active=False, boosts={}, status="")
                 for s, v in self.slots[role].items():
                     if v == idx:
                         self.slots[role][s] = None
@@ -172,6 +350,9 @@ class _Board:
                 "active": m["active"],
                 "gimmick": None,
                 "mega": m["mega"],
+                "boosts": dict(m["boosts"]),
+                "status": m["status"],
+                "item": m["item"],
             }
             for sp, m in zip(self.species.get(role, []), self.mons.get(role, []))
         ]
@@ -192,6 +373,8 @@ class Game:
     points: dict[str, list[int]] = field(default_factory=dict)
     # boards where the old log reader took a snapshot (for validation)
     logreader: dict[str, list[dict]] = field(default_factory=dict)
+    # stat stage, status and item lines seen (for the real-data check)
+    effects: Counter = field(default_factory=Counter)
 
 
 def _set_fields(
@@ -323,8 +506,9 @@ def build_game(log: str, table: Durations) -> Game:
                 board.handle(p)
             walker.feed(line)
     walker.flush()
+    board.close_intimidate()
 
-    game = Game()
+    game = Game(effects=board.counts)
     for r in ROLES:
         set_id, game_index, score = _set_fields(log, r)
         states: list[dict] = []
@@ -441,6 +625,7 @@ def main() -> None:
     a = p.parse_args()
     empty = Durations("none", timed={})
     c: dict[str, Counter] = {}
+    effects: dict[str, Counter] = {}
     examples: list = []
     paths = sorted(a.logs.glob("logs_*.json"))
     if a.files:
@@ -457,6 +642,13 @@ def main() -> None:
             k = c.setdefault(fmt, Counter())
             g = build_game(log, empty)
             k["games"] += 1
+            e = effects.setdefault(fmt, Counter())
+            e.update(g.effects)
+            for role in ROLES:
+                for s in g.states[role]:
+                    for m in s["our_pokemon"]:
+                        for v in m["boosts"].values():
+                            e["stage_seen_outside_6"] += not -6 <= v <= 6
             for role in ROLES:
                 f = a.states / f"{tag}-{role}.json"
                 states = g.states[role]
@@ -499,6 +691,9 @@ def main() -> None:
             f"({k['cells_mismatched'] / (k['cells'] or 1):.3%}); files with any "
             f"difference {k['files_with_mismatch']}"
         )
+        print("  stat stage, status and item lines:")
+        for name, n in sorted(effects.get(fmt, Counter()).items()):
+            print(f"    {name}: {n}")
     for e in examples:
         print("example:", e)
 

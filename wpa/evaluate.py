@@ -60,6 +60,8 @@ def load_table(
 def select(table: Table, groups: str) -> Table:
     """Only the columns of these feature groups, in the standard order."""
     wanted = columns(groups)
+    if wanted == list(table.columns):
+        return table  # nothing to drop: no copy of a large table
     index = {c: i for i, c in enumerate(table.columns)}
     idx = [index[c] for c in wanted]
     return Table(
@@ -330,6 +332,9 @@ def _train_until(train, val, params, ckpt: Path, seconds: float):
 
     from wpa.model import fit
 
+    # sklearn would convert to float64 on every warm-start step; doing it once,
+    # in place, means a float32 and a float64 copy are never both held
+    train.X = np.ascontiguousarray(train.X, dtype=np.float64)
     start = time.time()
     while True:
         model, info = fit(train, val, params, checkpoint=ckpt, max_steps=1)
