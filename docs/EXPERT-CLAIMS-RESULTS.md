@@ -94,3 +94,51 @@ claim's other condition, a type advantage, is still not in the features.
 
 v0 always prefers the sacrifice, but only because it adds up hit points. That is not
 evidence for the claim.
+
+---
+
+## Week 7: re-scored with v3 (damage, stat changes, spreads)
+
+Code: `wpa/claims_v2.py` with `--groups ABCDEFG --usage usage_stats`
+(runbook Section 16, step 7). Nothing here gates.
+
+Each position now carries every Pokemon's most likely spread at that decision.
+Follow-ups keep those spreads, and a Pokemon that faints or comes in loses its
+stat stages. Damage (group G) is recomputed for every follow-up.
+
+Each claim also gets a premise **in damage terms**:
+- **EC-001:** their active pair cannot take 40% of either of ours, and after a
+  double knock-out some way in for their reserve knocks one of ours out this turn.
+- **EC-002:** some sacrifice leaves us hitting their board harder than keeping does.
+
+"v3 without damage" is the same model trained without group G.
+
+| Reg M-A | v0 | v1 | v3 without damage | v3 |
+|---|---|---|---|---|
+| EC-001, all (138) | 0% | 0% | 0% | 3% |
+| EC-001, their reserve acts first after a double KO (104) | 0% | 0% | 0% | 4% |
+| EC-001, premise in damage terms (1) | 0% | 0% | 0% | 0% |
+| EC-002, all (768) | 100% | 22% | 38% | **46%** |
+| EC-002, the sacrifice gains speed (204) | 100% | 24% | 59% | 59% |
+| EC-002, the sacrifice hits harder (307) | 100% | 21% | 36% | **58%** |
+
+| Reg M-B | v0 | v1 | v3 without damage | v3 |
+|---|---|---|---|---|
+| EC-001, all (2) | 0% | 0% | 0% | 0% |
+| EC-002, all (399) | 100% | 16% | 38% | 38% |
+| EC-002, the sacrifice gains speed (76) | 100% | 7% | 59% | 61% |
+| EC-002, the sacrifice hits harder (156) | 100% | 24% | 43% | **53%** |
+
+**EC-001.** Damage does not change the verdict. v3 still prefers the double
+knock-out in 97% of positions: mean win probability 0.80 against 0.68 for one
+knock-out and 0.56 for a stall. The claim's situation in damage terms turns up
+once in 9,000 validation games. So the data cannot judge the claim as written. In
+the positions the games do contain, taking two Pokemon is worth more than the
+tempo it gives away.
+
+**EC-002.** This is where damage shows. Where the sacrifice brings in a Pokemon
+that hits their board harder, v3 agrees with the claim in 58% of Reg M-A positions
+and 53% of Reg M-B. The same model without damage agrees in 36% and 43%. Where the
+sacrifice gains speed, both v3 models agree about 60% of the time. The claim's
+condition — "when it buys a speed or type advantage" — is now what moves the
+model, in both formats.
