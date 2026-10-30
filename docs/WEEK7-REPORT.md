@@ -145,7 +145,7 @@ and retrained.
 
 - Tests came first throughout this week's code, except the one-line change of
   report labels.
-- The full suite: 495 passed, 3 skipped. 15 test files cannot load on the
+- The full suite: 496 passed, 3 skipped. 15 test files cannot load on the
   development machine (bot libraries) and are unchanged. ruff and pyright are
   clean.
 - Models trained in the cloud use a newer scikit-learn. I checked that they give
