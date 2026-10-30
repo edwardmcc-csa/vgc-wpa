@@ -703,6 +703,80 @@ is generated and not committed.
 
 ---
 
+## 14. The win probability model (Week 5)
+
+This builds the learned model (v1) and grades it against the Week 4 baseline
+(v0). Everything is per format. It needs `wpa_states/`, `splits.json`
+(Section 10), `timers.jsonl.gz` and `sheets.jsonl.gz` (Section 13), Node and the
+built Showdown submodule.
+
+1. **Install the model library** (once):
+   ```
+   python -m pip install -e ".[model]"
+   python -m pytest tests\test_gbm.py tests\test_model.py tests\test_evaluate.py
+   ```
+   The last line should say `passed` with nothing failed.
+
+2. **Build the feature table.** One row per decision point. It is split into 64
+   parts so a run can stop and restart. On the development machine it took about
+   an hour; more workers is faster if your computer has the cores:
+   ```
+   python -m wpa.features --shards 64 --workers 4
+   ```
+   Each part prints a line such as
+   `shard 0: {'games': 1394, 'files': 2788, 'misaligned': 0, ...}`.
+   `misaligned` should be 0 or close to it (4 files in the whole corpus on 30 Oct).
+   The result is the `features` folder (about 60 MB). It is generated, not
+   committed.
+
+3. **Train.** The four settings in the fixed grid are tried, the validation split
+   chooses the number of rounds. The `--sample 0.2` option trains Reg M-A on 20%
+   of its sets; leave it out to use all of them (better, slower):
+   ```
+   python -m wpa.evaluate train --format regmb
+   python -m wpa.evaluate train --format regma --sample 0.2
+   python -m wpa.evaluate select --format regmb
+   python -m wpa.evaluate select --format regma
+   ```
+   If a run prints `not finished ... run the same command again`, do exactly
+   that: it carries on where it stopped. `select` prints which setting won and
+   whether the model was recalibrated.
+
+4. **Ablation** (which feature groups earn their place), then the report:
+   ```
+   python -m wpa.evaluate ablation --format regmb
+   python -m wpa.evaluate ablation --format regma --sample 0.2
+   python -m wpa.evaluate report
+   ```
+   The report is also saved as `models\report.txt`. Each line is a Brier with a
+   95% interval in brackets. The interval comes from resampling whole sets, so it
+   is honest about how much evidence there is. `minus v0` below zero means v1 is
+   better; if its whole interval is below zero, v1 is better beyond doubt.
+
+5. **The gate** (pass or fail on the validation split):
+   ```
+   python -m wpa.evaluate check
+   ```
+   It ends `gate: passed` or `gate: FAILED` with the reasons above it.
+
+6. **The test split - once.** This is the final, untouched number. Run it only
+   when everything above is settled; every run is logged with the date and git
+   commit in `models\test_openings.json`:
+   ```
+   python -m wpa.evaluate final
+   ```
+
+7. **Optional comparisons:**
+   ```
+   python -m wpa.evaluate pooled --sample 0.2
+   python -m wpa.claims
+   ```
+   `pooled` trains one model on both formats with a format flag and scores it on
+   Reg M-B only (add `--test` to score the test split too; that counts as another
+   opening). `claims` scores the expert-claim positions (report only).
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
