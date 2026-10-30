@@ -690,6 +690,17 @@ A healthy run says `aligned ... of ... state files (100.00%)` for each format,
 and the `unexplained` figure on every effect line is `0.0%`. Anything else,
 stop and report it. Expect several minutes: it reads every log file once.
 
+**Write the team-sheet side file** (Week 5): every game's two open team sheets,
+used for the model's team features. About a minute:
+
+```
+python -m wpa.team_sheets --out sheets.jsonl.gz
+```
+
+It prints, per format, how many teams have Tailwind, Trick Room, each weather
+and so on, then `wrote 88905 games to sheets.jsonl.gz`. Like the timer file, it
+is generated and not committed.
+
 ---
 
 ## If something goes wrong
