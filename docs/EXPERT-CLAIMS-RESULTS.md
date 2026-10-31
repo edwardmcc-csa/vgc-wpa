@@ -142,3 +142,7 @@ and 53% of Reg M-B. The same model without damage agrees in 36% and 43%. Where t
 sacrifice gains speed, both v3 models agree about 60% of the time. The claim's
 condition — "when it buys a speed or type advantage" — is now what moves the
 model, in both formats.
+
+**PO decision on EC-001 (30 Oct 2026):** accepted as a niche case. The claim holds
+in a rare situation, and that is fine. Keep it as a caveat to understand when
+positioning, not as something the model must show on average.
