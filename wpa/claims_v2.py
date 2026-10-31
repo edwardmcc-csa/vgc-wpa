@@ -446,8 +446,11 @@ def _predictors(fmt: str, groups: str, models_v1, specs) -> dict[str, Callable]:
         name, _, rest = spec.partition("=")
         folder, _, gs = rest.partition(":")
         d = Path(folder) / which
+        from wpa.evaluate import use_recalibration
+
         path = d / f"{gs}.recal.pkl"
-        path = path if path.exists() else d / f"{gs}.pkl"
+        if not (path.exists() and use_recalibration(fmt)):
+            path = d / f"{gs}.pkl"
         sub = subset(gs)
         if which == "pooled":
             m = load(path, [*columns(gs), "z_format_regmb"])

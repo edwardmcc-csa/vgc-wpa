@@ -57,7 +57,7 @@ GRID: list[dict[str, Any]] = [
         "l2_regularization": 1.0,
     },
 ]
-MAX_ITER = 600
+MAX_ITER = 1000  # PO, 30 Oct 2026 (was 600: every full-data and v3 model hit it)
 STEP = 25
 PATIENCE = 3  # steps without improvement before stopping
 

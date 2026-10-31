@@ -911,6 +911,26 @@ Section 15, plus:
    python -m wpa.claims_v2 report --groups ABCDEFG --out claims_v3 --model "v3 without damage=models_v3:ABCDEF" --model v3=models_v3:ABCDEFG
    ```
 
+8. **Everything, on every training game (your computer).** The same steps
+   without `--train-sample`, into new folders so the 20% results stay. Paste the
+   whole block into PowerShell and leave it running; it takes hours (build time is
+   in `docs/DAMAGE-FEATURES.md`, and each training command can take an hour):
+   ```
+   cd C:\dev\VGC_WPA\vgc-wpa
+   python -m pip install -e ".[model]"
+   npm ci --prefix calc
+   python -m wpa.features --from-logs logs_shards --out features_v3_full --groups ABCDEFG --usage usage_stats --shards 64 --workers 4
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFG --features features_v3_full --models models_v3_full
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEF --features features_v3_full --models models_v3_full
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFG --features features_v3_full --models models_v3_full
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEF --features features_v3_full --models models_v3_full
+   python -m wpa.evaluate v2-report --features features_v3_full --models models_v3_full --full ABCDEFG
+   ```
+   If the build stops part-way, run its line again with `--only` and the parts
+   still missing (e.g. `--only 40-63`), then carry on with the training lines.
+   The result is `models_v3_full\report.txt`. Do not run `v2-final` on it: that
+   would be another test opening.
+
 ---
 
 ## If something goes wrong

@@ -134,3 +134,8 @@ def test_training_can_stop_and_resume_with_the_same_result(tmp_path):
     assert rest is not None
     assert np.array_equal(rest.predict(X), whole.predict(X))
     assert info2["curve"] == info_whole["curve"]
+
+
+def test_the_round_cap_is_1000():
+    # PO, 30 Oct 2026: every full-data and v3 model stopped at the old cap of 600
+    assert M.MAX_ITER == 1000

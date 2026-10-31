@@ -200,3 +200,9 @@ def test_the_report_compares_with_the_model_one_group_smaller():
     assert E._base_groups("ABCDEFG", "ABCDE") == "ABCDE"
     assert E._group_names("ABCDEFG", "ABCDEF") == "damage (G)"
     assert E._group_names("ABCDEF", "ABCDE") == "speed (F)"
+
+
+def test_reg_mb_is_never_recalibrated():
+    # PO, 30 Oct 2026: recalibrating on Reg M-B's few validation sets overshot on test
+    assert E.use_recalibration("regma")
+    assert not E.use_recalibration("regmb")

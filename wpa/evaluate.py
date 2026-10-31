@@ -682,6 +682,15 @@ GROUP_NAMES = {
 }
 
 
+# PO, 30 Oct 2026: recalibrating on Reg M-B's 199 validation sets overshot on the
+# test split (Week 7 report), so Reg M-B models are used as trained
+NEVER_RECALIBRATE = {"regmb"}
+
+
+def use_recalibration(fmt: str) -> bool:
+    return fmt not in NEVER_RECALIBRATE
+
+
 def _base_groups(full: str, base: str | None) -> str:
     """The model the report compares with: `base`, or `full` without its last group."""
     return base or full[:-1]
@@ -707,7 +716,9 @@ def _cmd_v2_report(a) -> None:
         p = model.predict(x.X)
         r = score(p, raw.y, raw.unit, v0)
         note = "not recalibrated"
-        if r["calibration_failures"]:
+        if r["calibration_failures"] and not use_recalibration(fmt):
+            note = "not recalibrated (never for this format)"
+        if r["calibration_failures"] and use_recalibration(fmt):
             recal = recalibrate(model, x)
             r2 = score(recal.predict(x.X), raw.y, raw.unit, v0)
             if r2["brier"] <= r["brier"] and len(r2["calibration_failures"]) <= len(
@@ -750,7 +761,7 @@ def _cmd_v2_final(a) -> None:
         d = a.models / which
         model, raw, x = _v2_predict(a, which, a.full, "test")
         recal = d / f"{a.full}.recal.pkl"
-        if recal.exists():
+        if recal.exists() and use_recalibration(fmt):
             model = load(recal, list(x.columns))
         r = score(model.predict(x.X), raw.y, raw.unit, v0_from_table(raw))
         (d / "test.json").write_text(json.dumps(r, indent=1), encoding="utf-8")
