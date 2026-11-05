@@ -10,6 +10,9 @@ split only (`wpa/gbm.py` for the library). Three rules from the brief:
   and averages: p = (f(x) + 1 - f(mirror(x))) / 2. A mirrored position gets
   exactly 0.5 and the two players' predictions sum to 1. A side with no Pokemon
   left has lost (0.0), the other has won (1.0).
+* **One-sided, where the two sides know different things** (Week 8: our sheet
+  whole, the opponent's blanked). The mirrored row is then unlike any real row,
+  so the average is pulled off. Such a model scores the row as it is: p = f(x).
 * **The hyperparameter grid below was written down before any result.** The
   validation split picks one setting per format.
 
@@ -63,8 +66,16 @@ PATIENCE = 3  # steps without improvement before stopping
 
 
 class SymmetricModel:
-    def __init__(self, clf, columns: list[str], n_iter: int, params: dict) -> None:
+    def __init__(
+        self,
+        clf,
+        columns: list[str],
+        n_iter: int,
+        params: dict,
+        one_sided: bool = False,
+    ) -> None:
         self.clf = clf
+        self.one_sided = one_sided
         self.columns = list(columns)
         self.mirror = np.array(mirror_permutation(columns))
         self.n_iter = n_iter
@@ -79,9 +90,16 @@ class SymmetricModel:
             else None
         )
 
+    def is_one_sided(self) -> bool:
+        # models saved before one-sided models existed have no such attribute
+        return bool(getattr(self, "one_sided", False))
+
     def raw(self, X: np.ndarray) -> np.ndarray:
-        """The symmetric average, before recalibration and the wiped-side rule."""
+        """The symmetric average (or, one-sided, the row's own score), before
+        recalibration and the wiped-side rule."""
         f = self.clf.predict_proba(X)[:, 1]
+        if self.is_one_sided():
+            return f
         g = self.clf.predict_proba(X[:, self.mirror])[:, 1]
         return (f + 1.0 - g) / 2.0
 
@@ -94,7 +112,7 @@ class SymmetricModel:
             def h(q: np.ndarray) -> np.ndarray:
                 return np.interp(q, xs, ys)
 
-            p = (h(p) + 1.0 - h(1.0 - p)) / 2.0
+            p = h(p) if self.is_one_sided() else (h(p) + 1.0 - h(1.0 - p)) / 2.0
         if self._our is not None and self._their is not None:
             p = np.where(X[:, self._their] <= 0, 1.0, p)
             p = np.where(X[:, self._our] <= 0, 0.0, p)
@@ -115,6 +133,7 @@ def fit(
     patience: int = PATIENCE,
     checkpoint: Path | str | None = None,
     max_steps: int | None = None,
+    one_sided: bool = False,
 ) -> tuple[SymmetricModel | None, dict]:
     """Train on `train`, stopping on `val`'s symmetric Brier. Returns the best.
 
@@ -122,6 +141,8 @@ def fit(
     the same arguments carries on from it, giving the same result as one
     uninterrupted run. `max_steps` limits the steps taken in this call; if the
     run is not finished the model returned is None and info["done"] is False.
+    `one_sided`: the model scores each row as it is (no mirror average), and its
+    rounds are chosen on that score.
     """
     if train.columns != val.columns:
         raise ValueError("train and validation have different feature columns")
@@ -129,7 +150,11 @@ def fit(
     if checkpoint is not None and Path(checkpoint).exists():
         with open(checkpoint, "rb") as f:
             state = pickle.load(f)
-        if state["params"] != params or state["seed"] != seed:
+        if (
+            state["params"] != params
+            or state["seed"] != seed
+            or state.get("one_sided", False) != one_sided
+        ):
             raise ValueError("checkpoint is from a different run; delete it to restart")
     if state is None:
         state = {
@@ -143,6 +168,7 @@ def fit(
             "done": False,
             "params": params,
             "seed": seed,
+            "one_sided": one_sided,
         }
     clf = state["clf"]
     yv = val.y.astype(np.float64)
@@ -154,7 +180,10 @@ def fit(
         clf.set_params(max_iter=state["n"])
         clf.fit(train.X, train.y)
         b = _brier(
-            SymmetricModel(clf, train.columns, state["n"], params).predict(val.X), yv
+            SymmetricModel(clf, train.columns, state["n"], params, one_sided).predict(
+                val.X
+            ),
+            yv,
         )
         state["curve"].append((state["n"], b))
         taken += 1
@@ -185,18 +214,24 @@ def fit(
     }
     if not state["done"]:
         return None, info
-    best = SymmetricModel(state["best_clf"], train.columns, state["best_n"], params)
+    best = SymmetricModel(
+        state["best_clf"], train.columns, state["best_n"], params, one_sided
+    )
     return best, info
 
 
 def recalibrate(model: SymmetricModel, val: Table) -> SymmetricModel:
-    """Fit a monotone map on the validation split, kept symmetric."""
+    """Fit a monotone map on the validation split, kept symmetric (unless the
+    model is one-sided)."""
     from sklearn.isotonic import IsotonicRegression
 
     p = model.raw(np.asarray(val.X, dtype=np.float32))
-    # fit on both sides of every row so the map is symmetric about 0.5
-    xs = np.concatenate([p, 1.0 - p])
-    ys = np.concatenate([val.y, 1 - val.y]).astype(np.float64)
+    if model.is_one_sided():
+        xs, ys = p, val.y.astype(np.float64)
+    else:
+        # fit on both sides of every row so the map is symmetric about 0.5
+        xs = np.concatenate([p, 1.0 - p])
+        ys = np.concatenate([val.y, 1 - val.y]).astype(np.float64)
     iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip").fit(xs, ys)
     grid = np.linspace(0.0, 1.0, 1001)
     out = copy.copy(model)

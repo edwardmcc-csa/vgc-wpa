@@ -139,3 +139,56 @@ def test_training_can_stop_and_resume_with_the_same_result(tmp_path):
 def test_the_round_cap_is_1000():
     # PO, 30 Oct 2026: every full-data and v3 model stopped at the old cap of 600
     assert M.MAX_ITER == 1000
+
+
+# One-sided models (Week 8, blank sheets): when the two sides of a row know
+# different things (our sheet whole, theirs blanked), the mirrored row is unlike
+# any real row, and the symmetric average is pulled off. A one-sided model scores
+# the row as it is.
+
+
+def lopsided(n=3000, seed=0, rate=0.3):
+    t = table(n, seed)
+    rng = np.random.default_rng(seed + 100)
+    t.y = (rng.random(n) < rate).astype(np.int8)
+    return t
+
+
+def test_a_one_sided_model_scores_the_row_as_it_is():
+    model, _ = M.fit(
+        lopsided(seed=0),
+        lopsided(seed=1),
+        M.GRID[0],
+        max_iter=60,
+        step=10,
+        one_sided=True,
+    )
+    assert model.one_sided
+    X = lopsided(500, seed=5).X
+    assert np.allclose(model.predict(X), model.clf.predict_proba(X)[:, 1])
+    assert abs(model.predict(X).mean() - 0.3) < 0.05
+    sym, _ = M.fit(lopsided(seed=0), lopsided(seed=1), M.GRID[0], max_iter=60, step=10)
+    assert not sym.one_sided and abs(sym.predict(X).mean() - 0.5) < 0.05
+
+
+def test_a_one_sided_recalibration_follows_the_outcomes():
+    model, _ = M.fit(
+        lopsided(seed=0),
+        lopsided(seed=1),
+        M.GRID[0],
+        max_iter=60,
+        step=10,
+        one_sided=True,
+    )
+    val = lopsided(seed=2, rate=0.2)
+    recal = M.recalibrate(model, val)
+    assert abs(recal.predict(val.X).mean() - 0.2) < 0.02
+
+
+def test_an_old_saved_model_is_symmetric(tmp_path):
+    model, _ = fit()
+    del model.__dict__["one_sided"]  # as pickled before one-sided models existed
+    M.save(model, tmp_path / "m.pkl")
+    old = M.load(tmp_path / "m.pkl", COLS)
+    x = np.array([[2.0, 2.0, 3, 3, 1, 1, 1]], dtype=np.float32)
+    assert old.predict(x)[0] == pytest.approx(0.5, abs=1e-12)

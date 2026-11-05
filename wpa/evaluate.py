@@ -327,7 +327,9 @@ def _paths(models: Path, fmt: str) -> Path:
     return d
 
 
-def _train_until(train, val, params, ckpt: Path, seconds: float):
+def _train_until(
+    train, val, params, ckpt: Path, seconds: float, one_sided: bool = False
+):
     import time
 
     from wpa.model import fit
@@ -337,7 +339,9 @@ def _train_until(train, val, params, ckpt: Path, seconds: float):
     train.X = np.ascontiguousarray(train.X, dtype=np.float64)
     start = time.time()
     while True:
-        model, info = fit(train, val, params, checkpoint=ckpt, max_steps=1)
+        model, info = fit(
+            train, val, params, checkpoint=ckpt, max_steps=1, one_sided=one_sided
+        )
         if info["done"] or (seconds and time.time() - start > seconds):
             return model, info
 
@@ -630,8 +634,9 @@ def _cmd_v2_train(a) -> None:
         return
     train = _v2_tables(a, a.groups, "train")
     val = _v2_tables(a, a.groups, "validation")
+    one_sided = bool(getattr(a, "one_sided", False))
     model, info = _train_until(
-        train, val, GRID[V2_GRID_ENTRY], d / f"{name}.ckpt", a.seconds
+        train, val, GRID[V2_GRID_ENTRY], d / f"{name}.ckpt", a.seconds, one_sided
     )
     if model is None:
         print(
@@ -646,6 +651,7 @@ def _cmd_v2_train(a) -> None:
             "sample": a.sample,
             "train_rows": int(len(train.y)),
             "train_units": int(len(np.unique(train.unit))),
+            "one_sided": one_sided,
         }
     )
     (d / f"{name}.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
@@ -735,6 +741,8 @@ def _cmd_v2_report(a) -> None:
                 save(recal, d / f"{a.full}.recal.pkl")
                 r, note = r2, "recalibrated on validation"
         results[fmt] = r
+        if model.is_one_sided():
+            note = "one-sided, " + note
         out.append(f"\n{fmt} ({which} model, groups {a.full}, {note})")
         out.append(describe(fmt, a.models.name, r))
         base = _base_groups(a.full, a.base)
@@ -811,6 +819,14 @@ def _temperature(d: Path, groups: str) -> float | None:
     return float(json.loads(path.read_text(encoding="utf-8"))["temperature"])
 
 
+def _one_sided(d: Path, groups: str) -> bool:
+    """Whether the saved model `groups` in folder `d` is one-sided."""
+    path = d / f"{groups}.json"
+    if not path.exists():
+        return False
+    return bool(json.loads(path.read_text(encoding="utf-8")).get("one_sided", False))
+
+
 def _cmd_v2_crossfit(a) -> None:
     """Reg M-B's temperature: train the pooled model k times, each without one
     fold of Reg M-B's training sets and to the main model's rounds, predict that
@@ -829,7 +845,11 @@ def _cmd_v2_crossfit(a) -> None:
     oof = np.full(len(train.y), np.nan)
     for f in range(a.folds):
         model, _info = fit(
-            subset(train, fold != f), val, GRID[V2_GRID_ENTRY], max_iter=rounds
+            subset(train, fold != f),
+            val,
+            GRID[V2_GRID_ENTRY],
+            max_iter=rounds,
+            one_sided=_one_sided(d, a.groups),
         )
         assert model is not None
         rows = fold == f
@@ -974,6 +994,12 @@ def main() -> None:
     p.add_argument("--groups", default="ABCDE")
     p.add_argument("--full", default="ABCDEF", help="v2: the headline feature groups")
     p.add_argument("--folds", type=int, default=5, help="v2-crossfit: folds")
+    p.add_argument(
+        "--one-sided",
+        action="store_true",
+        help="v2-train: score each row as it is, without the mirror average; for "
+        "tables where the two sides know different things (built with --blank)",
+    )
     p.add_argument(
         "--others",
         nargs="+",

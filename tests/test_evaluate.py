@@ -263,3 +263,28 @@ def test_every_feature_group_has_a_report_name():
 
     assert set("ABCDEFGHIJ") <= set(GROUP_NAMES)
     assert "this turn's options (H)" in _group_names("ABCDEFGHIJ", "ABCDEFG")
+
+
+def test_a_one_sided_model_is_trained_saved_and_recorded(tmp_path):
+    # Week 8 blank sheets: the two sides of a row know different things
+    from argparse import Namespace
+
+    from wpa.model import load
+
+    rows, _ = fixture_rows()
+    for split in ("train", "validation"):
+        _write_split(tmp_path / "f", "regma", split, rows)
+    a = Namespace(
+        format="regma",
+        features=tmp_path / "f",
+        models=tmp_path / "m",
+        groups="A",
+        sample=1.0,
+        seconds=0,
+        one_sided=True,
+    )
+    E._cmd_v2_train(a)
+    model = load(tmp_path / "m" / "regma" / "A.pkl", F.columns("A"))
+    assert model.one_sided
+    assert E._one_sided(tmp_path / "m" / "regma", "A") is True
+    assert E._one_sided(tmp_path / "m" / "regma", "B") is False  # no model yet
