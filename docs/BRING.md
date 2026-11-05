@@ -51,10 +51,19 @@ and in order. When a later game of a set is built:
 
 Nothing from a later game is ever used.
 
-**The plan's test (belief is narrower at the start of game 2).** Over the 20% build:
-161,106 Pokemon carried into a later game. The mean entropy of their spread
-estimates at the start of the game falls from 1.365 (fresh from the statistics) to
-1.143 (carried), about 16% narrower.
+**The plan's test (belief is narrower at the start of game 2).** Over the 20%
+build, the mean entropy of a carried Pokemon's spread estimate at the start of a
+later game:
+
+| | Pokemon carried | fresh from the statistics | carried from the last game | narrower by |
+|---|---|---|---|---|
+| Reg M-A | 148,854 | 1.432 | 1.201 | 16.2% |
+| Reg M-B | 22,884 | 0.925 | 0.764 | 17.5% |
+
+Reg M-B's estimates start narrower. In both formats, carrying the last game over
+narrows them by about a sixth. (An earlier version of this page
+said 161,106 Pokemon, from a build that had not finished; both formats together
+are 171,738.)
 
 ## Groups I and J use it
 

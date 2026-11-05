@@ -210,8 +210,8 @@ def fit(examples: Sequence[Example]) -> BringModel:
         y += [int(i in ex.brought) for i in range(len(ex.sheet))]
     lr = LogisticRegression(C=1.0, max_iter=1000)
     lr.fit(np.array(X), np.array(y))
-    model.coef = [float(c) for c in lr.coef_[0]]
-    model.intercept = float(lr.intercept_[0])
+    model.coef = [float(c) for c in np.ravel(lr.coef_)]
+    model.intercept = float(np.ravel(lr.intercept_)[0])
     return model
 
 

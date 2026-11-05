@@ -146,3 +146,38 @@ model, in both formats.
 **PO decision on EC-001 (30 Oct 2026):** accepted as a niche case. The claim holds
 in a rare situation, and that is fine. Keep it as a caveat to understand when
 positioning, not as something the model must show on average.
+
+## Week 8: re-scored with v4 (who was brought, this turn, the whole board)
+
+Same 64-shard validation scan as before, now recording groups H, I and J
+(`claims_v4/`). EC-001's reserve threat now comes from the likely back two (group
+I) and the whole board (group J). "v3 groups" is the model trained on the v4
+table without H, I and J.
+
+| Reg M-A | v0 | v1 | v3 groups | v4 |
+|---|---|---|---|---|
+| EC-001, all (138) | 0% | 0% | 4% | **12%** |
+| EC-001, their reserve acts first after a double KO (104) | 0% | 0% | 5% | **14%** |
+| EC-001, premise in damage terms (1) | 0% | 0% | 100% | 0% |
+| EC-002, all (768) | 100% | 22% | 48% | 49% |
+| EC-002, the sacrifice gains speed (204) | 100% | 24% | 62% | 61% |
+| EC-002, the sacrifice hits harder (312) | 100% | 21% | 59% | 59% |
+
+| Reg M-B | v0 | v1 | v3 groups | v4 |
+|---|---|---|---|---|
+| EC-001, all (2) | 0% | 0% | 0% | 0% |
+| EC-002, all (399) | 100% | 16% | 46% | 47% |
+| EC-002, the sacrifice gains speed (76) | 100% | 7% | 67% | 66% |
+| EC-002, the sacrifice hits harder (159) | 100% | 25% | 61% | 60% |
+
+The "hits harder" counts are 312 and 159 (307 and 156 in Week 7) because group G
+now uses only a Choice-locked Pokemon's locked move.
+
+**EC-001.** v4 sides with the claim (one knock-out or a stall, rather than the
+double knock-out) in 12% of Reg M-A positions, up from 4%, and in 14% where their
+reserve acts first. On average it still prefers the double knock-out: mean win probability
+0.78, against 0.69 for one knock-out and 0.56 for a stall. This is what the PO's
+decision expects: the claim holds in particular positions, which the whole board
+now lets the model find, not in general.
+
+**EC-002.** Unchanged from Week 7. Damage already carried it.
