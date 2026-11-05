@@ -1,7 +1,7 @@
 # Week 8 — Dispatch Brief (finish M4b: who was brought, Bo3 memory, what each side can do, the whole board)
 
 **Status:** drafted 30 Oct 2026 from the PO's decisions after the Week 7 report.
-Work starts when the PO says go.
+Started 4 Nov 2026 (PO: go).
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -31,6 +31,16 @@ sheet blanked. That has never been tested.
 4. **v3 on every training game runs on the PO's computer** (runbook Section 16,
    step 8).
 5. **This week's scope:** the four features below, plus the blank-sheet run.
+6. **Reg M-B gets a one-number correction, learned from its training sets by
+   cross-fitting** (PO, 4 Nov, after the full-data v3 run failed the calibration
+   gate uncorrected). It is learned from 1,824 sets rather than the 199
+   validation sets, and judged on validation like everything else (Task 6).
+
+**Feature group letters:** H is this turn's options (Task 3), I is the likely back
+(Task 1, weighting the unseen threat by the chance each was brought), and J is
+damage across the whole board (Task 4). Each is a group of its own, so the ablation
+can price it separately. Group G changes in one way: a Choice-locked Pokemon's
+damage uses only its locked move.
 
 ## Tasks
 
@@ -55,6 +65,8 @@ sheet blanked. That has never been tested.
 - [ ] **The plan's test:** at the start of game 2, belief is narrower than at the
       start of game 1. Measure it, per format.
 - [ ] Nothing from a later game of the set is ever used.
+- [ ] To make this possible, the logs are sharded by set, so a set's games are
+      built together and in order (`logs_sets/`).
 
 ### Task 3 — What each side can do this turn (new group H)
 - [ ] For each active Pokemon:
@@ -90,6 +102,11 @@ sheet blanked. That has never been tested.
 ### Task 6 — v4 models and evaluation
 - [ ] Same settings (learning rate 0.05, 31 leaves); rounds chosen on validation,
       up to 1,000.
+- [ ] **Reg M-B correction (decision 6):** split Reg M-B's training sets into five
+      folds. Train the pooled model five times, each time without one fold, and
+      predict that fold. On those out-of-fold predictions, fit one number (a
+      temperature that sharpens or softens every prediction alike, so the model
+      stays symmetric). Apply it to the pooled model's Reg M-B predictions.
 - [ ] Reg M-A on the 20% sample here and on the full set on the PO's computer.
       Reg M-B uses the pooled model, without recalibration.
 - [ ] **Ablation:** v3 against each addition (Tasks 1–2, Task 3, Task 4) as paired

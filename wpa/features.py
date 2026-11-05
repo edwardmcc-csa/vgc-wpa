@@ -910,34 +910,56 @@ def build_shard(
 # --------------------------------------------------------------------------
 
 
+def unit_of(tag: str, log: str) -> tuple[str, int]:
+    """(set id, game number) for a Bo3 game; (its own tag, 1) for a single game."""
+    from wpa.decisions import _BESTOF
+
+    m = _BESTOF.search(log)
+    return (m.group(2), int(m.group(1))) if m else (tag, 1)
+
+
 def split_logs_into_shards(
     games: Iterable[tuple[str, str]],
     splits: Mapping[str, str],
     out_dir: Path,
     shards: int,
 ) -> dict[str, int]:
-    """Write the logs of games that have a split into `shards` files by tag hash,
-    so each shard can be built on its own without reading every log again."""
+    """Write the logs of games that have a split into `shards` files by set (a Bo3
+    set's games together, in game order), so each shard can be built on its own
+    without reading every log again, and a set's later games can use its earlier
+    ones."""
     import gzip
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    files = [
-        gzip.open(out_dir / f"part-{i:03d}.jsonl.gz", "wt", encoding="utf-8")
-        for i in range(shards)
-    ]
+    paths = [out_dir / f"part-{i:03d}.jsonl.gz" for i in range(shards)]
+    files = [gzip.open(p, "wt", encoding="utf-8") for p in paths]
     counts = {"games": 0, "unassigned": 0}
     try:
         for tag, log in games:
             if tag not in splits:
                 counts["unassigned"] += 1
                 continue
-            files[shard_of(tag, shards)].write(
+            unit, _ = unit_of(tag, log)
+            files[shard_of(unit, shards)].write(
                 json.dumps({"tag": tag, "log": log}) + "\n"
             )
             counts["games"] += 1
     finally:
         for f in files:
             f.close()
+    for p in paths:  # each set's games in order, sets in order of first game
+        with gzip.open(p, "rt", encoding="utf-8") as f:
+            lines = f.readlines()
+        keyed = []
+        first: dict[str, int] = {}
+        for i, line in enumerate(lines):
+            d = json.loads(line)
+            unit, game = unit_of(d["tag"], d["log"])
+            first.setdefault(unit, i)
+            keyed.append((first[unit], game, i, line))
+        keyed.sort()
+        with gzip.open(p, "wt", encoding="utf-8") as f:
+            f.writelines(x[3] for x in keyed)
     return counts
 
 
