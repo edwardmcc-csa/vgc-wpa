@@ -977,13 +977,39 @@ correction learned from its training sets. It needs everything from Section 16.
    python -m wpa.evaluate v2-report --features features_v4 --models models_v4 --full ABCDEFGHIJ --base ABCDEFG
    ```
 
-6. **With the opponent's sheet blanked** (report only):
+6. **Blank sheets** (report only; `docs/BLANK-SHEETS.md`). The opponent's sheet
+   is blanked and ours stays whole, as in a game without open team sheets. The
+   two sides of a row then know different things, so the model is trained
+   **one-sided** (`--one-sided`):
    ```
    python -m wpa.features --from-logs logs_shards --out features_v4_blank --groups ABCDEFGHIJ --usage usage_stats --bring models_v4/bring.json --blank --train-sample 0.2 --shards 64 --workers 4
-   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHIJ --features features_v4_blank --models models_v4_blank
-   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFGHIJ --features features_v4_blank --models models_v4_blank
-   python -m wpa.evaluate v2-report --features features_v4_blank --models models_v4_blank --full ABCDEFGHIJ
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHIJ --features features_v4_blank --models models_v4_public --one-sided
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFGHIJ --features features_v4_blank --models models_v4_public --one-sided
+   python -m wpa.evaluate v2-report --features features_v4_blank --models models_v4_public --full ABCDEFGHIJ
    ```
+   The report says "one-sided" next to each format. This build is fast (under a
+   minute a shard), because spreads come from the statistics alone.
+
+   **Optional: both sheets blanked**, as someone watching a replay without
+   either sheet would see it. Both sides know the same kind of thing, so the
+   usual symmetric model is right:
+   ```
+   python -m wpa.features --from-logs logs_shards --out features_v4_spect --groups ABCDEFGHIJ --usage usage_stats --bring models_v4/bring.json --blank-both --train-sample 0.2 --shards 64 --workers 4
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHIJ --features features_v4_spect --models models_v4_spect
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFGHIJ --features features_v4_spect --models models_v4_spect
+   python -m wpa.evaluate v2-report --features features_v4_spect --models models_v4_spect --full ABCDEFGHIJ
+   ```
+
+   **What each addition is worth** (paired, on validation). This needs the models
+   trained without one group each, v3 from Section 16, and the blank-sheet models:
+   ```
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGIJ --features features_v4 --models models_v4
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHJ --features features_v4 --models models_v4
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHI --features features_v4 --models models_v4
+   python -m wpa.evaluate v2-compare --features features_v4 --models models_v4 --full ABCDEFGHIJ --others ABCDEFG ABCDEFGIJ ABCDEFGHJ ABCDEFGHI ABCDEFG@features_v3@models_v3 ABCDEFGHIJ@features_v4_blank@models_v4_public ABCDEFGHIJ@features_v4_spect@models_v4_spect
+   ```
+   The results are saved in `models_v4\compare.txt`. A model that has not been
+   trained is skipped.
 
 7. **The test split** is opened only if you agree; every opening is logged:
    ```

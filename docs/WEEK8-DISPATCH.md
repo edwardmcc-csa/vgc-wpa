@@ -1,7 +1,8 @@
 # Week 8 — Dispatch Brief (finish M4b: who was brought, Bo3 memory, what each side can do, the whole board)
 
 **Status:** drafted 30 Oct 2026 from the PO's decisions after the Week 7 report.
-Started 4 Nov 2026 (PO: go).
+Started 4 Nov 2026 (PO: go). Reported 5 Nov 2026 (`docs/WEEK8-REPORT.md`); two
+items wait for the PO.
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -45,78 +46,81 @@ damage uses only its locked move.
 ## Tasks
 
 ### Task 1 — Which four they brought (M4b)
-- [ ] For each side, at each decision: the chance that each sheet Pokemon was
+- [x] For each side, at each decision: the chance that each sheet Pokemon was
       brought. It uses team preview (both sheets), what has appeared so far in this
       game, and earlier games of the set. Every set of four agrees with what has
       been seen.
-- [ ] **Training labels:** the four that appear in a game. A game where fewer than
+- [x] **Training labels:** the four that appear in a game. A game where fewer than
       four appeared is kept out of training and counted.
-- [ ] **The plan's test, per format on validation:** at team preview it beats the
+- [x] **The plan's test, per format on validation:** at team preview it beats the
       uniform guess over the 15 possible sets of four.
-- [ ] The unseen-Pokemon features (groups E, F and G) are weighted by this chance,
-      instead of treating every unseen sheet Pokemon alike.
-- [ ] Tests first. No look-ahead: cutting the game after a decision changes
+- [x] The unseen-Pokemon features (groups E, F and G) are weighted by this chance,
+      instead of treating every unseen sheet Pokemon alike. *Done as new groups I
+      and J instead; E, F and G are as in v3 (Week 8 report, Task 1).*
+- [x] Tests first. No look-ahead: cutting the game after a decision changes
       nothing.
 
 ### Task 2 — Bo3 memory
-- [ ] In games 2 and 3 of a set, each side's spread estimates start from where the
+- [x] In games 2 and 3 of a set, each side's spread estimates start from where the
       previous game left them, not from the usage statistics.
-- [ ] What each player brought, and led with, in earlier games feeds Task 1.
-- [ ] **The plan's test:** at the start of game 2, belief is narrower than at the
+- [x] What each player brought, and led with, in earlier games feeds Task 1.
+- [x] **The plan's test:** at the start of game 2, belief is narrower than at the
       start of game 1. Measure it, per format.
-- [ ] Nothing from a later game of the set is ever used.
-- [ ] To make this possible, the logs are sharded by set, so a set's games are
+- [x] Nothing from a later game of the set is ever used.
+- [x] To make this possible, the logs are sharded by set, so a set's games are
       built together and in order (`logs_sets/`).
 
 ### Task 3 — What each side can do this turn (new group H)
-- [ ] For each active Pokemon:
+- [x] For each active Pokemon:
       - Fake Out still works (its first turn in, and not yet used since);
       - locked by a Choice item, and into which move. While locked, group G uses
         only that move;
       - the chance its next Protect works (from the Protect counter).
-- [ ] For each side: Mega Evolution still available.
-- [ ] Tests first.
-- [ ] **Real-data check per format:** every Fake Out in the logs that worked was
+- [x] For each side: Mega Evolution still available.
+- [x] Tests first.
+- [x] **Real-data check per format:** every Fake Out in the logs that worked was
       flagged as available; every move from a locked Pokemon was the locked move.
       Anything else is listed and explained.
 
 ### Task 4 — Damage across the whole board (extend group G)
-- [ ] Between every remaining Pokemon on each side (seen, or likely in the back
+- [x] Between every remaining Pokemon on each side (seen, or likely in the back
       from Task 1), who knocks out whom in one hit and in two.
-- [ ] **"Outspeeds and knocks out":** the pairs where one side's Pokemon moves
+- [x] **"Outspeeds and knocks out":** the pairs where one side's Pokemon moves
       first and knocks the other out.
-- [ ] Short summaries for each side: how many of theirs we can remove this way, and
+- [x] Short summaries for each side: how many of theirs we can remove this way, and
       how many of ours are exposed.
-- [ ] **Build time** measured on one shard first. The full table must still build
+- [x] **Build time** measured on one shard first. The full table must still build
       on the PO's computer in a sensible time (say so in the report if not).
 
 ### Task 5 — Blank sheets (M4b, non-negotiable)
-- [ ] The whole pipeline runs with the opponent's sheet blanked:
+- [x] The whole pipeline runs with the opponent's sheet blanked:
       - species are known only as they appear;
       - items, abilities and moves are known only as revealed;
       - spreads come from the statistics alone.
-- [ ] The result is a valid but less confident win probability (`WP_public`).
-- [ ] On validation, per format, report how much is lost against full sheets. No
+- [x] The result is a valid but less confident win probability (`WP_public`).
+- [x] On validation, per format, report how much is lost against full sheets. No
       gate this time.
 
 ### Task 6 — v4 models and evaluation
-- [ ] Same settings (learning rate 0.05, 31 leaves); rounds chosen on validation,
+- [x] Same settings (learning rate 0.05, 31 leaves); rounds chosen on validation,
       up to 1,000.
-- [ ] **Reg M-B correction (decision 6):** split Reg M-B's training sets into five
+- [x] **Reg M-B correction (decision 6):** split Reg M-B's training sets into five
       folds. Train the pooled model five times, each time without one fold, and
       predict that fold. On those out-of-fold predictions, fit one number (a
       temperature that sharpens or softens every prediction alike, so the model
       stays symmetric). Apply it to the pooled model's Reg M-B predictions.
 - [ ] Reg M-A on the 20% sample here and on the full set on the PO's computer.
+      *The 20% sample is done; the full set is runbook Section 17, step 9.*
       Reg M-B uses the pooled model, without recalibration.
-- [ ] **Ablation:** v3 against each addition (Tasks 1–2, Task 3, Task 4) as paired
+- [x] **Ablation:** v3 against each addition (Tasks 1–2, Task 3, Task 4) as paired
       differences per format. Gate on validation.
 - [ ] The test split is opened once for v4 if the PO agrees. It would be the fifth
-      opening, logged.
-- [ ] Expert claims re-scored. EC-001's reserve threat now comes from the likely
+      opening, logged. *Waiting for the PO (Week 8 report, decision 1).*
+- [x] Expert claims re-scored. EC-001's reserve threat now comes from the likely
       back two.
 
 ### Task 7 — Runbook and report
+- [x] Runbook Section 17; `docs/WEEK8-REPORT.md`.
 
 ## Out of scope this week
 - **Decision versus luck (M5).** This is next week, on v4.
