@@ -250,7 +250,7 @@ def test_damage_features_read_only_public_fields(calc, dex):
     from tests.test_features import GuardedMon, GuardedState
 
     class Mon(GuardedMon):
-        ALLOWED = GuardedMon.ALLOWED | {"mega", "boosts", "status", "item"}
+        ALLOWED = GuardedMon.ALLOWED | {"mega", "boosts", "status", "item", "last_move"}
 
     s = state()
     s = dict(
@@ -452,3 +452,147 @@ def test_the_calculation_count_is_per_shard_not_running(calc, dex, tmp_path):
     again = F.build_shard_from_logs(0, 1, out_dir=tmp_path / "b", **common)
     assert first["calculations"] > 0
     assert again["calculations"] == 0  # every answer already in the worker's cache
+
+
+# --------------------------------------------------------------------------
+# Week 8: Choice lock in G, the likely back (I), the whole board (J)
+# --------------------------------------------------------------------------
+
+
+def g8(calc, dex, s=None, odds=None, groups="GIJ", joined=None):
+    ctx = F.DamageContext(calc, spreads(), odds)
+    return F.state_features(
+        [s or state()],
+        0,
+        "p1",
+        joined or JoinedTimers(moment="turn_start"),
+        SHEETS,
+        dex,
+        None,
+        groups,
+        ctx,
+    )
+
+
+def solo_kingambit(**kw):
+    s = state()
+    s["our_pokemon"][1] = pk("garchomp", 1.0, False)  # on the bench
+    s["our_pokemon"][0] = pk(
+        "kingambit", 1.0, True, item=kw.get("item", "blackglasses")
+    )
+    s["our_pokemon"][0]["last_move"] = kw.get("last_move", "")
+    return s
+
+
+def test_a_choice_locked_pokemon_only_has_its_locked_move(calc, dex):
+    free = g8(calc, dex, solo_kingambit(item="choicescarf"), groups="G")[
+        "g_our_best_dmg"
+    ]
+    locked = g8(
+        calc,
+        dex,
+        solo_kingambit(item="choicescarf", last_move="suckerpunch"),
+        groups="G",
+    )["g_our_best_dmg"]
+    assert locked < free
+    not_choice = g8(
+        calc,
+        dex,
+        solo_kingambit(item="blackglasses", last_move="suckerpunch"),
+        groups="G",
+    )["g_our_best_dmg"]
+    assert not_choice > locked
+
+
+def test_the_likely_back_follows_the_bring_odds(calc, dex):
+    even = g8(calc, dex, groups="I")
+    bascu = g8(calc, dex, odds={"p2": [1, 1, 0.01, 50, 0.01, 0.01]}, groups="I")
+    sinis = g8(calc, dex, odds={"p2": [1, 1, 0.01, 0.01, 50, 0.01]}, groups="I")
+    assert bascu["i_their_back_entropy"] < even["i_their_back_entropy"]
+    assert bascu["i_their_back_dmg_exp"] > sinis["i_their_back_dmg_exp"]
+    assert even["i_their_back_speed_exp"] > 0 and even["i_our_back_dmg_exp"] > 0
+
+
+def test_the_whole_board_counts_knock_outs_and_who_moves_first(calc, dex):
+    full = g8(calc, dex, groups="J")
+    low = g8(calc, dex, state(their_hp=(0.05, 0.05)), groups="J")
+    assert low["j_our_ko_targets_exp"] > full["j_our_ko_targets_exp"]
+    assert low["j_our_ko_targets_exp"] >= 2 - 1e-9  # both of theirs at 5%
+    assert low["j_our_outko_pairs_exp"] >= low["j_our_outko_targets_exp"] - 1e-9
+    assert full["j_their_ko_targets_exp"] >= 0
+
+
+def test_groups_i_and_j_are_zero_without_a_context(dex):
+    row = F.state_features(
+        [state()], 0, "p1", JoinedTimers(moment="turn_start"), SHEETS, dex, None, "IJ"
+    )
+    assert set(row.values()) == {0.0}
+
+
+def test_a_sets_second_game_starts_from_the_firsts_spreads_and_four(
+    calc, dex, tmp_path
+):
+    from tests.test_sets import bo3_log
+    from wpa.bring import BringModel, brought_from_log
+    from wpa.decisions import build_game
+    from wpa.durations import Durations
+    from wpa.spreads import UsageStore
+    from wpa.team_sheets import sheets_from_log
+
+    tag = max(_logs(), key=lambda k: len(_logs()[k]))
+    body = _logs()[tag]
+    g1, g2 = bo3_log("setx", 1, body), bo3_log("setx", 2, body)
+    t1, t2 = "gen9championsvgc2026regmabo3-91", "gen9championsvgc2026regmabo3-92"
+    # odds: only "brought last game" counts
+    bring = BringModel(rates={}, coef=[0, 0, 3.0, 0, 0, 0, 0, 0, 0], intercept=0.0)
+    store = UsageStore(tmp_path)
+    memory: dict = {}
+    empty = Durations("e", timed={})
+    stats: dict = {}
+    first = F.damage_contexts(
+        t1,
+        g1,
+        build_game(g1, empty),
+        sheets_from_log(g1),
+        dex,
+        calc,
+        store,
+        bring,
+        memory,
+        stats,
+    )
+    second = F.damage_contexts(
+        t2,
+        g2,
+        build_game(g2, empty),
+        sheets_from_log(g2),
+        dex,
+        calc,
+        store,
+        bring,
+        memory,
+        stats,
+    )
+    # game 2 starts where game 1 ended: each Pokemon's most likely spread after
+    # all of game 1, as kept in the set's memory
+    from wpa.bring import players
+
+    sheets = sheets_from_log(g2)
+    for role, name in players(g2).items():
+        kept = memory[("setx", name)]["spreads"]
+        for i, mon in enumerate(sheets[role]):
+            if mon.species in kept:
+                best = max(kept[mon.species], key=lambda c: c.weight)
+                assert (
+                    second["p1"][0].spreads[(role, i)].nature,
+                    second["p1"][0].spreads[(role, i)].sps,
+                ) == (best.nature, best.sps)
+    assert first["p1"][0].odds["p1"] == [1.0] * 6  # nothing known before game 1
+    got = brought_from_log(body)["p1"]
+    odds2 = second["p1"][0].odds["p1"]
+    assert all(odds2[i] > 1.0 for i in got) and all(
+        odds2[i] == 1.0 for i in range(6) if i not in got
+    )
+    assert (
+        stats["carried"] > 0 and stats["entropy_carried"] <= stats["entropy_start"]
+    )  # no statistics here: one candidate each

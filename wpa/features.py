@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
@@ -233,12 +234,15 @@ _BUILDERS = {
     "E": _cols_e,
     "F": _cols_f,
     "G": _cols_g,
+    "H": lambda: _cols_h(),
+    "I": lambda: _cols_i(),
+    "J": lambda: _cols_j(),
 }
 
 
 def columns(groups: str) -> list[str]:
     out: list[str] = []
-    for g in "ABCDEFG":
+    for g in "ABCDEFGHIJ":
         if g in groups:
             out += _BUILDERS[g]()
     return out
@@ -419,6 +423,8 @@ class DamageContext:
 
     calc: object
     spreads: Mapping[tuple[str, int], object]
+    # each side's odds that each sheet Pokemon was brought (`wpa.bring`), by role
+    odds: Mapping[str, Sequence[float]] | None = None
 
 
 _SCREENS = ("reflect", "lightscreen", "auroraveil")
@@ -433,6 +439,7 @@ def _board_state(p: Mapping) -> dict:
         "boosts": dict(p.get("boosts") or {}),
         "status": p.get("status") or "",
         "hp": hp if hp > 0 else 1.0,
+        "last_move": p.get("last_move") or "",
     }
 
 
@@ -628,7 +635,7 @@ def _group_g(
                     "darkaura": "darkaura" in auras,
                     **{k: k in ally for k in ALLY_BOOSTS},
                 }
-                for move in a_mon.moves:
+                for move in _usable_moves(a_mon, a_st):
                     m = dex.moves.get(move) or {}
                     if not m or m.get("category") == "Status":
                         continue
@@ -696,6 +703,267 @@ def _group_g(
     return out
 
 
+# --------------------------------------------------------------------------
+# Week 8: this turn's options (H), the likely back (I), the whole board (J)
+# --------------------------------------------------------------------------
+
+_H_SIDE = (
+    "fakeout_n",
+    "locked_n",
+    "protect_ready_n",
+    "protect_risky_n",
+    "mega_available",
+    "mega_used",
+)
+_I_SIDE = (
+    "back_entropy",
+    "back_dmg_exp",
+    "back_ko_exp",
+    "back_speed_exp",
+    "back_outspeeds_exp",
+)
+_J_SIDE = ("ko_targets_exp", "outko_targets_exp", "2hko_targets_exp", "outko_pairs_exp")
+
+
+def _cols_h() -> list[str]:
+    return [f"h_{s}_{k}" for s in SIDES for k in _H_SIDE]
+
+
+def _cols_i() -> list[str]:
+    return [f"i_{s}_{k}" for s in SIDES for k in _I_SIDE]
+
+
+def _cols_j() -> list[str]:
+    return [f"j_{s}_{k}" for s in SIDES for k in _J_SIDE]
+
+
+def _usable_moves(mon: SheetMon, st: Mapping) -> tuple[str, ...]:
+    """Its sheet moves, or only the locked one while a Choice item holds it."""
+    from wpa.decisions import CHOICE_ITEMS
+
+    locked = st.get("last_move") or ""
+    if st.get("item") in CHOICE_ITEMS and locked in mon.moves:
+        return (locked,)
+    return mon.moves
+
+
+def _has_own_stone(mon: SheetMon, dex: Dex) -> bool:
+    stone = dex.items.get(mon.item, {}).get("megaStone") or {}
+    if isinstance(stone, str):
+        stone = {"": stone}
+    return any(
+        (not base or to_id(base) == mon.species) and to_id(mega) in dex.species
+        for base, mega in stone.items()
+    )
+
+
+def _group_h(
+    s: Mapping, role: str, sheets: Mapping[str, Sequence[SheetMon]], dex: Dex
+) -> dict[str, float]:
+    """For each side's active Pokemon: Fake Out still works, Choice-locked,
+    Protect ready or risky (one that worked last turn); and the side's Mega
+    Evolution still to use, or used."""
+    from wpa.decisions import CHOICE_ITEMS, PROTECT_MOVES
+    from wpa.team_sheets import match_to_state
+
+    out = dict.fromkeys(_cols_h(), 0.0)
+    other = "p2" if role == "p1" else "p1"
+    for side, mons, r in (
+        ("our", s["our_pokemon"], role),
+        ("their", s["opp_pokemon"], other),
+    ):
+        sheet = sheets[r]
+        used = any(p.get("mega") for p in mons)
+        out[f"h_{side}_mega_used"] = float(used)
+        for p, idx in zip(mons, match_to_state(sheet, mons)):
+            if idx is None or p["fainted"]:
+                continue
+            m = sheet[idx]
+            if not used and (p.get("item") or "") == m.item and _has_own_stone(m, dex):
+                out[f"h_{side}_mega_available"] = 1.0
+            if not p["active"]:
+                continue
+            moves = set(m.moves)
+            if "fakeout" in moves and not p.get("moved"):
+                out[f"h_{side}_fakeout_n"] += 1
+            if p.get("item") in CHOICE_ITEMS and p.get("last_move"):
+                out[f"h_{side}_locked_n"] += 1
+            if moves & PROTECT_MOVES:
+                key = (
+                    "protect_risky_n" if p.get("protect_streak") else "protect_ready_n"
+                )
+                out[f"h_{side}_{key}"] += 1
+    return out
+
+
+def _speed_of(rows, dex: Dex, field: Mapping, tailwind: bool, ctx) -> dict:
+    from wpa.spreads import speed_request
+
+    reqs = [
+        speed_request(m, st, sp, dex, field, tailwind) for _w, m, st, sp, _k in rows
+    ]
+    ans = ctx.calc.run(reqs) if reqs else []
+    return {r[4]: float(a.get("speed", 0)) for r, a in zip(rows, ans)}
+
+
+def _matchups(attackers, defenders, dex: Dex, field: Mapping, screens, ctx) -> dict:
+    """(attacker key, defender key) -> (best share of the defender's current hit
+    points, best chance to knock it out in one hit, in two hits); single target."""
+    from wpa.spreads import damage_request
+
+    jobs = []
+    for _w, a_mon, a_st, a_sp, a_key in attackers:
+        for _w2, d_mon, d_st, d_sp, d_key in defenders:
+            for move in _usable_moves(a_mon, a_st):
+                m = dex.moves.get(move) or {}
+                if not m or m.get("category") == "Status":
+                    continue
+                req = damage_request(
+                    a_mon,
+                    a_st,
+                    a_sp,
+                    d_mon,
+                    d_st,
+                    d_sp,
+                    move,
+                    dex,
+                    field={**field, **screens},
+                )
+                jobs.append((a_key, d_key, d_st["hp"], req))
+    answers = ctx.calc.run([j[-1] for j in jobs]) if jobs else []
+    out: dict = {}
+    for (a_key, d_key, hp, _r), ans in zip(jobs, answers):
+        rolls = ans.get("rolls")
+        if not rolls or "error" in ans or ans.get("unknown"):
+            continue
+        hp_now = hp * ans["max_hp"]
+        share = min(1.0, (sum(rolls) / len(rolls)) / hp_now) if hp_now > 0 else 1.0
+        ko = sum(1 for r in rolls if r >= hp_now) / len(rolls)
+        two = _two_hits(rolls, hp_now)
+        b = out.get((a_key, d_key), (0.0, 0.0, 0.0))
+        out[(a_key, d_key)] = (max(b[0], share), max(b[1], ko), max(b[2], two))
+    return out
+
+
+def _side_setup(s, role, joined, sheets, dex, ctx):
+    from wpa.bring import marginals, set_chances
+    from wpa.team_sheets import match_to_state
+
+    other = "p2" if role == "p1" else "p1"
+    j = joined or JoinedTimers()
+    info = {}
+    for side, mons, r in (
+        ("our", s["our_pokemon"], role),
+        ("their", s["opp_pokemon"], other),
+    ):
+        sheet = sheets[r]
+        revealed = {
+            idx
+            for p, idx in zip(mons, match_to_state(sheet, mons))
+            if idx is not None and (p["active"] or p["fainted"] or p["hp_fraction"] > 0)
+        }
+        odds = list((ctx.odds or {}).get(r) or [1.0] * len(sheet))
+        if len(odds) != len(sheet):
+            odds = [1.0] * len(sheet)
+        info[side] = {
+            "role": r,
+            "rows": _roster(mons, sheet, r, dex, ctx),
+            "sets": set_chances(odds, revealed),
+            "p": marginals(odds, revealed),
+            "tailwind": any(
+                e == "tailwind" and lo > 0
+                for e, _t, lo, _h in (j.ours if side == "our" else j.theirs)
+            ),
+            "screens": _screens(j.ours if side == "our" else j.theirs),
+        }
+    tr = any(e == "trickroom" and lo > 0 for e, _t, lo, _h in j.field)
+    return info, _field(j), tr
+
+
+def _group_i(s, role, joined, sheets, dex, ctx) -> dict[str, float]:
+    """Each side's likely back (`wpa.bring`): how uncertain it is, and what it
+    brings against the other side's active Pokemon, as expectations over the sets
+    of four still possible."""
+    out = dict.fromkeys(_cols_i(), 0.0)
+    if ctx is None:
+        return out
+    info, fld, tr = _side_setup(s, role, joined, sheets, dex, ctx)
+    for side, rival in (("our", "their"), ("their", "our")):
+        me, you = info[side], info[rival]
+        sets = me["sets"]
+        out[f"i_{side}_back_entropy"] = -sum(
+            p * math.log(p) for p in sets.values() if p > 0
+        )
+        unseen = [r for r in me["rows"] if r[0] == "unseen"]
+        targets = [r for r in you["rows"] if r[0] == "active"]
+        if not unseen or not sets:
+            continue
+        mu = _matchups(unseen, targets, dex, fld, you["screens"], ctx)
+        spd = _speed_of(unseen, dex, fld, me["tailwind"], ctx)
+        rival_spd = _speed_of(targets, dex, fld, you["tailwind"], ctx)
+        fastest = (min if tr else max)(rival_spd.values(), default=None)
+        per = {}
+        for r in unseen:
+            k = r[4]
+            dm = max((mu.get((k, t[4]), (0, 0, 0))[0] for t in targets), default=0.0)
+            kos = {t[4] for t in targets if mu.get((k, t[4]), (0, 0, 0))[1] >= 0.5}
+            out_ = fastest is not None and (
+                spd[k] < fastest if tr else spd[k] > fastest
+            )
+            per[k[1]] = (dm, kos, spd[k], float(out_))
+        for members, p in sets.items():
+            here = [per[i] for i in members if i in per]
+            if not here:
+                continue
+            out[f"i_{side}_back_dmg_exp"] += p * max(x[0] for x in here)
+            out[f"i_{side}_back_ko_exp"] += p * len(set().union(*(x[1] for x in here)))
+            out[f"i_{side}_back_speed_exp"] += p * max(x[2] for x in here)
+            out[f"i_{side}_back_outspeeds_exp"] += p * sum(x[3] for x in here)
+    return out
+
+
+def _group_j(s, role, joined, sheets, dex, ctx) -> dict[str, float]:
+    """Damage across the whole board: every Pokemon still standing on each side
+    (an unseen one counted by the chance it was brought) against every one on
+    the other: knock-outs in one hit, in two, and while moving first."""
+    out = dict.fromkeys(_cols_j(), 0.0)
+    if ctx is None:
+        return out
+    info, fld, tr = _side_setup(s, role, joined, sheets, dex, ctx)
+    speeds = {
+        side: _speed_of(info[side]["rows"], dex, fld, info[side]["tailwind"], ctx)
+        for side in info
+    }
+    for side, rival in (("our", "their"), ("their", "our")):
+        me, you = info[side], info[rival]
+        if not me["rows"] or not you["rows"]:
+            continue
+        mu = _matchups(me["rows"], you["rows"], dex, fld, you["screens"], ctx)
+        w = {r[4]: me["p"][r[4][1]] for r in me["rows"]}
+        wd = {r[4]: you["p"][r[4][1]] for r in you["rows"]}
+        for d in you["rows"]:
+            dk = d[4]
+            miss_ko = miss_out = miss_two = 1.0
+            for a in me["rows"]:
+                ak = a[4]
+                _share, ko, two = mu.get((ak, dk), (0.0, 0.0, 0.0))
+                first = (
+                    speeds[side][ak] < speeds[rival][dk]
+                    if tr
+                    else speeds[side][ak] > speeds[rival][dk]
+                )
+                miss_ko *= 1 - w[ak] * (ko >= 0.5)
+                miss_two *= 1 - w[ak] * (two >= 0.5)
+                miss_out *= 1 - w[ak] * (ko >= 0.5 and first)
+                out[f"j_{side}_outko_pairs_exp"] += (
+                    w[ak] * wd[dk] * (ko >= 0.5 and first)
+                )
+            out[f"j_{side}_ko_targets_exp"] += wd[dk] * (1 - miss_ko)
+            out[f"j_{side}_2hko_targets_exp"] += wd[dk] * (1 - miss_two)
+            out[f"j_{side}_outko_targets_exp"] += wd[dk] * (1 - miss_out)
+    return out
+
+
 def state_features(
     states: Sequence[dict],
     k: int,
@@ -724,6 +992,12 @@ def state_features(
         row.update(_group_f(s, role, joined, sheets, dex, ctx))
     if "G" in groups:
         row.update(_group_g(s, role, joined, sheets, dex, ctx))
+    if "H" in groups:
+        row.update(_group_h(s, role, sheets, dex))
+    if "I" in groups:
+        row.update(_group_i(s, role, joined, sheets, dex, ctx))
+    if "J" in groups:
+        row.update(_group_j(s, role, joined, sheets, dex, ctx))
     return {c: float(row[c]) for c in columns(groups)}
 
 
@@ -976,13 +1250,16 @@ def build_shard_from_logs(
     usage_dir: Path | None = None,
     train_sample: float = 1.0,
     formats: Sequence[str] | None = None,
-) -> dict[str, int]:
+    bring_path: Path | None = None,
+) -> dict[str, float]:
     """One shard of games, from our decision table (`wpa.decisions`). With
     `usage_dir` (Smogon usage statistics), each decision gets a damage context:
     real Speed in group F and the damage of group G. `train_sample` keeps that
     fraction of Reg M-A's training units (sets), the ones `wpa.evaluate --sample`
     would; Reg M-B's training games stay whole, as the pooled model uses them all.
-    `formats`: build only these formats."""
+    `formats`: build only these formats. `bring_path`: the bring model
+    (`wpa.bring`), for groups I and J and a Bo3 set's memory of what each player
+    brought; the logs must then be sharded by set (`logs_sets/`)."""
     import gzip
     import time
 
@@ -992,12 +1269,23 @@ def build_shard_from_logs(
 
     cols = columns(groups)
     rows: dict[tuple[str, str], list[Row]] = {}
-    counts = {"games": 0, "rows": 0, "no_result": 0}
+    counts: dict[str, float] = {"games": 0, "rows": 0, "no_result": 0}
     calc = store = None
     calls_before = 0
     if usage_dir is not None:
         calc, store = _worker_tools(usage_dir)
         calls_before = calc.calls  # type: ignore[attr-defined]
+    bring = None
+    if bring_path is not None:
+        from wpa.bring import BringModel
+
+        if _WORKER.get("bring_path") != str(bring_path):
+            _WORKER.update(
+                bring=BringModel.load(bring_path), bring_path=str(bring_path)
+            )
+        bring = _WORKER["bring"]
+    memory: dict = {}  # a Bo3 set's memory, kept while its games come in order
+    stats: dict = {}
     start = time.time()
     with gzip.open(
         logs_dir / f"part-{shard:03d}.jsonl.gz", "rt", encoding="utf-8"
@@ -1020,7 +1308,16 @@ def build_shard_from_logs(
             contexts = None
             if calc is not None and len(sheets) == 2:
                 contexts = damage_contexts(
-                    tag, log, game, sheets, dexes[fmt], calc, store
+                    tag,
+                    log,
+                    game,
+                    sheets,
+                    dexes[fmt],
+                    calc,
+                    store,
+                    bring,
+                    memory if bring is not None else None,
+                    stats,
                 )
             for role in ("p1", "p2"):
                 states = game.states[role]
@@ -1044,6 +1341,8 @@ def build_shard_from_logs(
         # sent to the calculator for this shard (the rest came from the cache)
         counts["calculations"] = calc.calls - calls_before  # type: ignore[attr-defined]
     counts["seconds"] = round(time.time() - start)
+    for k, v in stats.items():
+        counts[k] = round(v, 3) if isinstance(v, float) else v
     for (fmt, split), rs in rows.items():
         d = out_dir / fmt / split
         d.mkdir(parents=True, exist_ok=True)
@@ -1077,22 +1376,85 @@ def _worker_tools(usage_dir: Path):
     return calc, _WORKER["store"]
 
 
-def damage_contexts(tag, log, game, sheets, dex, calc, store) -> dict[str, list]:
+def damage_contexts(
+    tag, log, game, sheets, dex, calc, store, bring=None, memory=None, stats=None
+) -> dict[str, list]:
     """A damage context for every decision of one game: each Pokemon's most
     likely spread from the usage statistics, refined by the hits and move
-    orders the log shows before the decision's block (`wpa.spreads`)."""
-    from wpa.spreads import events_from_log, priors_for, refine
+    orders the log shows before the decision's block (`wpa.spreads`).
+
+    `bring` (`wpa.bring.BringModel`) adds each side's odds that each sheet
+    Pokemon was brought. `memory` is a Bo3 set's memory (a dict kept across the
+    set's games, which come in order): a later game starts each player's spreads
+    where the set's previous game left them, and counts what the player brought
+    then. `stats` collects how much narrower the carried spreads are."""
+    from wpa.bring import brought_from_log, players
+    from wpa.formats import format_of
+    from wpa.spreads import Spread, events_from_log, priors_for, refine
 
     priors = priors_for(sheets, store.for_game(tag, log), dex)
+    unit, _ = unit_of(tag, log)
+    names = players(log)
+    prev: dict[str, frozenset[int]] = {}
+    if memory is not None:
+        for role, mons in sheets.items():
+            mem = memory.get((unit, names.get(role, role)))
+            if not mem:
+                continue
+            for i, mon in enumerate(mons):
+                kept = mem["spreads"].get(mon.species)
+                if not kept:
+                    continue
+                if stats is not None:
+                    stats["carried"] = stats.get("carried", 0) + 1
+                    stats["entropy_start"] = stats.get("entropy_start", 0.0) + _entropy(
+                        [c.weight for c in priors.get((role, i)) or ()]
+                    )
+                    stats["entropy_carried"] = stats.get(
+                        "entropy_carried", 0.0
+                    ) + _entropy([c.weight for c in kept])
+                priors[(role, i)] = kept
+            prev[role] = frozenset(
+                i for i, m in enumerate(mons) if m.species in mem["brought"]
+            )
     hits, orders = events_from_log(log, dex)
-    beliefs, _ = refine([*hits, *orders], sheets, dex, priors, calc)
+    final: dict = {}
+    beliefs, _ = refine([*hits, *orders], sheets, dex, priors, calc, beliefs_out=final)
+    odds = None
+    if bring is not None:
+        fmt = format_of(tag)
+        odds = {
+            role: bring.odds(fmt, tuple(m.species for m in mons), prev.get(role))
+            for role, mons in sheets.items()
+        }
+    if memory is not None:
+        got = brought_from_log(log)
+        for role, mons in sheets.items():
+            memory[(unit, names.get(role, role))] = {
+                "spreads": {
+                    mons[i].species: [
+                        Spread(c.nature, c.sps, w)
+                        for c, w in zip(b.candidates, b.weights)
+                    ]
+                    for (r, i), b in final.items()
+                    if r == role
+                },
+                "brought": {mons[i].species for i in got.get(role, set())},
+            }
     return {
-        role: [DamageContext(calc, beliefs.at(point)) for point in game.points[role]]
+        role: [
+            DamageContext(calc, beliefs.at(point), odds) for point in game.points[role]
+        ]
         for role in game.points
     }
 
 
-def _build_one(args: tuple) -> dict[str, int]:
+def _entropy(weights) -> float:
+    s = sum(weights)
+    return -sum(w / s * math.log(w / s) for w in weights if w > 0) if s > 0 else 0.0
+
+
+def _build_one(args: tuple) -> dict[str, float]:
     shard, shards, opts = args
     from wpa.durations import load_all
     from wpa.team_sheets import load_dexes
@@ -1113,8 +1475,9 @@ def _build_one(args: tuple) -> dict[str, int]:
             usage_dir=Path(opts["usage"]) if opts.get("usage") else None,
             train_sample=opts.get("train_sample") or 1.0,
             formats=opts.get("formats"),
+            bring_path=Path(opts["bring"]) if opts.get("bring") else None,
         )
-    return build_shard(
+    return build_shard(  # type: ignore[return-value]
         shard,
         shards,
         states_dir=Path(opts["states"]),
@@ -1171,6 +1534,12 @@ def main() -> None:
         nargs="+",
         help="with --from-logs: build only these formats (regma, regmb)",
     )
+    p.add_argument(
+        "--bring",
+        type=str,
+        help="with --usage: the bring model (models_v4/bring.json) for groups I "
+        "and J and Bo3 memory; read the logs from logs_sets",
+    )
     a = p.parse_args()
     if a.split_logs:
         from wpa.timers import iter_log_file
@@ -1189,7 +1558,7 @@ def main() -> None:
     if a.only:
         lo, _, hi = a.only.partition("-")
         wanted = range(int(lo), int(hi or lo) + 1)
-    total: dict[str, int] = {}
+    total: dict[str, float] = {}
     jobs = [(s, a.shards, opts) for s in wanted]
     with ProcessPoolExecutor(max_workers=a.workers) as pool:
         for s, counts in zip(wanted, pool.map(_build_one, jobs)):
