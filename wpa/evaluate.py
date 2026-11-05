@@ -721,7 +721,7 @@ def _cmd_v2_report(a) -> None:
         note = "not recalibrated"
         if temp is not None:
             note = f"temperature {temp:.3f}, cross-fitted on training sets"
-        if r["calibration_failures"] and not use_recalibration(fmt):
+        if r["calibration_failures"] and not use_recalibration(fmt) and temp is None:
             note = "not recalibrated (never for this format)"
         if r["calibration_failures"] and use_recalibration(fmt):
             recal = recalibrate(model, x)
