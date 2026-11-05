@@ -79,9 +79,10 @@ whole. Leave it out for the full table.
 is two-thirds of it, and the features the rest. Each worker keeps one calculator
 with its cache across the parts it builds.
 
-The 20% table (about 35,000 games) took about 2.5 hours of computing, split across
-four processes. The full table (88,901 games) is an estimate, not measured:
-- 6.4 hours of computing;
-- about 1.6 hours with 4 workers;
-- under an hour with 8, if your computer has the cores (each worker needs about
-  1 GB of memory).
+The 20% table (about 35,000 games) took about 2.5 hours of computing, split
+across four processes.
+
+The full table was built on the PO's computer on 4 November 2026: 88,901 games and
+1,781,911 rows. It took 27,719 seconds of computing (7.7 hours), about 0.31
+seconds per game. With 4 workers that was a little under 2 hours of waiting,
+against an estimate of 1.6 hours. Each worker needs about 1 GB of memory.

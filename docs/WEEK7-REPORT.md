@@ -176,3 +176,46 @@ and retrained.
    want to refine the claim.
 5. **Next milestone.** v3 is ready for decision-level win probability added (M5),
    scoring the choice actually made against the alternatives.
+
+---
+
+## Addendum, 4 November: v3 on every training game
+
+The PO ran runbook Section 16, step 8, on his own computer: the full table (88,901
+games), then training with the new cap of 1,000 rounds and no recalibration for
+Reg M-B. On validation:
+
+| | 20% sample, 600 rounds | every game, up to 1,000 rounds |
+|---|---|---|
+| Reg M-A, v3 | 0.1870 | **0.1839** |
+| Reg M-A, without damage | 0.1941 | 0.1908 |
+| Reg M-B (pooled), v3 | 0.1734 | **0.1703** |
+| Reg M-B (pooled), without damage | 0.1846 | 0.1826 |
+
+- **Damage adds the same as before:** -0.0069 (-0.0079 to -0.0060) in Reg M-A
+  and -0.0122 (-0.0158 to -0.0082) in Reg M-B.
+- **More data and more rounds both changed at once,** so their gains cannot be
+  told apart. Together they are worth about -0.003 in each format.
+- **The round cap no longer matters.** Three of the four models reached 1,000
+  rounds, but their last 100 rounds improved validation by about 0.0001.
+
+**Gate:** Reg M-A passes, with every bin within 0.017. **Reg M-B fails**: without
+recalibration, the 0.2-0.3 and 0.7-0.8 bins are off by 0.063.
+
+For each bin, observed minus predicted, with a 95% interval from resampling sets:
+
+| bin | 0.0-0.1 | 0.1-0.2 | 0.2-0.3 | 0.3-0.4 | 0.4-0.5 | 0.5-0.6 | 0.6-0.7 | 0.7-0.8 | 0.8-0.9 | 0.9-1.0 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v3, every game | -0.036* | -0.037 | -0.063* | -0.034 | -0.016 | +0.014 | +0.027 | +0.063* | +0.028 | +0.034* |
+
+\* the interval excludes zero.
+
+Every bin below 0.5 is negative and every bin above is positive. On these 199
+validation sets the pooled model is **underconfident**: games are more decided than
+it says. v2 on every game shows the same pattern.
+
+The same kind of model was well calibrated on Reg M-B's test split in Week 6. And
+correcting it on these 199 sets overshot on test in Week 7. So it is probably part
+model (Reg M-B is 5% of the pooled training data) and part these particular sets.
+
+The test split was not opened for this model; it would be the fifth opening.

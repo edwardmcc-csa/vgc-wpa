@@ -427,3 +427,28 @@ def test_the_training_sample_is_taken_from_reg_ma_only_and_formats_can_be_picked
         0, 1, out_dir=tmp_path / "b", formats=("regmb",), **common
     )
     assert c["games"] == 1 and not (tmp_path / "b" / "regma").exists()
+
+
+def test_the_calculation_count_is_per_shard_not_running(calc, dex, tmp_path):
+    import gzip
+    import json
+
+    from wpa.durations import Durations
+
+    tag = sorted(_logs())[1]
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    with gzip.open(logs_dir / "part-000.jsonl.gz", "wt", encoding="utf-8") as f:
+        f.write(json.dumps({"tag": tag, "log": _logs()[tag]}) + "\n")
+    common = dict(
+        logs_dir=logs_dir,
+        splits={tag: "train"},
+        dexes={"regma": dex, "regmb": dex},
+        tables={"regma": Durations("e", timed={}), "regmb": Durations("e", timed={})},
+        groups="FG",
+        usage_dir=tmp_path / "usage",
+    )
+    first = F.build_shard_from_logs(0, 1, out_dir=tmp_path / "a", **common)
+    again = F.build_shard_from_logs(0, 1, out_dir=tmp_path / "b", **common)
+    assert first["calculations"] > 0
+    assert again["calculations"] == 0  # every answer already in the worker's cache

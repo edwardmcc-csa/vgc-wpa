@@ -972,8 +972,10 @@ def build_shard_from_logs(
     rows: dict[tuple[str, str], list[Row]] = {}
     counts = {"games": 0, "rows": 0, "no_result": 0}
     calc = store = None
+    calls_before = 0
     if usage_dir is not None:
         calc, store = _worker_tools(usage_dir)
+        calls_before = calc.calls  # type: ignore[attr-defined]
     start = time.time()
     with gzip.open(
         logs_dir / f"part-{shard:03d}.jsonl.gz", "rt", encoding="utf-8"
@@ -1017,7 +1019,8 @@ def build_shard_from_logs(
                 rows.setdefault((fmt, splits[tag]), []).extend(got)
                 counts["rows"] += len(got)
     if calc is not None:
-        counts["calculations"] = calc.calls  # type: ignore[attr-defined]
+        # sent to the calculator for this shard (the rest came from the cache)
+        counts["calculations"] = calc.calls - calls_before  # type: ignore[attr-defined]
     counts["seconds"] = round(time.time() - start)
     for (fmt, split), rs in rows.items():
         d = out_dir / fmt / split
