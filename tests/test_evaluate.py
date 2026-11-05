@@ -206,3 +206,29 @@ def test_reg_mb_is_never_recalibrated():
     # PO, 30 Oct 2026: recalibrating on Reg M-B's few validation sets overshot on test
     assert E.use_recalibration("regma")
     assert not E.use_recalibration("regmb")
+
+
+# --------------------------------------------------------------------------
+# Week 8: Reg M-B's one-number correction, learned by cross-fitting
+# --------------------------------------------------------------------------
+
+
+def test_a_temperature_undoes_underconfidence_and_keeps_the_symmetry():
+    rng = np.random.default_rng(0)
+    q = rng.uniform(0.02, 0.98, 20000)
+    y = (rng.uniform(size=q.size) < q).astype(float)
+    logit = np.log(q / (1 - q))
+    p = 1 / (1 + np.exp(-0.6 * logit))  # too close to 0.5
+    t = E.fit_temperature(p, y)
+    assert 0.5 < t < 0.7
+    sharp = E.apply_temperature(p, t)
+    assert np.mean((sharp - y) ** 2) < np.mean((p - y) ** 2)
+    assert np.allclose(E.apply_temperature(1 - p, t), 1 - sharp)
+
+
+def test_folds_keep_each_set_whole_and_cover_every_set():
+    units = np.array([f"u{i % 37}" for i in range(500)])
+    folds = E.unit_folds(units, 5)
+    assert set(folds) == set(range(5))
+    for u in set(units):
+        assert len(set(folds[units == u])) == 1

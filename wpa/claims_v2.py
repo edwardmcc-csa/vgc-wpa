@@ -453,10 +453,13 @@ def _predictors(fmt: str, groups: str, models_v1, specs) -> dict[str, Callable]:
             path = d / f"{gs}.pkl"
         sub = subset(gs)
         if which == "pooled":
+            from wpa.evaluate import _temperature, apply_temperature
+
             m = load(path, [*columns(gs), "z_format_regmb"])
-            out[name] = lambda X, m=m, sub=sub, gs=gs: m.predict(
-                with_format_flag(table(X[:, sub], columns(gs)), 1.0).X
-            )
+            temp = _temperature(d, gs)
+            out[name] = lambda X, m=m, sub=sub, gs=gs, temp=temp: (
+                lambda p: apply_temperature(p, temp) if temp is not None else p
+            )(m.predict(with_format_flag(table(X[:, sub], columns(gs)), 1.0).X))
         else:
             m = load(path, columns(gs))
             out[name] = lambda X, m=m, sub=sub: m.predict(X[:, sub])

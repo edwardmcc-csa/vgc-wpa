@@ -714,8 +714,13 @@ def _cmd_v2_report(a) -> None:
         model, raw, x = _v2_predict(a, which, a.full, "validation")
         v0 = v0_from_table(raw)
         p = model.predict(x.X)
+        temp = _temperature(d, a.full) if fmt == "regmb" else None
+        if temp is not None:
+            p = apply_temperature(p, temp)
         r = score(p, raw.y, raw.unit, v0)
         note = "not recalibrated"
+        if temp is not None:
+            note = f"temperature {temp:.3f}, cross-fitted on training sets"
         if r["calibration_failures"] and not use_recalibration(fmt):
             note = "not recalibrated (never for this format)"
         if r["calibration_failures"] and use_recalibration(fmt):
@@ -733,6 +738,9 @@ def _cmd_v2_report(a) -> None:
         if base != a.full and (d / f"{base}.pkl").exists():
             _m0, _raw0, x0 = _v2_predict(a, which, base, "validation")
             q = _m0.predict(x0.X)
+            temp0 = _temperature(d, base) if fmt == "regmb" else None
+            if temp0 is not None:
+                q = apply_temperature(q, temp0)
             dd, lo, hi = difference_ci(p, q, raw.y, raw.unit)
             b0 = brier_ci(q, raw.y, raw.unit)
             added = _group_names(a.full, base)
@@ -749,6 +757,102 @@ def _cmd_v2_report(a) -> None:
     (a.models / "report.txt").write_text(text, encoding="utf-8")
 
 
+# --------------------------------------------------------------------------
+# Week 8: Reg M-B's one-number correction (PO, 4 Nov), learned by cross-fitting
+# --------------------------------------------------------------------------
+
+
+def apply_temperature(p: np.ndarray, t: float) -> np.ndarray:
+    """Sharpen (t < 1) or soften (t > 1) every prediction alike. A prediction and
+    its mirror (1 - p) stay mirrors, so the model stays symmetric."""
+    q = np.clip(np.asarray(p, dtype=np.float64), 1e-6, 1 - 1e-6)
+    return 1 / (1 + np.exp(-np.log(q / (1 - q)) / t))
+
+
+def fit_temperature(p: np.ndarray, y: np.ndarray) -> float:
+    """The temperature that minimises the log loss of `p` against `y`."""
+    y = np.asarray(y, dtype=np.float64)
+
+    def loss(log_t: float) -> float:
+        q = np.clip(apply_temperature(p, math.exp(log_t)), 1e-9, 1 - 1e-9)
+        return float(-np.mean(y * np.log(q) + (1 - y) * np.log(1 - q)))
+
+    lo, hi = math.log(0.2), math.log(5.0)  # golden-section search on log t
+    g = (math.sqrt(5) - 1) / 2
+    for _ in range(60):
+        a, b = hi - g * (hi - lo), lo + g * (hi - lo)
+        if loss(a) < loss(b):
+            hi = b
+        else:
+            lo = a
+    return math.exp((lo + hi) / 2)
+
+
+def unit_folds(units: np.ndarray, k: int, seed: str = "wpa-folds") -> np.ndarray:
+    """A fold number (0 to k-1) for each row, whole units (sets) in one fold."""
+    uniq, inverse = np.unique(units, return_inverse=True)
+    fold = np.array(
+        [
+            int.from_bytes(hashlib.sha256(f"{seed}|{u}".encode()).digest()[:4], "big")
+            % k
+            for u in uniq
+        ]
+    )
+    return fold[inverse]
+
+
+def _temperature(d: Path, groups: str) -> float | None:
+    path = d / f"{groups}.temperature.json"
+    if not path.exists():
+        return None
+    return float(json.loads(path.read_text(encoding="utf-8"))["temperature"])
+
+
+def _cmd_v2_crossfit(a) -> None:
+    """Reg M-B's temperature: train the pooled model k times, each without one
+    fold of Reg M-B's training sets and to the main model's rounds, predict that
+    fold, and fit one temperature on those out-of-fold predictions."""
+    from wpa.model import GRID, fit
+
+    if a.format != "pooled":
+        raise SystemExit("the correction is for the pooled Reg M-B model")
+    d = _paths(a.models, "pooled")
+    rounds = int(json.loads((d / f"{a.groups}.json").read_text())["n_iter"])
+    train = _v2_tables(a, a.groups, "train")
+    val = _v2_tables(a, a.groups, "validation")
+    mb = train.X[:, -1] == 1.0
+    fold = np.full(len(train.y), -1)
+    fold[mb] = unit_folds(train.unit[mb], a.folds)
+    oof = np.full(len(train.y), np.nan)
+    for f in range(a.folds):
+        model, _info = fit(
+            subset(train, fold != f), val, GRID[V2_GRID_ENTRY], max_iter=rounds
+        )
+        assert model is not None
+        rows = fold == f
+        oof[rows] = model.predict(train.X[rows])
+        print(f"fold {f + 1} of {a.folds}: {int(rows.sum())} Reg M-B rows", flush=True)
+    p, y = oof[mb], train.y[mb].astype(np.float64)
+    temp = fit_temperature(p, y)
+    q = apply_temperature(p, temp)
+    info = {
+        "temperature": temp,
+        "folds": a.folds,
+        "rounds": rounds,
+        "rows": int(mb.sum()),
+        "sets": int(len(np.unique(train.unit[mb]))),
+        "brier_before": float(np.mean((p - y) ** 2)),
+        "brier_after": float(np.mean((q - y) ** 2)),
+    }
+    (d / f"{a.groups}.temperature.json").write_text(
+        json.dumps(info, indent=1), encoding="utf-8"
+    )
+    print(
+        f"Reg M-B temperature {temp:.3f} from {info['sets']} training sets "
+        f"(out-of-fold Brier {info['brier_before']:.4f} -> {info['brier_after']:.4f})"
+    )
+
+
 def _cmd_v2_final(a) -> None:
     from wpa.model import load
 
@@ -763,7 +867,11 @@ def _cmd_v2_final(a) -> None:
         recal = d / f"{a.full}.recal.pkl"
         if recal.exists() and use_recalibration(fmt):
             model = load(recal, list(x.columns))
-        r = score(model.predict(x.X), raw.y, raw.unit, v0_from_table(raw))
+        p = model.predict(x.X)
+        temp = _temperature(d, a.full) if fmt == "regmb" else None
+        if temp is not None:
+            p = apply_temperature(p, temp)
+        r = score(p, raw.y, raw.unit, v0_from_table(raw))
         (d / "test.json").write_text(json.dumps(r, indent=1), encoding="utf-8")
         print(describe(fmt, f"{a.models.name} ({which}) on the TEST split", r))
 
@@ -788,6 +896,7 @@ def main() -> None:
             "v2-train",
             "v2-report",
             "v2-final",
+            "v2-crossfit",
         ],
     )
     p.add_argument("--format", default="regma")
@@ -797,6 +906,7 @@ def main() -> None:
     p.add_argument("--grid", default="all", help="grid entry to train, or all")
     p.add_argument("--groups", default="ABCDE")
     p.add_argument("--full", default="ABCDEF", help="v2: the headline feature groups")
+    p.add_argument("--folds", type=int, default=5, help="v2-crossfit: folds")
     p.add_argument(
         "--base",
         default=None,
@@ -831,6 +941,7 @@ def main() -> None:
         "v2-train": _cmd_v2_train,
         "v2-report": _cmd_v2_report,
         "v2-final": _cmd_v2_final,
+        "v2-crossfit": _cmd_v2_crossfit,
     }[a.command](a)
 
 
