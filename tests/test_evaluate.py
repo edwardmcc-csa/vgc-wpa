@@ -232,3 +232,27 @@ def test_folds_keep_each_set_whole_and_cover_every_set():
     assert set(folds) == set(range(5))
     for u in set(units):
         assert len(set(folds[units == u])) == 1
+
+
+def test_rows_of_two_tables_are_matched_by_game_side_and_order():
+    from wpa.features import Table
+
+    def table(tags, roles):
+        n = len(tags)
+        return Table(
+            np.zeros((n, 1), np.float32),
+            np.zeros(n, np.int8),
+            np.array(tags),
+            np.array(roles),
+            np.array(tags),
+            np.zeros(n, np.int16),
+            ["a"],
+        )
+
+    a = table(["g1", "g1", "g2", "g1"], ["p1", "p1", "p1", "p2"])
+    b = table(["g2", "g1", "g1", "g1", "g3"], ["p1", "p2", "p1", "p1", "p1"])
+    ia, ib = E.aligned(a, b)
+    assert [(a.tag[i], a.role[i]) for i in ia] == [(b.tag[j], b.role[j]) for j in ib]
+    assert len(ia) == 4  # g3 is only in b
+    first_g1_p1 = [k for k, i in enumerate(ia) if i == 0][0]
+    assert ib[first_g1_p1] == 2  # the first g1/p1 row of b

@@ -853,6 +853,69 @@ def _cmd_v2_crossfit(a) -> None:
     )
 
 
+def aligned(a: Table, b: Table) -> tuple[np.ndarray, np.ndarray]:
+    """Row indices of `a` and `b` for the same decisions: a row is keyed by its
+    game, its side and its place among that side's rows (tables built from
+    differently sharded logs list the same decisions in a different order)."""
+
+    def keys(t: Table) -> dict[str, int]:
+        seen: dict[tuple[str, str], int] = {}
+        out = {}
+        for i, (tag, role) in enumerate(zip(t.tag, t.role)):
+            n = seen.get((tag, role), 0)
+            seen[(tag, role)] = n + 1
+            out[f"{tag}|{role}|{n}"] = i
+        return out
+
+    ka, kb = keys(a), keys(b)
+    common = [k for k in ka if k in kb]
+    return np.array([ka[k] for k in common], dtype=int), np.array(
+        [kb[k] for k in common], dtype=int
+    )
+
+
+def _cmd_v2_compare(a) -> None:
+    """Paired differences on validation: the `--full` model against each model
+    in `--others` (`GROUPS` or `GROUPS@FEATURES@MODELS`, e.g. a model trained
+    without one group, or the blanked-sheet model), per format."""
+    from argparse import Namespace
+
+    out = [f"=== {a.models.name} ({a.full}) against other models: validation ==="]
+    for fmt, which in (("regma", "regma"), ("regmb", "pooled")):
+        m, raw, x = _v2_predict(a, which, a.full, "validation")
+        p = m.predict(x.X)
+        temp = _temperature(a.models / which, a.full) if fmt == "regmb" else None
+        if temp is not None:
+            p = apply_temperature(p, temp)
+        for other in a.others:
+            groups, _, rest = other.partition("@")
+            feats, _, models = rest.partition("@")
+            b = Namespace(
+                features=Path(feats) if feats else a.features,
+                models=Path(models) if models else a.models,
+            )
+            if not (b.models / which / f"{groups}.pkl").exists():
+                continue
+            m2, raw2, x2 = _v2_predict(b, which, groups, "validation")
+            q = m2.predict(x2.X)
+            temp2 = _temperature(b.models / which, groups) if fmt == "regmb" else None
+            if temp2 is not None:
+                q = apply_temperature(q, temp2)
+            ia, ib = aligned(raw, raw2)
+            if len(ia) == 0 or not np.array_equal(raw.y[ia], raw2.y[ib]):
+                out.append(f"{fmt}: {other}: rows do not line up")
+                continue
+            d, lo, hi = difference_ci(q[ib], p[ia], raw.y[ia], raw.unit[ia])
+            bq = brier_ci(q[ib], raw.y[ia], raw.unit[ia])
+            out.append(
+                f"{fmt} {other}: Brier {_fmt_ci(bq[0], bq[1:])} on {len(ia)} rows; "
+                f"minus {a.full}: {d:+.4f} [{lo:+.4f}, {hi:+.4f}]"
+            )
+    text = "\n".join(out) + "\n"
+    print(text)
+    (a.models / "compare.txt").write_text(text, encoding="utf-8")
+
+
 def _cmd_v2_final(a) -> None:
     from wpa.model import load
 
@@ -897,6 +960,7 @@ def main() -> None:
             "v2-report",
             "v2-final",
             "v2-crossfit",
+            "v2-compare",
         ],
     )
     p.add_argument("--format", default="regma")
@@ -907,6 +971,12 @@ def main() -> None:
     p.add_argument("--groups", default="ABCDE")
     p.add_argument("--full", default="ABCDEF", help="v2: the headline feature groups")
     p.add_argument("--folds", type=int, default=5, help="v2-crossfit: folds")
+    p.add_argument(
+        "--others",
+        nargs="+",
+        default=[],
+        help="v2-compare: GROUPS or GROUPS@FEATURES@MODELS to compare with --full",
+    )
     p.add_argument(
         "--base",
         default=None,
@@ -942,6 +1012,7 @@ def main() -> None:
         "v2-report": _cmd_v2_report,
         "v2-final": _cmd_v2_final,
         "v2-crossfit": _cmd_v2_crossfit,
+        "v2-compare": _cmd_v2_compare,
     }[a.command](a)
 
 
