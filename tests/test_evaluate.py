@@ -256,3 +256,10 @@ def test_rows_of_two_tables_are_matched_by_game_side_and_order():
     assert len(ia) == 4  # g3 is only in b
     first_g1_p1 = [k for k, i in enumerate(ia) if i == 0][0]
     assert ib[first_g1_p1] == 2  # the first g1/p1 row of b
+
+
+def test_every_feature_group_has_a_report_name():
+    from wpa.evaluate import GROUP_NAMES, _group_names
+
+    assert set("ABCDEFGHIJ") <= set(GROUP_NAMES)
+    assert "this turn's options (H)" in _group_names("ABCDEFGHIJ", "ABCDEFG")

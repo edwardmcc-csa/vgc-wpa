@@ -679,6 +679,9 @@ GROUP_NAMES = {
     "E": "unseen positions",
     "F": "speed",
     "G": "damage",
+    "H": "this turn's options",
+    "I": "likely back",
+    "J": "whole-board damage",
 }
 
 
@@ -745,7 +748,7 @@ def _cmd_v2_report(a) -> None:
             b0 = brier_ci(q, raw.y, raw.unit)
             added = _group_names(a.full, base)
             out.append(
-                f"  without {added.split(' (')[0]} ({base}): Brier "
+                f"  base model {base}: Brier "
                 f"{_fmt_ci(b0[0], b0[1:])}; adding {added} changes it by "
                 f"{dd:+.4f} [{lo:+.4f}, {hi:+.4f}]"
             )
