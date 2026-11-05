@@ -401,7 +401,7 @@ def _speeds(side, sheet, dex: Dex, tailwind: bool):
 
     out = []
     for p, idx in zip(side, match_to_state(sheet, side)):
-        if idx is None or p["fainted"]:
+        if idx is None or p["fainted"] or not sheet[idx].species:
             continue
         mon = sheet[idx]
         entry = form_of(mon, dex) if p.get("mega") else dex.species.get(mon.species, {})
@@ -456,7 +456,7 @@ def _roster(side, sheet, sheet_role: str, dex: Dex, ctx: DamageContext):
 
     out = []
     for p, idx in zip(side, match_to_state(sheet, side)):
-        if idx is None or p["fainted"]:
+        if idx is None or p["fainted"] or not sheet[idx].species:
             continue
         mon = sheet[idx]
         spread = ctx.spreads.get((sheet_role, idx))
@@ -1053,6 +1053,96 @@ def rows_for_file(
     return out
 
 
+# --------------------------------------------------------------------------
+# Week 8 Task 5: the opponent's sheet blanked
+# --------------------------------------------------------------------------
+
+_HIDDEN = SheetMon(0, "", "", "", (), "")
+
+
+def _revealed(p: Mapping) -> bool:
+    return bool(p["active"] or p["fainted"] or p["hp_fraction"] > 0)
+
+
+def public_sheet(sheet: Sequence[SheetMon], side: Sequence[Mapping]) -> tuple:
+    """The opponent's sheet as the log has shown it so far: a Pokemon's species
+    once it has appeared, and only the moves, item and ability revealed; no
+    sheet order and no nature. Unseen ones are blank."""
+    out = []
+    for mon, p in zip(sheet, side):
+        if not _revealed(p):
+            out.append(_HIDDEN)
+            continue
+        out.append(
+            SheetMon(
+                0,
+                mon.species,
+                p.get("rev_item") or "",
+                p.get("rev_ability") or "",
+                tuple(p.get("rev_moves") or ()),
+                "",
+            )
+        )
+    return tuple(out)
+
+
+def blank_state(s: Mapping) -> dict:
+    """The board with the opponent's unseen species hidden, and any item of theirs
+    the log has not shown (or that is gone) left out."""
+    opp = []
+    for p in s["opp_pokemon"]:
+        q = dict(p)
+        if not _revealed(p):
+            q.update(species="", item="")
+        elif not (p.get("item") and p.get("item") == p.get("rev_item")):
+            q["item"] = ""
+        opp.append(q)
+    return {**s, "opp_pokemon": opp}
+
+
+def rows_for_file_blank(
+    tag: str,
+    role: str,
+    states: Sequence[dict],
+    joined: Sequence[JoinedTimers | None],
+    sheets: Mapping[str, Sequence[SheetMon]],
+    dex: Dex,
+    table: Durations | None,
+    groups: str,
+    context_for=None,
+) -> list[Row]:
+    """Like `rows_for_file`, with the opponent's sheet blanked at every decision
+    (`public_sheet`, `blank_state`). `context_for(k, sheets)` gives the damage
+    context for decision k from the sheets as they stand then."""
+    label = states[-1]["outcome"]
+    if label is None:
+        return []
+    other = "p2" if role == "p1" else "p1"
+    unit = states[0].get("set_id") or tag
+    cols = columns(groups)
+    out = []
+    for k in decision_indices(states):
+        public = {
+            role: sheets[role],
+            other: public_sheet(sheets[other], states[k]["opp_pokemon"]),
+        }
+        board = [*states[:k], blank_state(states[k])]
+        ctx = context_for(k, public) if context_for is not None else None
+        f = state_features(board, k, role, joined[k], public, dex, table, groups, ctx)
+        out.append(
+            Row(
+                tag,
+                role,
+                unit,
+                states[k]["turn"],
+                states[k]["decision_index"],
+                int(bool(label)),
+                tuple(f[c] for c in cols),
+            )
+        )
+    return out
+
+
 @dataclass
 class Table:
     X: np.ndarray
@@ -1251,6 +1341,7 @@ def build_shard_from_logs(
     train_sample: float = 1.0,
     formats: Sequence[str] | None = None,
     bring_path: Path | None = None,
+    blank: bool = False,
 ) -> dict[str, float]:
     """One shard of games, from our decision table (`wpa.decisions`). With
     `usage_dir` (Smogon usage statistics), each decision gets a damage context:
@@ -1259,7 +1350,9 @@ def build_shard_from_logs(
     would; Reg M-B's training games stay whole, as the pooled model uses them all.
     `formats`: build only these formats. `bring_path`: the bring model
     (`wpa.bring`), for groups I and J and a Bo3 set's memory of what each player
-    brought; the logs must then be sharded by set (`logs_sets/`)."""
+    brought; the logs must then be sharded by set (`logs_sets/`). `blank`: the
+    opponent's sheet blanked at every decision (`rows_for_file_blank`), spreads
+    from the statistics alone, no Bo3 memory."""
     import gzip
     import time
 
@@ -1306,6 +1399,30 @@ def build_shard_from_logs(
             sheets = sheets_from_log(log)
             counts["games"] += 1
             contexts = None
+            if blank:
+                for role in ("p1", "p2"):
+                    states = game.states[role]
+                    if states[-1]["outcome"] is None:
+                        counts["no_result"] += 1
+                        continue
+                    got = rows_for_file_blank(
+                        tag,
+                        role,
+                        states,
+                        game.joined[role],
+                        sheets,
+                        dexes[fmt],
+                        table,
+                        groups,
+                        _blank_contexts(
+                            tag, log, role, sheets, dexes[fmt], calc, store, bring
+                        )
+                        if calc is not None and len(sheets) == 2
+                        else None,
+                    )
+                    rows.setdefault((fmt, splits[tag]), []).extend(got)
+                    counts["rows"] += len(got)
+                continue
             if calc is not None and len(sheets) == 2:
                 contexts = damage_contexts(
                     tag,
@@ -1449,6 +1566,31 @@ def damage_contexts(
     }
 
 
+def _blank_contexts(tag, log, role, sheets, dex, calc, store, bring):
+    """For the blanked run: spreads from the statistics alone (no refining), for
+    the sheets as they stand at each decision; bring odds for our own side only."""
+    from wpa.formats import format_of
+    from wpa.spreads import Belief, priors_for
+
+    usage = store.for_game(tag, log)
+    odds = None
+    if bring is not None:
+        own = tuple(m.species for m in sheets[role])
+        odds = {role: bring.odds(format_of(tag), own, None)}
+    cache: dict = {}
+
+    def context_for(_k, public):
+        key = tuple(public[r] for r in sorted(public))
+        if key not in cache:
+            pri = priors_for(public, usage, dex)
+            cache[key] = DamageContext(
+                calc, {k: Belief(v).best() for k, v in pri.items() if v}, odds
+            )
+        return cache[key]
+
+    return context_for
+
+
 def _entropy(weights) -> float:
     s = sum(weights)
     return -sum(w / s * math.log(w / s) for w in weights if w > 0) if s > 0 else 0.0
@@ -1476,6 +1618,7 @@ def _build_one(args: tuple) -> dict[str, float]:
             train_sample=opts.get("train_sample") or 1.0,
             formats=opts.get("formats"),
             bring_path=Path(opts["bring"]) if opts.get("bring") else None,
+            blank=bool(opts.get("blank")),
         )
     return build_shard(  # type: ignore[return-value]
         shard,
@@ -1539,6 +1682,11 @@ def main() -> None:
         type=str,
         help="with --usage: the bring model (models_v4/bring.json) for groups I "
         "and J and Bo3 memory; read the logs from logs_sets",
+    )
+    p.add_argument(
+        "--blank",
+        action="store_true",
+        help="with --from-logs: the opponent's sheet blanked (Week 8 Task 5)",
     )
     a = p.parse_args()
     if a.split_logs:

@@ -315,9 +315,10 @@ def side_features(
             f[f"{prefix}_{cap}_{where}"] += 1
         if where == "unseen":
             f[f"{prefix}_unseen"] += 1
-            f[f"{prefix}_unseen_pos{mon.position}"] = 1.0
-            key = "top4" if mon.position <= 4 else "bottom2"
-            f[f"{prefix}_unseen_{key}"] += 1
+            if 1 <= mon.position <= 6:  # 0: sheet order not known (blanked sheet)
+                f[f"{prefix}_unseen_pos{mon.position}"] = 1.0
+                key = "top4" if mon.position <= 4 else "bottom2"
+                f[f"{prefix}_unseen_{key}"] += 1
     return f
 
 

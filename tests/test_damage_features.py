@@ -596,3 +596,33 @@ def test_a_sets_second_game_starts_from_the_firsts_spreads_and_four(
     assert (
         stats["carried"] > 0 and stats["entropy_carried"] <= stats["entropy_start"]
     )  # no statistics here: one candidate each
+
+
+def test_a_blank_sheet_build_runs_and_knows_less(calc, dex, tmp_path):
+    import gzip
+    import json
+
+    from wpa.durations import Durations
+
+    tag = sorted(_logs())[0]
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    with gzip.open(logs_dir / "part-000.jsonl.gz", "wt", encoding="utf-8") as f:
+        f.write(json.dumps({"tag": tag, "log": _logs()[tag]}) + "\n")
+    common = dict(
+        logs_dir=logs_dir,
+        splits={tag: "validation"},
+        dexes={"regma": dex, "regmb": dex},
+        tables={"regma": Durations("e", timed={}), "regmb": Durations("e", timed={})},
+        groups="EFG",
+        usage_dir=tmp_path / "usage",
+    )
+    F.build_shard_from_logs(0, 1, out_dir=tmp_path / "full", **common)
+    F.build_shard_from_logs(0, 1, out_dir=tmp_path / "blank", blank=True, **common)
+    full = F.read_rows(next((tmp_path / "full").rglob("*.npz")))
+    blank = F.read_rows(next((tmp_path / "blank").rglob("*.npz")))
+    assert len(full.y) == len(blank.y) > 0
+    pos = [full.columns.index(f"e_their_unseen_pos{k}") for k in range(1, 7)]
+    assert full.X[:, pos].sum() > 0 and blank.X[:, pos].sum() == 0
+    their = [i for i, c in enumerate(full.columns) if c.startswith("g_their")]
+    assert blank.X[:, their].sum() < full.X[:, their].sum()  # fewer moves known
