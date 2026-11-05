@@ -288,3 +288,59 @@ def test_a_one_sided_model_is_trained_saved_and_recorded(tmp_path):
     assert model.one_sided
     assert E._one_sided(tmp_path / "m" / "regma", "A") is True
     assert E._one_sided(tmp_path / "m" / "regma", "B") is False  # no model yet
+
+
+# The gate allows for sample size (PO, 5 Nov 2026, Week 8 decision 2): in a format
+# with fewer than 500 sets, a calibration bin fails only when its whole 95%
+# interval (resampling sets) lies beyond the tolerance.
+
+
+def _one_bin(n_units, rows_per, observed, seed=0, shared=False):
+    rng = np.random.default_rng(seed)
+    n = n_units * rows_per
+    units = np.repeat([f"s{i}" for i in range(n_units)], rows_per)
+    p = np.full(n, 0.65)
+
+    def exactly(m):  # m outcomes, exactly round(observed * m) of them wins
+        out = np.zeros(m, dtype=np.int8)
+        out[rng.permutation(m)[: round(observed * m)]] = 1
+        return out
+
+    if shared:  # every row of a set has the same outcome: a wide interval
+        y = np.repeat(exactly(n_units), rows_per)
+    else:
+        y = exactly(n)
+    return p, y, units
+
+
+def test_every_bin_gets_an_interval_for_observed_minus_predicted():
+    p, y, units = _one_bin(300, 20, 0.70)
+    r = E.score(p, y, units, np.full(len(p), 0.5))
+    bin_ = next(c for c in r["calibration"] if c["n"])
+    lo, hi = bin_["gap_ci"]
+    assert lo < bin_["observed"] - bin_["predicted"] < hi
+
+
+def test_a_small_sample_bin_whose_interval_reaches_the_tolerance_passes():
+    p, y, units = _one_bin(150, 20, 0.715, shared=True)
+    r = E.score(p, y, units, np.full(len(p), 0.5))
+    bin_ = next(c for c in r["calibration"] if c["n"])
+    assert bin_["observed"] - bin_["predicted"] > E.TOLERANCE
+    assert bin_["gap_ci"][0] < E.TOLERANCE
+    assert r["calibration_failures"] == []
+    assert r["calibration_uncertain"] == [[0.6, 0.7]]
+    assert "small sample" in E.describe("regmb", "m", r)
+
+
+def test_a_small_sample_bin_wholly_beyond_the_tolerance_fails():
+    p, y, units = _one_bin(150, 20, 0.95)
+    r = E.score(p, y, units, np.full(len(p), 0.5))
+    assert r["calibration_failures"] == [[0.6, 0.7]]
+
+
+def test_a_large_sample_bin_beyond_the_tolerance_fails_whatever_its_interval():
+    p, y, units = _one_bin(600, 20, 0.715, shared=True)
+    r = E.score(p, y, units, np.full(len(p), 0.5))
+    bin_ = next(c for c in r["calibration"] if c["n"])
+    assert bin_["observed"] - bin_["predicted"] > E.TOLERANCE
+    assert r["calibration_failures"] == [[0.6, 0.7]]

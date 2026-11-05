@@ -34,6 +34,10 @@ from wpa.metrics import calibration_failures, calibration_table
 COIN_FLIP = 0.25
 TOLERANCE = 0.05  # calibration gap per bin (placeholder carried from Week 4)
 MIN_BIN = 100
+# PO, 5 Nov 2026 (Week 8 decision 2): below this many sets a format is a small
+# sample, and a calibration bin fails only when its whole 95% interval lies
+# beyond the tolerance
+SMALL_SAMPLE_UNITS = 500
 GROUP_STEPS = ("A", "AB", "ABC", "ABCD", "ABCDE")
 
 
@@ -187,6 +191,38 @@ def difference_ci(
     )
 
 
+def bin_gap_intervals(
+    p, y, units, n_bins: int = 10, draws: int = 500, seed: int = 0
+) -> list[tuple[float, float] | None]:
+    """Per calibration bin, a 95% interval for observed minus predicted, from
+    resampling units (sets). None for an empty bin."""
+    p = np.asarray(p, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    b = np.minimum((p * n_bins).astype(int), n_bins - 1)  # as calibration_table
+    _, inv = np.unique(np.asarray(units), return_inverse=True)
+    k = int(inv.max()) + 1 if len(inv) else 0
+    sums = np.zeros((k, n_bins))
+    counts = np.zeros((k, n_bins))
+    np.add.at(sums, (inv, b), y - p)
+    np.add.at(counts, (inv, b), 1.0)
+    rng = np.random.default_rng(seed)
+    boot = np.full((draws, n_bins), np.nan)
+    for i in range(draws):
+        w = np.bincount(rng.integers(0, k, k), minlength=k).astype(np.float64)
+        n = w @ counts
+        boot[i] = np.where(n > 0, (w @ sums) / np.maximum(n, 1.0), np.nan)
+    out: list[tuple[float, float] | None] = []
+    for j in range(n_bins):
+        col = boot[:, j][~np.isnan(boot[:, j])]
+        if counts[:, j].sum() == 0 or len(col) == 0:
+            out.append(None)
+        else:
+            out.append(
+                (float(np.percentile(col, 2.5)), float(np.percentile(col, 97.5)))
+            )
+    return out
+
+
 def score(p, y, units, v0, draws: int = 500) -> dict:
     """Everything the report and the gate need for one format and one model."""
     p = np.asarray(p, dtype=np.float64)
@@ -194,7 +230,17 @@ def score(p, y, units, v0, draws: int = 500) -> dict:
     b0, lo0, hi0 = brier_ci(v0, y, units, draws)
     d, dlo, dhi = difference_ci(p, v0, y, units, draws)
     table = calibration_table(list(p), [bool(v) for v in y])
+    gaps = bin_gap_intervals(p, y, units, len(table), draws)
     fails = calibration_failures(table, TOLERANCE, MIN_BIN)
+    uncertain = []
+    if len(np.unique(units)) < SMALL_SAMPLE_UNITS:
+        beyond = [
+            c
+            for c, g in zip(table, gaps)
+            if g is not None and (g[0] > TOLERANCE or g[1] < -TOLERANCE)
+        ]
+        uncertain = [c for c in fails if c not in beyond]
+        fails = [c for c in fails if c in beyond]
     return {
         "rows": int(len(y)),
         "units": int(len(np.unique(units))),
@@ -212,10 +258,14 @@ def score(p, y, units, v0, draws: int = 500) -> dict:
                 "n": c.n,
                 "predicted": c.mean_predicted,
                 "observed": c.observed_rate,
+                "gap_ci": list(g) if g is not None else None,
             }
-            for c in table
+            for c, g in zip(table, gaps)
         ],
         "calibration_failures": [[c.low, c.high] for c in fails],
+        # off by more than the tolerance, but a small sample's interval reaches
+        # within it: reported, not failed
+        "calibration_uncertain": [[c.low, c.high] for c in uncertain],
     }
 
 
@@ -291,7 +341,7 @@ def _fmt_ci(x: float, ci) -> str:
 
 
 def describe(fmt: str, name: str, r: dict) -> str:
-    small = "  SMALL SAMPLE" if r["units"] < 500 else ""
+    small = "  SMALL SAMPLE" if r["units"] < SMALL_SAMPLE_UNITS else ""
     lines = [
         f"{fmt} {name}: {r['rows']} decision points in {r['units']} units{small}",
         f"  Brier {_fmt_ci(r['brier'], r['brier_ci'])}  skill {r['skill']:+.3f}",
@@ -300,11 +350,15 @@ def describe(fmt: str, name: str, r: dict) -> str:
     ]
     for c in r["calibration"]:
         if c["n"]:
-            flag = (
-                "  <-- outside tolerance"
-                if [c["low"], c["high"]] in r["calibration_failures"]
-                else ""
-            )
+            flag = ""
+            if [c["low"], c["high"]] in r["calibration_failures"]:
+                flag = "  <-- outside tolerance"
+            elif [c["low"], c["high"]] in r.get("calibration_uncertain", []):
+                lo, hi = c["gap_ci"]
+                flag = (
+                    f"  <-- off by more than {TOLERANCE}, but the interval "
+                    f"[{lo:+.3f}, {hi:+.3f}] reaches within it (small sample)"
+                )
             lines.append(
                 f"  {c['low']:.1f}-{c['high']:.1f} n={c['n']:<7d} predicted "
                 f"{c['predicted']:.3f} observed {c['observed']:.3f}{flag}"
