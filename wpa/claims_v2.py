@@ -310,6 +310,7 @@ def scan_shard(
     per_shard: int,
     groups: str = GROUPS,
     usage_dir=None,
+    bring_path=None,
 ) -> list[dict]:
     """Every EC-001 position and up to `per_shard` EC-002 positions per format
     in one shard of validation games, with their follow-ups' features. With
@@ -327,6 +328,11 @@ def scan_shard(
     calc = store = None
     if usage_dir is not None:
         calc, store = _worker_tools(usage_dir)
+    bring = None
+    if bring_path is not None:
+        from wpa.bring import BringModel
+
+        bring = BringModel.load(bring_path)
     out: list[dict] = []
     ec002_count = dict.fromkeys(formats, 0)
     with gzip.open(
@@ -347,8 +353,10 @@ def scan_shard(
                 if calc is None or len(sheets) != 2:
                     return None
                 if contexts is None:
+                    # bring odds without a set's memory: positions are scanned
+                    # game by game, not in set order
                     contexts = damage_contexts(
-                        tag, log, game, sheets, dexes[fmt], calc, store
+                        tag, log, game, sheets, dexes[fmt], calc, store, bring
                     )
                 return contexts[role][k]
 
@@ -551,6 +559,9 @@ def main() -> None:
     )
     p.add_argument("--groups", default=GROUPS, help="feature groups to record")
     p.add_argument(
+        "--bring", type=Path, help="with --usage: the bring model, for groups I and J"
+    )
+    p.add_argument(
         "--usage",
         type=Path,
         help="Smogon usage statistics: spreads, real Speed and damage (G)",
@@ -581,6 +592,7 @@ def main() -> None:
                 per_shard=a.per_shard,
                 groups=a.groups,
                 usage_dir=a.usage,
+                bring_path=a.bring,
             )
             tmp = path.with_suffix(".tmp")
             with gzip.open(tmp, "wt", encoding="utf-8") as fh:

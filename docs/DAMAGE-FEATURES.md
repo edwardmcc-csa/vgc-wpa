@@ -86,3 +86,61 @@ The full table was built on the PO's computer on 4 November 2026: 88,901 games a
 1,781,911 rows. It took 27,719 seconds of computing (7.7 hours), about 0.31
 seconds per game. With 4 workers that was a little under 2 hours of waiting,
 against an estimate of 1.6 hours. Each worker needs about 1 GB of memory.
+
+---
+
+## Week 8: this turn's options (H), the likely back (I), the whole board (J)
+
+Code: `_group_h`, `_group_i`, `_group_j` in `wpa/features.py`. Tests:
+`tests/test_turn_features.py`, `tests/test_board_actions.py`,
+`tests/test_damage_features.py`.
+
+**The board now also tracks** (`wpa/decisions.py`), for each Pokemon:
+- whether it has used a move since it came in;
+- its last move (a Choice item locks it to this; an item received by Trick
+  locks it from its next move);
+- how many Protect-type moves in a row have worked.
+
+**H, what each side can do this turn**, for its active Pokemon:
+
+| column | what it is |
+|---|---|
+| `fakeout_n` | Fake Out on the sheet and not used a move since coming in |
+| `locked_n` | holding a Choice item and locked into a move |
+| `protect_ready_n` / `protect_risky_n` | has a Protect-type move; ready, or one worked last turn (the next works a third as often) |
+| `mega_available` / `mega_used` | the side still has a Mega Stone holder that can Mega Evolve, or has Mega Evolved |
+
+Group G now uses only the locked move of a Choice-locked Pokemon.
+
+**The real-data check** covered a quarter of all games (21,208 in Reg M-A and
+1,027 in Reg M-B):
+- **Fake Out:** of 235 used after the Pokemon had already moved, 233 failed, as
+  they should.
+- **Choice lock:** Choice-locked Pokemon used their locked move 12,450 times and
+  Struggle 79 times (the locked move disabled). They used another move only 8
+  times: Trick swaps and Magic Room.
+
+**I, the likely back** (`docs/BRING.md`), for each side:
+
+| column | what it is |
+|---|---|
+| `back_entropy` | how uncertain its back is (entropy over the sets of four still possible) |
+| `back_dmg_exp` | expected best share of an opposing active's hit points its unseen Pokemon could take |
+| `back_ko_exp` | expected number of opposing actives its unseen Pokemon could knock out |
+| `back_speed_exp` | expected Speed of its fastest unseen Pokemon |
+| `back_outspeeds_exp` | expected number of its unseen Pokemon faster than the opponent's fastest active |
+
+**J, the whole board.** For each side as the attacker, every Pokemon still
+standing is matched against every Pokemon on the other side. An unseen Pokemon on
+either side is counted by the chance it was brought.
+
+| column | what it is |
+|---|---|
+| `ko_targets_exp` | expected number of the other side's Pokemon that something of ours knocks out in one hit |
+| `outko_targets_exp` | the same, while moving first |
+| `2hko_targets_exp` | the same, in two hits |
+| `outko_pairs_exp` | expected number of pairs where one of ours moves first and knocks one of theirs out |
+
+**Build time with H, I and J:** about the same as v3. The cloud workspace took
+about 0.26 seconds per game per process, because the calculator's cache answers
+most of the new requests.

@@ -933,6 +933,75 @@ Section 15, plus:
 
 ---
 
+## 17. The v4 model: who was brought, Bo3 memory, this turn, the whole board (Week 8)
+
+v4 adds three feature groups:
+- **H:** what each side can do this turn;
+- **I:** the likely back;
+- **J:** damage across the whole board.
+
+It also remembers a Bo3 set from game to game, and Reg M-B gets a one-number
+correction learned from its training sets. It needs everything from Section 16.
+
+1. **Shard the logs by set** (once; a set's games together and in order):
+   ```
+   python -m wpa.features --split-logs logs_sets --shards 64
+   ```
+
+2. **Fit the bring model** (which four each player brought; about 5 minutes):
+   ```
+   python -m wpa.bring
+   ```
+   It prints how it does against a uniform guess and saves
+   `models_v4\bring.json` and `models_v4\bring.txt`.
+
+3. **Build the v4 feature table** (about as slow as v3):
+   ```
+   python -m wpa.features --from-logs logs_sets --out features_v4 --groups ABCDEFGHIJ --usage usage_stats --bring models_v4/bring.json --train-sample 0.2 --shards 64 --workers 4
+   ```
+
+4. **Train.** First the headline models, then Reg M-B's correction, then the
+   models the comparisons need:
+   ```
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHIJ --features features_v4 --models models_v4
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFGHIJ --features features_v4 --models models_v4
+   python -m wpa.evaluate v2-crossfit --format pooled --groups ABCDEFGHIJ --features features_v4 --models models_v4
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFG --features features_v4 --models models_v4
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFG --features features_v4 --models models_v4
+   ```
+   `v2-crossfit` trains the pooled model five more times, so it is the slowest
+   step. It ends with `Reg M-B temperature 0.xx from N training sets`.
+
+5. **Report and gate** (validation):
+   ```
+   python -m wpa.evaluate v2-report --features features_v4 --models models_v4 --full ABCDEFGHIJ --base ABCDEFG
+   ```
+
+6. **With the opponent's sheet blanked** (report only):
+   ```
+   python -m wpa.features --from-logs logs_shards --out features_v4_blank --groups ABCDEFGHIJ --usage usage_stats --bring models_v4/bring.json --blank --train-sample 0.2 --shards 64 --workers 4
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHIJ --features features_v4_blank --models models_v4_blank
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFGHIJ --features features_v4_blank --models models_v4_blank
+   python -m wpa.evaluate v2-report --features features_v4_blank --models models_v4_blank --full ABCDEFGHIJ
+   ```
+
+7. **The test split** is opened only if you agree; every opening is logged:
+   ```
+   python -m wpa.evaluate v2-final --features features_v4 --models models_v4 --full ABCDEFGHIJ
+   ```
+
+8. **Expert claims** (report only):
+   ```
+   python -m wpa.claims_v2 scan --groups ABCDEFGHIJ --usage usage_stats --bring models_v4/bring.json --out claims_v4
+   python -m wpa.claims_v2 report --groups ABCDEFGHIJ --out claims_v4 --model "v3 groups=models_v4:ABCDEFG" --model v4=models_v4:ABCDEFGHIJ
+   ```
+
+9. **On every training game (your computer):** steps 3 to 5 without
+   `--train-sample 0.2`, with `features_v4_full` and `models_v4_full` in place of
+   `features_v4` and `models_v4`.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
