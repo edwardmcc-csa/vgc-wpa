@@ -1086,18 +1086,26 @@ def public_sheet(sheet: Sequence[SheetMon], side: Sequence[Mapping]) -> tuple:
     return tuple(out)
 
 
-def blank_state(s: Mapping) -> dict:
-    """The board with the opponent's unseen species hidden, and any item of theirs
-    the log has not shown (or that is gone) left out."""
-    opp = []
-    for p in s["opp_pokemon"]:
+def _blank_side(side: Sequence[Mapping]) -> list[dict]:
+    out = []
+    for p in side:
         q = dict(p)
         if not _revealed(p):
             q.update(species="", item="")
         elif not (p.get("item") and p.get("item") == p.get("rev_item")):
             q["item"] = ""
-        opp.append(q)
-    return {**s, "opp_pokemon": opp}
+        out.append(q)
+    return out
+
+
+def blank_state(s: Mapping, both: bool = False) -> dict:
+    """The board with the opponent's unseen species hidden, and any item of theirs
+    the log has not shown (or that is gone) left out. `both`: our side too, as a
+    spectator sees it."""
+    out = {**s, "opp_pokemon": _blank_side(s["opp_pokemon"])}
+    if both:
+        out["our_pokemon"] = _blank_side(s["our_pokemon"])
+    return out
 
 
 def rows_for_file_blank(
@@ -1110,10 +1118,13 @@ def rows_for_file_blank(
     table: Durations | None,
     groups: str,
     context_for=None,
+    both: bool = False,
 ) -> list[Row]:
     """Like `rows_for_file`, with the opponent's sheet blanked at every decision
     (`public_sheet`, `blank_state`). `context_for(k, sheets)` gives the damage
-    context for decision k from the sheets as they stand then."""
+    context for decision k from the sheets as they stand then. `both`: our sheet
+    blanked too (a spectator's view), so both sides know the same kind of thing
+    and a row's mirror looks like a real row."""
     label = states[-1]["outcome"]
     if label is None:
         return []
@@ -1123,10 +1134,12 @@ def rows_for_file_blank(
     out = []
     for k in decision_indices(states):
         public = {
-            role: sheets[role],
+            role: public_sheet(sheets[role], states[k]["our_pokemon"])
+            if both
+            else sheets[role],
             other: public_sheet(sheets[other], states[k]["opp_pokemon"]),
         }
-        board = [*states[:k], blank_state(states[k])]
+        board = [*states[:k], blank_state(states[k], both)]
         ctx = context_for(k, public) if context_for is not None else None
         f = state_features(board, k, role, joined[k], public, dex, table, groups, ctx)
         out.append(
@@ -1342,6 +1355,7 @@ def build_shard_from_logs(
     formats: Sequence[str] | None = None,
     bring_path: Path | None = None,
     blank: bool = False,
+    blank_both: bool = False,
 ) -> dict[str, float]:
     """One shard of games, from our decision table (`wpa.decisions`). With
     `usage_dir` (Smogon usage statistics), each decision gets a damage context:
@@ -1352,7 +1366,8 @@ def build_shard_from_logs(
     (`wpa.bring`), for groups I and J and a Bo3 set's memory of what each player
     brought; the logs must then be sharded by set (`logs_sets/`). `blank`: the
     opponent's sheet blanked at every decision (`rows_for_file_blank`), spreads
-    from the statistics alone, no Bo3 memory."""
+    from the statistics alone, no Bo3 memory. `blank_both`: both sheets blanked
+    (a spectator's view)."""
     import gzip
     import time
 
@@ -1399,7 +1414,7 @@ def build_shard_from_logs(
             sheets = sheets_from_log(log)
             counts["games"] += 1
             contexts = None
-            if blank:
+            if blank or blank_both:
                 for role in ("p1", "p2"):
                     states = game.states[role]
                     if states[-1]["outcome"] is None:
@@ -1415,10 +1430,19 @@ def build_shard_from_logs(
                         table,
                         groups,
                         _blank_contexts(
-                            tag, log, role, sheets, dexes[fmt], calc, store, bring
+                            tag,
+                            log,
+                            role,
+                            sheets,
+                            dexes[fmt],
+                            calc,
+                            store,
+                            bring,
+                            blank_both,
                         )
                         if calc is not None and len(sheets) == 2
                         else None,
+                        blank_both,
                     )
                     rows.setdefault((fmt, splits[tag]), []).extend(got)
                     counts["rows"] += len(got)
@@ -1566,15 +1590,16 @@ def damage_contexts(
     }
 
 
-def _blank_contexts(tag, log, role, sheets, dex, calc, store, bring):
+def _blank_contexts(tag, log, role, sheets, dex, calc, store, bring, both=False):
     """For the blanked run: spreads from the statistics alone (no refining), for
-    the sheets as they stand at each decision; bring odds for our own side only."""
+    the sheets as they stand at each decision; bring odds for our own side only,
+    and none when `both` sheets are blanked."""
     from wpa.formats import format_of
     from wpa.spreads import Belief, priors_for
 
     usage = store.for_game(tag, log)
     odds = None
-    if bring is not None:
+    if bring is not None and not both:
         own = tuple(m.species for m in sheets[role])
         odds = {role: bring.odds(format_of(tag), own, None)}
     cache: dict = {}
@@ -1619,6 +1644,7 @@ def _build_one(args: tuple) -> dict[str, float]:
             formats=opts.get("formats"),
             bring_path=Path(opts["bring"]) if opts.get("bring") else None,
             blank=bool(opts.get("blank")),
+            blank_both=bool(opts.get("blank_both")),
         )
     return build_shard(  # type: ignore[return-value]
         shard,
@@ -1687,6 +1713,11 @@ def main() -> None:
         "--blank",
         action="store_true",
         help="with --from-logs: the opponent's sheet blanked (Week 8 Task 5)",
+    )
+    p.add_argument(
+        "--blank-both",
+        action="store_true",
+        help="with --from-logs: both sheets blanked, as a spectator sees the game",
     )
     a = p.parse_args()
     if a.split_logs:
