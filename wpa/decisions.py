@@ -66,6 +66,20 @@ def _hp(text: str) -> tuple[float, bool]:
 
 STATUSES = ("brn", "par", "slp", "frz", "psn", "tox")
 STATS = ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion")
+CHOICE_ITEMS = {"choiceband", "choicescarf", "choicespecs"}
+# moves that share Protect's counter: each one in a row works a third as often
+PROTECT_MOVES = {
+    "protect",
+    "detect",
+    "spikyshield",
+    "kingsshield",
+    "banefulbunker",
+    "silktrap",
+    "burningbulwark",
+    "obstruct",
+    "maxguard",
+    "endure",
+}
 
 
 def _status(text: str) -> str:
@@ -114,6 +128,8 @@ class _Board:
         # whether each Intimidate lowered every opposing active Pokemon's Attack
         self.counts: Counter[str] = Counter()
         self._intimidate: list | None = None
+        self._protecting: dict | None = None  # the Pokemon whose Protect is pending
+        self._fakeout: tuple | None = None  # a Fake Out just used, for the check
 
     def sheet(self, line: str) -> None:
         role, mons = parse_showteam_message(line)
@@ -130,6 +146,14 @@ class _Board:
                 "boosts": {},
                 "status": "",
                 "item": to_id(m.item),
+                # since it last came in (Week 8): Fake Out, Choice lock, Protect
+                "moved": False,
+                "last_move": "",
+                "protect_streak": 0,
+                # what the log has shown of its set (for blanked sheets)
+                "rev_moves": set(),
+                "rev_item": "",
+                "rev_ability": "",
             }
             for m in mons
         ]
@@ -201,6 +225,8 @@ class _Board:
         elif t == "-enditem":
             m["item"] = ""
         elif t == "-item" and len(p) > 3:
+            if to_id(p[3]) != m["item"]:
+                m["last_move"] = ""  # a new Choice item locks from the next move
             m["item"] = to_id(p[3])
         for x in touched:  # keep only the stages that are not zero
             x["boosts"] = {k: v for k, v in x["boosts"].items() if v}
@@ -270,7 +296,75 @@ class _Board:
             for why in it[3] or ["(nothing shown)"]:
                 self.counts["  because " + why] += 1
 
+    def _reveal(self, p: list[str]) -> None:
+        """Items and abilities the line shows: `[from] item: X` / `[from] ability:
+        X` belong to the `[of]` Pokemon if there is one, else to the line's own;
+        `-ability`, `-item`, `-enditem` and `-mega` show the line's Pokemon's."""
+        own = self._mon(p[2]) if len(p) > 2 and p[2][:2] in ROLES else None
+        of = next((x[5:] for x in p[3:] if x.startswith("[of] ")), None)
+        holder = self._mon(of) if of else own
+        for x in p[3:]:
+            if holder is not None and x.startswith("[from] item: "):
+                holder["rev_item"] = to_id(x[len("[from] item: ") :])
+            elif holder is not None and x.startswith("[from] ability: "):
+                holder["rev_ability"] = to_id(x[len("[from] ability: ") :])
+        if own is None or len(p) < 4:
+            return
+        t = p[1]
+        if t == "-ability" and not any(x.startswith("[from]") for x in p[4:]):
+            own["rev_ability"] = to_id(p[3])
+        elif t in ("-item", "-enditem"):
+            own["rev_item"] = to_id(p[3])
+        elif t == "-mega" and len(p) > 4:
+            own["rev_item"] = to_id(p[4])
+
+    def _acted(self, p: list[str]) -> None:
+        """A move line: the Pokemon has moved; Protect in a row is counted."""
+        m = self._mon(p[2])
+        if m is None or len(p) < 4:
+            return
+        move = to_id(p[3])
+        called = any(x.startswith("[from]") and "lockedmove" not in x for x in p[4:])
+        # the real-data check: Fake Out only before moving, and Choice locks
+        self._fakeout = None
+        if move == "fakeout" and not called:
+            key = "fakeout_not_available" if m["moved"] else "fakeout_available"
+            self.counts[key + "_used"] += 1
+            self._fakeout = (m, key)
+        if (
+            m["item"] in CHOICE_ITEMS
+            and m["last_move"]
+            and move != m["last_move"]
+            and not called
+        ):
+            self.counts["choice_locked_used_another_move"] += 1
+        elif m["item"] in CHOICE_ITEMS and m["last_move"] and not called:
+            self.counts["choice_locked_used_its_move"] += 1
+        m["moved"] = True
+        m["last_move"] = move
+        if not called:
+            m["rev_moves"].add(move)
+        if move in PROTECT_MOVES:
+            m["protect_streak"] += 1
+            self._protecting = m
+        else:
+            m["protect_streak"] = 0
+            self._protecting = None
+
     def handle(self, p: list[str]) -> None:
+        if len(p) > 2:
+            self._reveal(p)
+        if len(p) > 2 and p[1] == "move":
+            self._acted(p)
+        if len(p) > 2 and p[1] == "-fail" and self._fakeout is not None:
+            m, key = self._fakeout
+            if self._mon(p[2]) is m:
+                self.counts[key + "_failed"] += 1
+            self._fakeout = None
+        if len(p) > 2 and p[1] == "-fail" and self._protecting is not None:
+            if self._mon(p[2]) is self._protecting:
+                self._protecting["protect_streak"] = 0  # a failed Protect resets
+            self._protecting = None
         if len(p) > 1:
             self._check_intimidate(p)
         if len(p) > 1 and self._effects(p[1], p):
@@ -295,6 +389,7 @@ class _Board:
                     passed = dict(self.mons[role][old]["boosts"])
                 self.mons[role][old]["active"] = False
                 self.mons[role][old]["boosts"] = {}
+                self.mons[role][old].update(moved=False, last_move="", protect_streak=0)
                 # Regenerator heals a third on switching out; the log does not
                 # print it (the stored states apply it too)
                 if self.abilities.get(role, [""] * 6)[old] == "regenerator":
@@ -302,6 +397,7 @@ class _Board:
                     if not o["fainted"]:
                         o["hp"] = min(1.0, round(o["hp"] + 1 / 3, 2))
             m = self.mons[role][idx]
+            m.update(moved=False, last_move="", protect_streak=0)
             m["active"] = True
             m["seen"] = True
             m["hp"], fainted = _hp(p[4])
@@ -320,6 +416,7 @@ class _Board:
             if idx is not None:
                 m = self.mons[role][idx]
                 m.update(hp=0.0, fainted=True, active=False, boosts={}, status="")
+                m.update(moved=False, last_move="", protect_streak=0)
                 for s, v in self.slots[role].items():
                     if v == idx:
                         self.slots[role][s] = None
@@ -353,6 +450,12 @@ class _Board:
                 "boosts": dict(m["boosts"]),
                 "status": m["status"],
                 "item": m["item"],
+                "moved": m["moved"],
+                "last_move": m["last_move"],
+                "protect_streak": m["protect_streak"],
+                "rev_moves": sorted(m["rev_moves"]),
+                "rev_item": m["rev_item"],
+                "rev_ability": m["rev_ability"],
             }
             for sp, m in zip(self.species.get(role, []), self.mons.get(role, []))
         ]
