@@ -6,8 +6,8 @@ Evolution as an extra on a move. `options` lists every action the rules allow
 there, as far as the board knows them:
 
 * each move on the Pokemon's sheet, except that a Choice item locks it to its last
-  move, Fake Out and First Impression work only before it has moved, and an
-  Assault Vest rules out status moves;
+  move and an Assault Vest rules out status moves (Fake Out after the first turn
+  can still be picked; it fails);
 * a target for each move that takes one: either opposing Pokemon, or the ally for
   moves that can hit it (in doubles every Pokemon is adjacent to every other);
 * a switch to each brought Pokemon on the bench;
@@ -20,10 +20,17 @@ switching to the same Pokemon, or both Mega Evolving).
 `turns` reads the choices the log shows. A switch before any move this turn is
 the choice of the Pokemon it replaces; the first move of each Pokemon that was
 active at the start of the turn is its choice, unless another effect called it
-(`[from]`). Some choices cannot be seen: a Pokemon that could not move (`|cant|`,
-flinch, sleep ...), one knocked out before its turn, one forced to repeat a move
-(Outrage's lock), or a move with no target left. `check` counts how many of the
-choices the log does show are in the list.
+(`[from]`). A target is a slot: if its Pokemon switched out first, the log names
+the newcomer, but the choice was the Pokemon there when the turn began.
+
+Some choices cannot be seen: a Pokemon that could not move (`|cant|`, flinch,
+sleep ...), one knocked out before its turn, one forced to repeat a move
+(Outrage's lock) or to Struggle, one that hit itself in confusion, one using a
+move borrowed by Transform (Imposter included), or a move with no target left.
+A move that charges, fails or is blocked (Armor Tail, Queenly Majesty) is
+logged without its target; an animation line may show it, and otherwise the
+target stays hidden. `check` counts how many of the choices the log does show
+are in the list.
 
 Not yet tracked, so offered even when the game would refuse: Taunt, Encore,
 Disable, Torment, Imprison, and trapping (Shadow Tag, Arena Trap, bound moves).
@@ -42,7 +49,6 @@ from wpa.team_sheets import Dex, SheetMon
 # move targets that the player chooses (the rest have none to choose)
 FOE_TARGETS = {"normal", "any", "adjacentFoe"}
 ALLY_TARGETS = {"normal", "any", "adjacentAlly", "adjacentAllyOrSelf"}
-FIRST_TURN_ONLY = {"fakeout", "firstimpression"}
 
 
 @dataclass(frozen=True)
@@ -67,8 +73,9 @@ def _targets(
         out += [("foe", j) for j in foes]
     if kind in ALLY_TARGETS and ally is not None:
         out.append(("ally", ally))
-    if kind == "adjacentAllyOrSelf" or not out:
-        out.append(None)  # itself, or no target to choose
+    # itself (Acupressure; Curse used by a non-Ghost), or no target to choose
+    if kind == "adjacentAllyOrSelf" or move == "curse" or not out:
+        out.append(None)
     return out
 
 
@@ -100,8 +107,6 @@ def options(
         acts: list[Action] = []
         for move in _usable_moves(mon, st):
             m = dex.moves.get(move) or {}
-            if move in FIRST_TURN_ONLY and st.get("moved"):
-                continue
             if st.get("item") == "assaultvest" and m.get("category") == "Status":
                 continue
             for target in _targets(move, dex, foes, ally):
@@ -136,6 +141,8 @@ class Turn:
     ours: list[dict]
     theirs: list[dict]
     taken: dict[int, Action | str] = field(default_factory=dict)
+    # Pokemon whose move the log shows but not its target
+    hidden: set[int] = field(default_factory=set)
 
 
 def _target(
@@ -149,13 +156,20 @@ def _target(
     return None if idx == user else ("ally", idx)
 
 
+def _chooses_target(move: str, dex: Dex | None) -> bool:
+    kind = ((dex.moves.get(move) or {}) if dex else {}).get("target", "normal")
+    return kind in FOE_TARGETS or kind in ALLY_TARGETS
+
+
 def turns(log: str, dex: Dex | None = None) -> list[Turn]:
     """Every start-of-turn decision of both players, with the actions taken."""
     board = _Board()
     out: list[Turn] = []
     now: dict[str, Turn] | None = None
+    slots: dict[str, dict] = {}  # who was in each slot when the turn began
     moved = False
     megas: set[tuple[str, int]] = set()
+    transformed: set[tuple[str, int]] = set()
 
     def other(r: str) -> str:
         return "p2" if r == "p1" else "p1"
@@ -187,8 +201,20 @@ def turns(log: str, dex: Dex | None = None) -> list[Turn]:
                 for r in ROLES
                 if board.mons.get(r)
             }
+            slots = {r: dict(board.slots[r]) for r in ROLES}
             moved, megas = False, set()
-        elif now is not None and len(p) > 2 and p[2][:2] in now:
+        if t in ("-transform", "switch", "drag") and len(p) > 2 and p[2][:2] in ROLES:
+            # a transformation lasts until the Pokemon leaves the field
+            r = p[2][:2]
+            if t == "-transform":
+                idx = board._index(r, p[2])
+                if idx is not None:
+                    transformed.add((r, idx))
+            else:
+                old = board.slots[r].get(p[2][2:3]) if len(p[2]) > 2 else None
+                if old is not None:
+                    transformed.discard((r, old))
+        if now is not None and len(p) > 2 and p[2][:2] in now:
             role = p[2][:2]
             taken = now[role].taken
             if t == "switch" and not moved and len(p) > 3:
@@ -200,13 +226,34 @@ def turns(log: str, dex: Dex | None = None) -> list[Turn]:
                 idx = board._index(role, p[2])
                 if idx is not None:
                     megas.add((role, idx))
+            elif t == "-anim" and len(p) > 4:
+                idx = board._index(role, p[2])
+                act = taken.get(idx) if idx is not None else None
+                if isinstance(act, Action) and idx in now[role].hidden:
+                    tr = p[4][:2] if p[4][:2] in ROLES else ""
+                    tidx = slots.get(tr, {}).get(p[4][2:3]) if tr else None
+                    target = _target(act.move, dex, role, act.user, tr, tidx)
+                    if target is not None:
+                        taken[idx] = Action(
+                            act.user,
+                            "move",
+                            move=act.move,
+                            target=target,
+                            mega=act.mega,
+                        )
+                        now[role].hidden.discard(idx)
             elif t == "move" and len(p) > 3:
                 moved = True
                 idx = board._index(role, p[2])
                 tags = " ".join(p[5:])
                 if idx is not None and taken.get(idx) == "none":
-                    if "[from]lockedmove" in tags.replace(" ", ""):
+                    if (
+                        "[from]lockedmove" in tags.replace(" ", "")
+                        or p[3] == "Struggle"
+                    ):
                         taken[idx] = "forced"
+                    elif (role, idx) in transformed:
+                        taken[idx] = "transformed"
                     elif "[from]" in tags:
                         pass  # called by another effect: not this Pokemon's choice
                     elif "[notarget]" in tags:
@@ -214,15 +261,28 @@ def turns(log: str, dex: Dex | None = None) -> list[Turn]:
                     else:
                         move = to_id(p[3])
                         tr = p[4][:2] if len(p) > 4 and p[4][:2] in ROLES else ""
-                        tidx = board._index(tr, p[4]) if tr else None
+                        # the player chose a slot: its occupant when the turn began
+                        tidx = slots.get(tr, {}).get(p[4][2:3]) if tr else None
+                        if tr and tidx is None:
+                            tidx = board._index(tr, p[4])
+                        target = _target(move, dex, role, idx, tr, tidx)
                         taken[idx] = Action(
                             idx,
                             "move",
                             move=move,
-                            target=_target(move, dex, role, idx, tr, tidx),
+                            target=target,
                             mega=(role, idx) in megas,
                         )
+                        if not tr and _chooses_target(move, dex):
+                            now[role].hidden.add(idx)
+            elif t == "-damage" and "[from] confusion" in raw:
+                idx = board._index(role, p[2])
+                if idx is not None and taken.get(idx) == "none":
+                    taken[idx] = "confused"  # it hit itself; its choice is hidden
             elif t in ("cant", "faint"):
+                if t == "cant" and len(p) > 3 and p[3].startswith("ability:"):
+                    board.handle(p)  # Armor Tail and the like name the blocker
+                    continue
                 idx = board._index(role, p[2])
                 if idx is not None and taken.get(idx) == "none":
                     taken[idx] = "cant" if t == "cant" else "fainted"
@@ -249,6 +309,13 @@ def check(log: str, dex: Dex, sheets: Mapping | None = None) -> Counter:
         for idx, act in t.taken.items():
             if isinstance(act, str):
                 counts[act] += 1
+            elif idx in t.hidden:
+                same = any(
+                    o.move == act.move and o.mega == act.mega for o in opts.get(idx, [])
+                )
+                counts["target_hidden" if same else "out"] += 1
+                if not same:
+                    counts[f"out:move:{act.move}"] += 1
             elif act in opts.get(idx, []):
                 counts["in"] += 1
             else:

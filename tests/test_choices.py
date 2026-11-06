@@ -55,12 +55,13 @@ def test_moves_without_a_target_choice_have_none():
     assert [(a.move, a.target) for a in opts[1]] == [("rockslide", None)]
 
 
-def test_fake_out_is_offered_only_before_the_pokemon_has_moved():
+def test_fake_out_is_still_offered_after_the_pokemon_has_moved_where_it_fails():
+    # the game lets a player pick it; it fails (Week 8: 233 of 235 such uses did)
     lg = log(T1)
     s = at_turn_start(lg, 2, role="p2")
     sheet = sheets_from_log(lg)["p2"]
     opts = C.options(s["our_pokemon"], s["opp_pokemon"], sheet, DEX, brought={0, 1})
-    assert not any(a.move == "fakeout" for a in opts[0])
+    assert any(a.move == "fakeout" for a in opts[0])
 
 
 def test_a_choice_is_one_option_per_active_and_two_cannot_switch_to_the_same_one():
@@ -126,3 +127,80 @@ def test_the_real_data_check_finds_every_choice_in_the_list():
     lg = log(T1)
     counts = C.check(lg, DEX)
     assert counts["in"] == 3 and counts["out"] == 0 and counts["cant"] == 1
+
+
+def test_a_target_is_the_pokemon_in_that_slot_when_the_turn_began():
+    # p2 switches Inci out for Rime first; Rock's Moonblast at p2a lands on Rime,
+    # but Rock chose Inci's slot when the turn began
+    hit = "|t:|2\n|switch|p2a: Rime|Rime, L50|100/100\n|move|p1b: Rock|Moonblast|p2a: Rime\n"
+    t2 = {t.role: t for t in C.turns(log(T1, hit), DEX) if t.turn == 2}
+    assert t2["p2"].taken[0] == C.Action(0, "switch", switch_to=2)
+    assert t2["p1"].taken[1] == C.Action(1, "move", move="moonblast", target=("foe", 0))
+
+
+def _turn2(block, role):
+    return {t.role: t for t in C.turns(log(T1, block), DEX) if t.turn == 2}[role]
+
+
+def test_a_blocked_move_hides_its_target_and_does_not_stop_the_blocker():
+    # Armor Tail: the log names the blocker in a |cant| line, [of] the attacker
+    blocked = (
+        "|t:|2\n|move|p2b: Fini|Moonblast||[still]\n"
+        "|cant|p1a: Whim|ability: Armor Tail|Moonblast|[of] p2b: Fini\n"
+        "|move|p1a: Whim|Tailwind|p1a: Whim"
+    )
+    p2 = _turn2(blocked, "p2")
+    assert p2.taken[1] == C.Action(1, "move", move="moonblast") and 1 in p2.hidden
+    assert _turn2(blocked, "p1").taken[0] == C.Action(0, "move", move="tailwind")
+
+
+def test_an_animation_line_shows_the_hidden_target():
+    shown = "|t:|2\n|move|p2b: Fini|Moonblast||[still]\n|-anim|p2b: Fini|Moonblast|p1b: Rock"
+    p2 = _turn2(shown, "p2")
+    assert p2.taken[1].target == ("foe", 1) and 1 not in p2.hidden
+
+
+def test_struggle_is_forced_and_a_transformed_pokemon_uses_borrowed_moves():
+    assert (
+        _turn2("|t:|2\n|move|p2b: Fini|Struggle|p1a: Whim", "p2").taken[1] == "forced"
+    )
+    copied = (
+        "|t:|2\n|-transform|p1a: Whim|p2a: Inci\n|move|p1a: Whim|Fake Out|p2a: Inci"
+    )
+    assert _turn2(copied, "p1").taken[0] == "transformed"
+
+
+def test_the_check_counts_hidden_targets_apart():
+    blocked = "|t:|2\n|move|p2b: Fini|Moonblast||[still]\n|-fail|p2b: Fini"
+    counts = C.check(log(T1, blocked), DEX)
+    assert counts["target_hidden"] == 1 and counts["out"] == 0
+
+
+def test_curse_may_target_its_user_when_not_a_ghost():
+    dex = Dex(
+        species={},
+        moves={"curse": {"target": "normal", "category": "Status"}},
+        items={},
+    )
+    sheet = (SheetMon(1, "chesnaught", "", "", ("curse",), ""),)
+    me = [
+        {"species": "chesnaught", "active": True, "fainted": False, "hp_fraction": 1.0}
+    ]
+    foe = [{"species": "x", "active": True, "fainted": False, "hp_fraction": 1.0}]
+    targets = {a.target for a in C.options(me, foe, sheet, dex, brought={0})[0]}
+    assert targets == {("foe", 0), None}
+
+
+def test_a_lead_transformed_by_imposter_uses_borrowed_moves_until_it_leaves():
+    lg = log(T1, "|t:|2\n|move|p1a: Whim|Fake Out|p2a: Inci").replace(
+        "|turn|1",
+        "|-transform|p1a: Whim|p2a: Inci|[from] ability: Imposter\n|turn|1",
+        1,
+    )
+    t2 = {t.role: t for t in C.turns(lg, DEX) if t.turn == 2}
+    assert t2["p1"].taken[0] == "transformed"
+
+
+def test_a_confusion_self_hit_hides_the_choice():
+    hurt = "|t:|2\n|-activate|p1a: Whim|confusion\n|-damage|p1a: Whim|80/100|[from] confusion"
+    assert _turn2(hurt, "p1").taken[0] == "confused"
