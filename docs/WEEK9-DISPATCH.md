@@ -1,7 +1,7 @@
 # Week 9 — Dispatch Brief (start M5: the choices, the opponent's likely reply, what can happen)
 
-**Status:** drafted 5 Nov 2026 from the PO's decisions on the Week 8 report. Starts
-when the PO has answered the two questions at the end.
+**Status:** drafted 5 Nov 2026 from the PO's decisions on the Week 8 report. The PO
+answered its two questions on 6 Nov (decisions 6 and 7); started 6 Nov.
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -41,6 +41,16 @@ sample. Week 10 runs it on everything and adds the other decision points.
    team preview, as a real closed-sheet game does (Task 0).
 4. **v4 on every training game** runs on the PO's computer (decision 1).
 5. **Next milestone: M5,** decision versus luck, on v4.
+
+**On this brief (PO, 6 Nov 2026):**
+
+6. **The decision is measured against the win probability before the turn,** so
+   the parts add up exactly. "Cost against best" and "cost against average" are
+   reported beside it (§4).
+7. **The swing is split three ways:** your decision, their decision, the dice.
+
+DEFINITIONS §3 needs changing to match. The proposed wording is at the end of this
+brief. DEFINITIONS is the PO's document, so it is changed only once he approves.
 
 ## Tasks
 
@@ -162,26 +172,32 @@ sample. Week 10 runs it on everything and adds the other decision points.
 - **The M7 report** (paste a replay, get its biggest swings).
 - **Your own team's spreads** and re-scoring your games with other spreads.
 
-## For the PO before starting
+## Proposed DEFINITIONS §3 (for the PO's approval)
 
-1. **Making the parts add up.** DEFINITIONS §3 says decision plus luck must equal
-   the whole swing, every time. But it measures the decision against the best or
-   the average choice, and those do not start from the same place as the swing
-   (the win probability before the turn). So the parts cannot add up exactly.
-   - **(a) Recommended:** measure the decision against the win probability before
-     the turn. In effect, that is what a typical player gets from this position.
-     The parts then add up exactly. "Cost against best" and "cost against average"
-     are reported beside it, as §4 asks, and do not need to add up.
-   - **(b)** Keep §3 as written and add a third "model gap" part to balance it.
+> ## 3. The split: your decision, their decision, the dice
+>
+> Every `WPA` decomposes into exactly three components. All three are from the
+> analysed player's side. Write:
+> - `WP(before)` for the win probability at the decision point;
+> - `E[WP | your choice]` for the expected `WP` after the turn, averaged over the
+>   opponent's likely replies (§7) and every random outcome (§8);
+> - `E[WP | your choice, their choice]` for the same, averaged over random outcomes
+>   only.
+>
+> The three components are:
+> - **Your decision** = `E[WP | your choice] − WP(before)`. *Did you choose well,
+>   compared with what this position usually gives?* Over typical play it averages
+>   to about zero.
+> - **Their decision** = `E[WP | your choice, their choice] − E[WP | your choice]`.
+>   *Did their actual reply do better or worse than their likely replies?* It is
+>   negative when they read you well.
+> - **The dice** = `WP(after) − E[WP | your choice, their choice]`. *Did the random
+>   outcomes in §8 cooperate?*
+>
+> **Conservation:** your decision + their decision + the dice = `WPA`, at every
+> decision point, in every game, with no exceptions. Tolerance ±0.001 for floating
+> point only. A conservation failure is a P1 bug, not a rounding note.
 
-   Either way DEFINITIONS §3 needs one line changed. Shall I draft it for your
-   approval?
-2. **Their choice is not luck.** §8 says the opponent's behaviour is not luck, but
-   §3's formula puts it in the luck part. With the resolver it can be split out:
-   - **your decision:** what your choice was worth on average;
-   - **their decision:** what their actual reply did, compared with their likely
-     replies;
-   - **the dice:** rolls, critical hits, misses and the rest of §8.
-
-   The three add up exactly. **Recommended:** a coaching tool should tell "they
-   read you" apart from "you got unlucky".
+And §4's first line becomes: "Beside the split in §3 we report two more numbers,
+always both, never one alone." The rest of §4 is unchanged. These two numbers are
+not part of the split, and they do not need to add up.
