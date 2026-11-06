@@ -272,3 +272,52 @@ the model trained on the v4 table without H, I and J.
    Building takes about as long as v3's full table.
 5. **Next milestone: M5, decision versus luck,** on v4: scoring the choice actually
    made against the alternatives.
+
+---
+
+## Addendum, 6 November: v4 on every training game, and the test split
+
+The PO ran runbook Section 17, step 9, on his own computer:
+- the full table, 88,901 games in about 2½ hours at 4 workers;
+- training, with the Reg M-B correction cross-fitted on 1,824 training sets
+  (temperature 0.957, which leaves the out-of-fold score unchanged);
+- then the fifth test opening, logged against `ea43fcb`.
+
+Before the opening, the gate was changed to allow for sample size, as the PO
+decided (`c4b1ff1`).
+
+**Validation:**
+
+| | v4, every game | v3, every game |
+|---|---|---|
+| Reg M-A | **0.1816** | 0.1839 |
+| Reg M-B (pooled) | **0.1663** | 0.1703 |
+
+The gate passes in both formats. Reg M-B has two bins more than 0.05 off, with
+the same lean these 199 sets always show. Under the new rule both are reported,
+not failed, because their intervals reach back within 0.05.
+
+**Test split (the fifth opening):**
+
+| test split | decision points | sets | v4, every game | v3 (Week 7, 20% sample) | v0 | v4 - v0 (95% interval) |
+|---|---|---|---|---|---|---|
+| Reg M-A | 170,644 | 5,108 | **0.1826** | 0.1874 | 0.2091 | -0.0265 (-0.0281 to -0.0249) |
+| Reg M-B (pooled) | 8,917 | 237 | **0.1810** | 0.1905 | 0.2130 | -0.0320 (-0.0388 to -0.0252) |
+
+- **Both formats pass on test.** Every calibration bin is within 0.013 in Reg M-A
+  and within 0.031 in Reg M-B. Reg M-B would pass even under the old strict rule.
+  In Week 7 it failed four bins on test.
+- **The Reg M-B question is settled.** The correction learned from the training
+  sets is almost none. On 237 sets the model has never seen, it is well
+  calibrated. So the lean seen at every validation run belongs to those 199
+  validation sets, not to the model.
+- **Validation and test agree in Reg M-A** (0.1816 and 0.1826). The Reg M-B test
+  sets are harder for every model, v0 included. Measured against v0, the gain is
+  similar in both: -0.0370 on validation, -0.0320 on test.
+- **Against Week 7's test numbers** the improvement mixes two changes: v4's new
+  features and training on every game. The Week 8 ablation priced the features on
+  their own. This opening is the check that the whole thing holds up on new
+  games.
+
+The test split has now been opened 5 times, all logged in
+`models/test_openings.json`.

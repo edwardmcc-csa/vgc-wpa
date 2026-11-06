@@ -50,8 +50,9 @@ sample. Week 10 runs it on everything and adds the other decision points.
       items, abilities and moves stay hidden until revealed, and their natures and
       spreads stay hidden. Tests first. Rebuild the blank table, retrain one-sided,
       and report the loss against full sheets beside Week 8's.
-- [ ] **The PO's full-data v4 and the test opening:** the results are folded into
-      this week's report, per format, against Week 7's test numbers.
+- [x] **The PO's full-data v4 and the test opening:** the results are folded into
+      this week's report, per format, against Week 7's test numbers. *Done 6 Nov:
+      both formats pass on test (Week 8 report, addendum).*
 
 ### Task 1 — The choices on offer
 - [ ] At each move-selection decision point, for each of the player's active

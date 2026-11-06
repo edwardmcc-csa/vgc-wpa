@@ -1,8 +1,8 @@
 # Week 8 — Dispatch Brief (finish M4b: who was brought, Bo3 memory, what each side can do, the whole board)
 
 **Status:** drafted 30 Oct 2026 from the PO's decisions after the Week 7 report.
-Started 4 Nov 2026 (PO: go). Reported 5 Nov 2026 (`docs/WEEK8-REPORT.md`); two
-items wait for the PO.
+Started 4 Nov 2026 (PO: go). Reported 5 Nov 2026 (`docs/WEEK8-REPORT.md`); the
+full-data run and the test opening followed on 6 Nov (its addendum).
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -109,13 +109,14 @@ damage uses only its locked move.
       predict that fold. On those out-of-fold predictions, fit one number (a
       temperature that sharpens or softens every prediction alike, so the model
       stays symmetric). Apply it to the pooled model's Reg M-B predictions.
-- [ ] Reg M-A on the 20% sample here and on the full set on the PO's computer.
-      *The 20% sample is done; the full set is runbook Section 17, step 9.*
+- [x] Reg M-A on the 20% sample here and on the full set on the PO's computer.
+      *Full set run 5-6 Nov (Week 8 report, addendum).*
       Reg M-B uses the pooled model, without recalibration.
 - [x] **Ablation:** v3 against each addition (Tasks 1–2, Task 3, Task 4) as paired
       differences per format. Gate on validation.
-- [ ] The test split is opened once for v4 if the PO agrees. It would be the fifth
-      opening, logged. *Waiting for the PO (Week 8 report, decision 1).*
+- [x] The test split is opened once for v4 if the PO agrees. It would be the fifth
+      opening, logged. *Opened 6 Nov on the full-data model (Week 8 report,
+      addendum).*
 - [x] Expert claims re-scored. EC-001's reserve threat now comes from the likely
       back two.
 
