@@ -623,11 +623,12 @@ def test_a_blank_sheet_build_runs_and_knows_less(calc, dex, tmp_path):
     blank = F.read_rows(next((tmp_path / "blank").rglob("*.npz")))
     assert len(full.y) == len(blank.y) > 0
     pos = [full.columns.index(f"e_their_unseen_pos{k}") for k in range(1, 7)]
-    assert full.X[:, pos].sum() > 0 and blank.X[:, pos].sum() == 0
+    assert full.X[:, pos].sum() > 0  # positions are public at team preview
+    assert (full.X[:, pos] == blank.X[:, pos]).all()
     their = [i for i, c in enumerate(full.columns) if c.startswith("g_their")]
     assert blank.X[:, their].sum() < full.X[:, their].sum()  # fewer moves known
     F.build_shard_from_logs(0, 1, out_dir=tmp_path / "both", blank_both=True, **common)
     both = F.read_rows(next((tmp_path / "both").rglob("*.npz")))
-    ours = [full.columns.index(f"e_our_unseen_pos{k}") for k in range(1, 7)]
+    ours = [i for i, c in enumerate(full.columns) if c.startswith("g_our")]
     assert len(both.y) == len(full.y)
-    assert blank.X[:, ours].sum() > 0 and both.X[:, ours].sum() == 0
+    assert both.X[:, ours].sum() < blank.X[:, ours].sum()  # our moves hidden too

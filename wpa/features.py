@@ -1057,33 +1057,26 @@ def rows_for_file(
 # Week 8 Task 5: the opponent's sheet blanked
 # --------------------------------------------------------------------------
 
-_HIDDEN = SheetMon(0, "", "", "", (), "")
-
 
 def _revealed(p: Mapping) -> bool:
     return bool(p["active"] or p["fainted"] or p["hp_fraction"] > 0)
 
 
 def public_sheet(sheet: Sequence[SheetMon], side: Sequence[Mapping]) -> tuple:
-    """The opponent's sheet as the log has shown it so far: a Pokemon's species
-    once it has appeared, and only the moves, item and ability revealed; no
-    sheet order and no nature. Unseen ones are blank."""
-    out = []
-    for mon, p in zip(sheet, side):
-        if not _revealed(p):
-            out.append(_HIDDEN)
-            continue
-        out.append(
-            SheetMon(
-                0,
-                mon.species,
-                p.get("rev_item") or "",
-                p.get("rev_ability") or "",
-                tuple(p.get("rev_moves") or ()),
-                "",
-            )
+    """A sheet as the log has shown it so far. Team preview shows the six species
+    in sheet order (PO, 5 Nov 2026: kept, as in a real closed-sheet game); after
+    that, only the moves, item and ability revealed, and never the nature."""
+    return tuple(
+        SheetMon(
+            mon.position,
+            mon.species,
+            p.get("rev_item") or "",
+            p.get("rev_ability") or "",
+            tuple(p.get("rev_moves") or ()),
+            "",
         )
-    return tuple(out)
+        for mon, p in zip(sheet, side)
+    )
 
 
 def _blank_side(side: Sequence[Mapping]) -> list[dict]:
@@ -1091,7 +1084,7 @@ def _blank_side(side: Sequence[Mapping]) -> list[dict]:
     for p in side:
         q = dict(p)
         if not _revealed(p):
-            q.update(species="", item="")
+            q["item"] = ""
         elif not (p.get("item") and p.get("item") == p.get("rev_item")):
             q["item"] = ""
         out.append(q)
@@ -1099,9 +1092,9 @@ def _blank_side(side: Sequence[Mapping]) -> list[dict]:
 
 
 def blank_state(s: Mapping, both: bool = False) -> dict:
-    """The board with the opponent's unseen species hidden, and any item of theirs
-    the log has not shown (or that is gone) left out. `both`: our side too, as a
-    spectator sees it."""
+    """The board with any item of the opponent's that the log has not shown (or
+    that is gone) left out. Species stay: team preview shows them. `both`: our
+    side too, as a spectator sees it."""
     out = {**s, "opp_pokemon": _blank_side(s["opp_pokemon"])}
     if both:
         out["our_pokemon"] = _blank_side(s["our_pokemon"])
@@ -1592,16 +1585,18 @@ def damage_contexts(
 
 def _blank_contexts(tag, log, role, sheets, dex, calc, store, bring, both=False):
     """For the blanked run: spreads from the statistics alone (no refining), for
-    the sheets as they stand at each decision; bring odds for our own side only,
-    and none when `both` sheets are blanked."""
+    the sheets as they stand at each decision; bring odds for both sides, from
+    the species team preview shows."""
     from wpa.formats import format_of
     from wpa.spreads import Belief, priors_for
 
     usage = store.for_game(tag, log)
     odds = None
-    if bring is not None and not both:
-        own = tuple(m.species for m in sheets[role])
-        odds = {role: bring.odds(format_of(tag), own, None)}
+    if bring is not None:
+        odds = {
+            r: bring.odds(format_of(tag), tuple(m.species for m in sheets[r]), None)
+            for r in sheets
+        }
     cache: dict = {}
 
     def context_for(_k, public):
