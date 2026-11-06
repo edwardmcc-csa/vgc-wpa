@@ -1,6 +1,6 @@
 # DEFINITIONS
 
-**Status:** approved by the product owner. Revision 7 — adds §15 (two formats).
+**Status:** approved by the product owner. Revision 8 — §3 rewritten as a three-way split, and §4's first line to match (PO, 6 Nov 2026). Revision 7 added §15 (two formats).
 **Applies to:** milestones M4, M4b, M5, M7.
 
 This document is the contract. If code and this document disagree, the code is wrong.
@@ -22,18 +22,25 @@ For any decision point, `WPA = WP(after) − WP(before)`.
 
 Positive means the player's position improved. Summed over a whole game, WPA telescopes to `1.0 − WP(start)` for the winner. That is a useful end-to-end check.
 
-## 3. The split: decision versus luck
+## 3. The split: your decision, their decision, the dice
 
-Every `WPA` decomposes into exactly two components.
+Every `WPA` decomposes into exactly three components. All three are from the analysed player's side. Write:
 
-- **Decision WPA** = the expected `WP` of the action the player chose, averaged over every random outcome, minus the expected `WP` of the baseline action (§4). *Did they choose well?*
-- **Luck WPA** = the `WP` of what actually happened, minus the expected `WP` of the action they chose. *Did the dice cooperate?*
+- `WP(before)` for the win probability at the decision point;
+- `E[WP | your choice]` for the expected `WP` after the turn, averaged over the opponent's likely replies (§7) and every random outcome (§8);
+- `E[WP | your choice, their choice]` for the same, averaged over random outcomes only.
 
-**Conservation:** `Decision WPA + Luck WPA = WPA`, at every decision point, in every game, with no exceptions. Tolerance ±0.001 for floating point only. A conservation failure is a P1 bug, not a rounding note.
+The three components are:
+
+- **Your decision** = `E[WP | your choice] − WP(before)`. *Did you choose well, compared with what this position usually gives?* Over typical play it averages to about zero.
+- **Their decision** = `E[WP | your choice, their choice] − E[WP | your choice]`. *Did their actual reply do better or worse than their likely replies?* It is negative when they read you well.
+- **The dice** = `WP(after) − E[WP | your choice, their choice]`. *Did the random outcomes in §8 cooperate?*
+
+**Conservation:** your decision + their decision + the dice = `WPA`, at every decision point, in every game, with no exceptions. Tolerance ±0.001 for floating point only. A conservation failure is a P1 bug, not a rounding note.
 
 ## 4. Baseline for Decision WPA
 
-We report **two** numbers, always both, never one alone:
+Beside the split in §3 we report two more numbers, always both, never one alone. They are not part of the split, and they do not need to add up:
 
 - **Cost vs. best** — against the single best action available. This is the coaching number: "that switch cost you 14%."
 - **Cost vs. average** — against the mean over legal actions. This is the fairness number, and it stops the tool telling a competent player they misplayed every single turn because they weren't a solver.

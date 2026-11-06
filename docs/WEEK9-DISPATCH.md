@@ -49,8 +49,8 @@ sample. Week 10 runs it on everything and adds the other decision points.
    reported beside it (§4).
 7. **The swing is split three ways:** your decision, their decision, the dice.
 
-DEFINITIONS §3 needs changing to match. The proposed wording is at the end of this
-brief. DEFINITIONS is the PO's document, so it is changed only once he approves.
+DEFINITIONS §3 needed changing to match. The PO approved the wording at the end of
+this brief on 6 Nov, and DEFINITIONS is now at revision 8.
 
 ## Tasks
 
@@ -172,7 +172,7 @@ brief. DEFINITIONS is the PO's document, so it is changed only once he approves.
 - **The M7 report** (paste a replay, get its biggest swings).
 - **Your own team's spreads** and re-scoring your games with other spreads.
 
-## Proposed DEFINITIONS §3 (for the PO's approval)
+## DEFINITIONS §3 as approved (PO, 6 Nov 2026)
 
 > ## 3. The split: your decision, their decision, the dice
 >
