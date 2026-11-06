@@ -182,10 +182,32 @@ class _World:
     dealt: int = 0
 
     def clone(self, p: float | None = None) -> _World:
-        w = copy.deepcopy(self)
-        if p is not None:
-            w.p = p
-        return w
+        f = self.fld
+        return _World(
+            self.p if p is None else p,
+            {
+                r: [dict(m, boosts=dict(m["boosts"])) for m in ms]
+                for r, ms in self.sides.items()
+            },
+            Field(
+                f.weather,
+                f.weather_left,
+                f.terrain,
+                f.terrain_left,
+                f.trickroom,
+                {r: dict(v) for r, v in f.sides.items()},
+            ),
+            set(self.partial),
+            set(self.protected),
+            set(self.guards),
+            set(self.flinched),
+            set(self.acted),
+            dict(self.redirect),
+            set(self.helped),
+            dict(self.replaced),
+            set(self.hit),
+            self.dealt,
+        )
 
     def key(self, resolution: float | None) -> tuple:
         def hp(x: float) -> float:
@@ -223,10 +245,14 @@ class _World:
         )
 
 
-def _merge(worlds: Sequence[_World], resolution: float | None) -> list[_World]:
+def _merge(
+    worlds: Sequence[_World], resolution: float | None, prune: float = 0.0
+) -> list[_World]:
+    """Identical boards merged (hit points to `resolution`, if given); boards
+    less likely than `prune` dropped (the caller renormalises)."""
     out: dict[tuple, _World] = {}
     for w in worlds:
-        if w.p <= 0:
+        if w.p <= prune:
             continue
         k = w.key(resolution)
         if k in out:
@@ -238,6 +264,19 @@ def _merge(worlds: Sequence[_World], resolution: float | None) -> list[_World]:
 
 def _other(role: str) -> str:
     return "p2" if role == "p1" else "p1"
+
+
+def _mon_key(st: Mapping) -> tuple:
+    """What of one Pokemon can change a damage answer (hit points as the
+    calculator request coarsens them, with a margin)."""
+    return (
+        round(st["hp_fraction"], 2),
+        tuple(sorted(st["boosts"].items())),
+        st["status"],
+        st["item"],
+        st["mega"],
+        st.get("last_move", ""),
+    )
 
 
 class Resolver:
@@ -252,11 +291,17 @@ class Resolver:
         sheets: Mapping[str, Sequence[SheetMon]],
         spreads: Mapping[tuple[str, int], Spread],
         resolution: float | None = None,
+        prune: float = 0.0,
+        cap: int | None = None,
     ) -> None:
         self.dex, self.moves, self.calc = dex, moves, calc
         self.sheets, self.spreads = sheets, spreads
-        self.resolution = resolution
+        self.resolution, self.prune, self.cap = resolution, prune, cap
+        self.coarsest = resolution or 0.0  # the grid the last resolve needed
         self._hp: dict = {}
+        self._dmg: dict = {}  # damage answers by what changes them
+        self._spe: dict = {}
+        self.dropped = 0.0  # chance dropped by `prune` in the last resolve
 
     # ------------------------------------------------------------------ facts
 
@@ -313,6 +358,7 @@ class Resolver:
         fld: Field,
         actions: Mapping[str, Sequence[Action]],
     ) -> list[Outcome]:
+        self.coarsest = self.resolution or 0.0
         self._pending = {
             (r, a.user): a.move
             for r in ROLES
@@ -338,11 +384,26 @@ class Resolver:
                     nxt: list[_World] = []
                     for b in branch:
                         nxt += self._act(b, role, act)
-                    branch = _merge(nxt, self.resolution)
+                    branch = self._capped(_merge(nxt, self.resolution, self.prune))
                 out += branch
-        out = _merge([e for w in out for e in self._end_of_turn(w)], self.resolution)
+        out = _merge(
+            [e for w in out for e in self._end_of_turn(w)], self.resolution, self.prune
+        )
         total = sum(w.p for w in out)
+        self.dropped = max(0.0, 1.0 - total)
         return [Outcome(w.p / total, w.sides, w.fld, frozenset(w.partial)) for w in out]
+
+    def _capped(self, worlds: list[_World]) -> list[_World]:
+        """Over `cap` boards: merge on a coarser hit-point grid until under it.
+        Nothing is dropped; the grid used is kept in `coarsest`."""
+        if self.cap is None or len(worlds) <= self.cap:
+            return worlds
+        res = max(self.resolution or 0.01, 0.01)
+        while len(worlds) > self.cap and res < 0.5:
+            res *= 2
+            worlds = _merge(worlds, res)
+        self.coarsest = max(self.coarsest, res)
+        return worlds
 
     # ------------------------------------------------------------- switching
 
@@ -351,15 +412,28 @@ class Resolver:
         mon = self.sheets[role][idx]
         from wpa.features import _board_state
 
-        req = speed_request(
-            mon,
-            _board_state(st),
-            self.spread(role, idx),
-            self.dex,
-            {"weather": w.fld.weather, "terrain": w.fld.terrain},
+        key = (
+            role,
+            idx,
+            w.fld.weather,
+            w.fld.terrain,
             bool(w.fld.sides[role].get("tailwind")),
+            tuple(sorted(st["boosts"].items())),
+            st["status"],
+            st["item"],
+            st["mega"],
         )
-        return float(self.calc.run([req])[0].get("speed", 0))
+        if key not in self._spe:
+            req = speed_request(
+                mon,
+                _board_state(st),
+                self.spread(role, idx),
+                self.dex,
+                {"weather": w.fld.weather, "terrain": w.fld.terrain},
+                bool(w.fld.sides[role].get("tailwind")),
+            )
+            self._spe[key] = float(self.calc.run([req])[0].get("speed", 0))
+        return self._spe[key]
 
     def _switches(self, w: _World, actions) -> list[_World]:
         sw = [(r, a) for r in ROLES for a in actions.get(r, ()) if a.kind == "switch"]
@@ -893,6 +967,19 @@ class Resolver:
         for s in SCREENS:
             f[s] = bool(w.fld.sides[tgt[0]].get(s)) and tgt[0] != role
         f["helpinghand"] = (role, a.user) in w.helped
+        key = (
+            role,
+            a.user,
+            tgt,
+            a.move,
+            spread,
+            crit,
+            tuple(sorted(f.items())),
+            _mon_key(st),
+            _mon_key(t),
+        )
+        if key in self._dmg:
+            return self._dmg[key]
         req = damage_request(
             self.sheets[role][a.user],
             _board_state(st),
@@ -906,7 +993,8 @@ class Resolver:
             crit=crit,
             field=f,
         )
-        return self.calc.run([req])[0]
+        self._dmg[key] = self.calc.run([req])[0]
+        return self._dmg[key]
 
     def _hit_distribution(
         self, w: _World, role: str, a: Action, m: Mapping, tgt, spread: bool
@@ -979,17 +1067,44 @@ class Resolver:
                 if acc < 1:
                     miss = b.clone(b.p * (1 - acc))
                     nxt.append(miss)
-                for pd, dmg in self._hit_distribution(b, role, a, m, tgt, spread):
+                for pd, dmg in self._grouped(b, role, a, m, tgt, spread):
                     h = b.clone(b.p * acc * pd)
                     self._apply_hit(h, role, a, m, tgt, dmg)
                     nxt.append(h)
-            out = _merge(nxt, self.resolution)
+            out = self._capped(_merge(nxt, self.resolution, self.prune))
         for b in out:
             self._after_attack(b, role, a, m)
         out = [x for b in out for x in self._secondaries(b, role, a, m)]
         if m.get("selfSwitch"):
             out = [x for b in out for x in self._self_switch(b, role, a.user)]
         return out
+
+    def _grouped(
+        self, w: _World, role: str, a: Action, m: Mapping, tgt, spread: bool
+    ) -> list[tuple[float, int]]:
+        """The hit distribution with damage values that leave the target on the
+        same hit points merged (on the `resolution` grid, if any): one board each
+        instead of one per roll. Exact by default, since equal hit points are an
+        equal board."""
+        t = w.sides[tgt[0]][tgt[1]]
+        max_hp = self.max_hp(*tgt)
+        hp = round(t["hp_fraction"] * max_hp)
+        groups: dict[tuple, list] = {}
+        for pd, dmg in self._hit_distribution(w, role, a, m, tgt, spread):
+            new = max(0, hp - dmg)
+            if new == 0 and hp == max_hp and dmg > 0:
+                new = (
+                    1
+                    if t.get("item") == "focussash"
+                    or self.ability(tgt[0], tgt[1], t) == "sturdy"
+                    else 0
+                )
+            frac = new / max_hp
+            res = self.resolution
+            key = (new == 0, round(frac / res) if res else new)
+            g = groups.setdefault(key, [0.0, dmg])
+            g[0] += pd
+        return [(p, dmg) for p, dmg in groups.values()]
 
     def _sucker_ok(self, w: _World, role: str, a: Action) -> bool:
         tgt = self._targets(w, role, a, self.move(a.move))
@@ -1134,7 +1249,7 @@ class Resolver:
                     elif vol:
                         yes.partial.add(vol)
                 nxt.append(yes)
-            out = _merge(nxt, self.resolution)
+            out = _merge(nxt, self.resolution, self.prune)
         return out
 
     # ----------------------------------------------------------- end of turn

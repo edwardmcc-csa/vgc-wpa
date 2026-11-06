@@ -256,3 +256,25 @@ def test_a_faster_pokemon_knocked_out_first_does_not_act(dex, moves, calc):
     outs = resolver(dex, moves, calc).resolve(b, R.Field(), acts)
     assert all(o.sides["p2"][0]["fainted"] for o in outs)
     assert all(o.sides["p1"][1]["hp_fraction"] == 1.0 for o in outs)
+
+
+def test_a_cap_merges_boards_on_a_coarser_grid_and_keeps_every_chance(dex, moves, calc):
+    acts = {
+        "p1": (Action(0, "move", move="earthquake"), Action(1, "move", move="protect")),
+        "p2": (
+            Action(0, "move", move="swordsdance"),
+            Action(1, "move", move="moonblast", target=("foe", 0)),
+        ),
+    }
+    full = R.Resolver(dex, moves, calc, SHEETS, SPREADS).resolve(
+        board(), R.Field(), acts
+    )
+    rv = R.Resolver(dex, moves, calc, SHEETS, SPREADS, resolution=0.01, cap=4)
+    small = rv.resolve(board(), R.Field(), acts)
+    assert len(small) < len(full) and rv.coarsest > 0.01
+    assert abs(sum(o.prob for o in small) - 1) < 1e-9
+
+    def ko(outs):
+        return p_of(outs, lambda o: o.sides["p1"][0]["fainted"])
+
+    assert abs(ko(small) - ko(full)) < 1e-9  # knock-outs are never merged away
