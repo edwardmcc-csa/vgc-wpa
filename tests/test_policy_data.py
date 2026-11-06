@@ -34,3 +34,26 @@ def test_moves_are_counted_when_offered_and_when_chosen():
     PD.count_moves(log(T1), DEX, (offered, chosen))
     assert chosen["fakeout"] == 1 and chosen["rockslide"] == 1
     assert offered["fakeout"] >= 1 and offered["moonblast"] >= 1
+
+
+def test_cutting_the_game_after_a_turn_changes_nothing_before_it():
+    from tests.test_board_actions import T3_OTHER
+
+    def examples(text):
+        return PD.examples_for_game(
+            "gen9championsvgc2026regma-1",
+            text,
+            "regma",
+            DEX,
+            MOVES,
+            EMPTY,
+            calc=None,
+            store=None,
+            bring=None,
+            rates={},
+        )
+
+    whole, cut = examples(log(T1, T3_OTHER)), examples(log(T1))
+    assert len(whole) > len(cut) > 0
+    for (xa, ca), (xb, cb) in zip(whole, cut):
+        assert ca == cb and (xa == xb).all()
