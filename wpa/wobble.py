@@ -95,7 +95,7 @@ def main() -> None:  # pragma: no cover - runs for hours on real data
     from wpa.evaluate import V2_GRID_ENTRY, _temperature, _v2_tables, apply_temperature
     from wpa.model import GRID, fit
 
-    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p = argparse.ArgumentParser(description="How much win probability wobbles (§10.2)")
     p.add_argument("--features", type=Path, required=True)
     p.add_argument("--models", type=Path, required=True, help="the real models")
     p.add_argument("--groups", required=True)
