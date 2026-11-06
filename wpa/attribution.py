@@ -737,19 +737,27 @@ def _pts(xs) -> str:
     )
 
 
-def _swing_line(r: Mapping) -> str:
+def _turn_line(pair: Mapping[str, Mapping]) -> str:
+    """One turn, both players: p1's swing, then each player's split."""
+
     def pt(x: float) -> str:
         return f"{100 * x:+.0f}"
 
-    text = (
-        f"    {REPLAY}{r['tag']} turn {r['turn']} {r['role']}: "
-        f"swing {pt(r['after'] - r['before'])} = yours {pt(r['yours'])}, "
-        f"theirs {pt(r['theirs'])}, dice {pt(r['dice'])}"
-    )
-    if r.get("vs_best") is not None:
-        text += f"; vs best {pt(r['vs_best'])}, vs average {pt(r['vs_average'])}"
-    if not r["found"]:
-        text += " (board not among the resolver's)"
+    r1 = pair.get("p1") or pair["p2"]
+    sw = r1["after"] - r1["before"] if "p1" in pair else r1["before"] - r1["after"]
+    text = f"    {REPLAY}{r1['tag']} turn {r1['turn']}: p1 {pt(sw)}"
+    for role in ("p1", "p2"):
+        r = pair.get(role)
+        if r is None:
+            continue
+        text += (
+            f"; {role} yours {pt(r['yours'])}, theirs {pt(r['theirs'])}, "
+            f"dice {pt(r['dice'])}"
+        )
+        if r.get("vs_best") is not None:
+            text += f" (vs best {pt(r['vs_best'])}, vs average {pt(r['vs_average'])})"
+    if not r1["found"]:
+        text += "; the board that happened is not among the resolver's"
     return text
 
 
@@ -802,10 +810,18 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
         f"  time per turn: median {np.median(secs):.1f} s, mean {secs.mean():.1f} s, "
         f"slowest {secs.max():.0f} s",
         "",
-        f"  the {top} biggest swings (points, from the player's side):",
+        f"  the {top} biggest swings (points; p1's swing, then each player's split):",
     ]
-    big = sorted(ok, key=lambda r: -abs(r["after"] - r["before"]))[:top]
-    return lines + [_swing_line(r) for r in big] + [""]
+    turns_: dict = {}
+    for r in ok:
+        turns_.setdefault((r["tag"], r["turn"]), {})[r["role"]] = r
+    big = sorted(
+        turns_.values(),
+        key=lambda d: -abs(
+            next(iter(d.values()))["after"] - next(iter(d.values()))["before"]
+        ),
+    )[:top]
+    return lines + [_turn_line(d) for d in big] + [""]
 
 
 def report(path: Path, top: int = 10) -> str:

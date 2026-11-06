@@ -1028,6 +1028,73 @@ correction learned from its training sets. It needs everything from Section 16.
 
 ---
 
+## 18. Week 9: the choices, the opponent's likely reply, what can happen, decision versus luck
+
+This week adds the pieces that look inside a turn:
+- **the choices on offer** at each decision point (`wpa.choices`);
+- **what can happen** when both sides' choices play out, every damage roll,
+  critical hit, miss and Speed tie with its chance (`wpa.resolver`);
+- **the opponent's likely reply**, learned from the training games
+  (`wpa.policy`);
+- **decision versus luck**: each turn's swing split into your decision, their
+  decision and the dice (`wpa.attribution`, DEFINITIONS §3), with cost against
+  the best choice and against the average choice beside it (§4).
+
+It needs everything from Section 17, including `models_v4_full` and
+`models_v4\bring.json`. The resolver reads each move's facts from
+`build\moves_regma.json` and `build\moves_regmb.json`, which are already in
+`build`. Without them, leave `--moves-dir build` off each command below and the
+facts are read from Showdown instead (a little slower to start).
+
+1. **The opponent choice model** (about 15 minutes):
+   ```
+   python -m wpa.policy --moves-dir build
+   ```
+   It prints, per format, how it does against a uniform guess on the validation
+   games, and saves `models_v4\policy.json` and `models_v4\policy.txt`. (A copy
+   made here is already in `models_v4`; this remakes it on your computer.)
+
+2. **Decision versus luck on the validation sample** (overnight; 300 Reg M-A sets
+   and all 199 Reg M-B sets, the same sets every run):
+   ```
+   python -m wpa.attribution --models models_v4_full --moves-dir build --workers 6 --alternatives-every 3 --out reports/attribution_week9.jsonl
+   ```
+   - `--workers 6` uses six of your eight cores. Use fewer if the computer is
+     needed for something else.
+   - `--alternatives-every 3` works out cost against the best and the average
+     choice in every third game; it is what makes a turn slow (about five times
+     slower). `--alternatives-every 1` does it everywhere.
+   - It can be stopped (Ctrl+C) and run again with the same command: games
+     already done are skipped.
+
+   At the end it prints the summary and saves it as
+   `reports\attribution_week9.txt`. To see the summary of what is done so far:
+   ```
+   python -m wpa.attribution --report --out reports/attribution_week9.jsonl
+   ```
+
+3. **Blank sheets with team preview** (report only; replaces Section 17 step 6's
+   blank build). The opponent's six species are known, as team preview shows
+   them; their items, abilities, moves and spreads stay hidden until revealed.
+   New folders, so Week 8's blank models stay for comparison:
+   ```
+   python -m wpa.features --from-logs logs_shards --out features_v4_preview --groups ABCDEFGHIJ --usage usage_stats --bring models_v4/bring.json --blank --train-sample 0.2 --shards 64 --workers 4
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHIJ --features features_v4_preview --models models_v4_preview --one-sided
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFGHIJ --features features_v4_preview --models models_v4_preview --one-sided
+   python -m wpa.evaluate v2-report --features features_v4_preview --models models_v4_preview --full ABCDEFGHIJ
+   ```
+
+4. **How much win probability wobbles** (DEFINITIONS §10.2; several hours a
+   format). Three models retrained on resamples of the training sets:
+   ```
+   python -m wpa.wobble --features features_v4 --models models_v4 --groups ABCDEFGHIJ --format regma --resamples 3 --out wobble_v4
+   python -m wpa.wobble --features features_v4 --models models_v4 --groups ABCDEFGHIJ --format pooled --resamples 3 --out wobble_v4
+   ```
+   Each prints the median and 90th percentile wobble in points, against the
+   0.5-point threshold, and saves it in `wobble_v4`.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
