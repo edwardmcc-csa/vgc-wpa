@@ -595,6 +595,27 @@ def _two_hits(rolls: Sequence[float], hp: float) -> float:
     return sum(n - bisect_left(s, hp - a) for a in s) / (n * n)
 
 
+# answers of `_matchups` for one attacker and one defender, by everything they
+# depend on (the same answers, kept: boards that differ elsewhere ask again)
+_PAIRS: dict = {}
+_PAIRS_MAX = 500_000
+_NONE = (-1.0, -1.0, -1.0)
+# group G's answers for one attacker and one target, kept the same way
+_G_PAIRS: dict = {}
+
+
+def _state_key(st: Mapping) -> tuple:
+    return (
+        st.get("mega"),
+        st.get("item"),
+        tuple(sorted((st.get("boosts") or {}).items())),
+        st.get("status"),
+        st.get("hp"),
+        st.get("last_move"),
+        st.get("form"),
+    )
+
+
 def _group_g(
     s: Mapping,
     role: str,
@@ -620,7 +641,9 @@ def _group_g(
     screens = {"our": _screens(j.ours), "their": _screens(j.theirs)}
     active = {k: [r for r in v if r[0] == "active"] for k, v in rows.items()}
     auras = {r[1].ability for v in active.values() for r in v}
-    jobs = []  # (side, where, target index, spread move, request)
+    jobs = []  # (side, where, target index, spread move, move, attacker, request)
+    hits = []  # (side, where, target index, spread move, move, attacker, answer)
+    asked: dict = {}  # pair key -> the jobs' places, to keep their answers
     for side, rival in (("our", "their"), ("their", "our")):
         targets = active[rival]
         for where, a_mon, a_st, a_sp, a_key in rows[side]:
@@ -635,6 +658,24 @@ def _group_g(
                     "darkaura": "darkaura" in auras,
                     **{k: k in ally for k in ALLY_BOOSTS},
                 }
+                pk = (
+                    id(dex),
+                    a_mon,
+                    _state_key(a_st),
+                    a_sp.nature,
+                    a_sp.sps,
+                    d_mon,
+                    _state_key(d_st),
+                    d_sp.nature,
+                    d_sp.sps,
+                    tuple(sorted(f.items())),
+                    len(targets),
+                )
+                got = _G_PAIRS.get(pk)
+                if got is not None:
+                    hits += [(side, where, t_i, sp, mv, a_key, a) for sp, mv, a in got]
+                    continue
+                start = len(jobs)
                 for move in _usable_moves(a_mon, a_st):
                     m = dex.moves.get(move) or {}
                     if not m or m.get("category") == "Status":
@@ -656,12 +697,18 @@ def _group_g(
                         field=f,
                     )
                     jobs.append((side, where, t_i, spread, move, a_key, req))
+                asked[pk] = (start, len(jobs))
     answers = ctx.calc.run([x[-1] for x in jobs]) if jobs else []  # type: ignore[attr-defined]
+    if len(_G_PAIRS) > _PAIRS_MAX:
+        _G_PAIRS.clear()
+    for pk, (a, b) in asked.items():
+        _G_PAIRS[pk] = [(jobs[n][3], jobs[n][4], answers[n]) for n in range(a, b)]
+    hits += [(*x[:-1], ans) for x, ans in zip(jobs, answers)]
     best: dict = {}  # (side, where, target) -> best share
     ko: dict = {}
     two: dict = {}
     spread_sum: dict = {}  # (side, attacker, move) -> total share
-    for (side, where, t_i, spread, move, a_key, _r), ans in zip(jobs, answers):
+    for side, where, t_i, spread, move, a_key, ans in hits:
         rolls = ans.get("rolls")
         if not rolls or "error" in ans or ans.get("unknown"):
             continue
@@ -811,27 +858,51 @@ def _matchups(attackers, defenders, dex: Dex, field: Mapping, screens, ctx) -> d
     points, best chance to knock it out in one hit, in two hits); single target."""
     from wpa.spreads import damage_request
 
-    jobs = []
+    fkey = (
+        id(dex),
+        tuple(sorted(field.items())),
+        tuple(sorted((screens or {}).items())),
+    )
+    out: dict = {}
+    todo: dict = {}
     for _w, a_mon, a_st, a_sp, a_key in attackers:
         for _w2, d_mon, d_st, d_sp, d_key in defenders:
-            for move in _usable_moves(a_mon, a_st):
-                m = dex.moves.get(move) or {}
-                if not m or m.get("category") == "Status":
-                    continue
-                req = damage_request(
-                    a_mon,
-                    a_st,
-                    a_sp,
-                    d_mon,
-                    d_st,
-                    d_sp,
-                    move,
-                    dex,
-                    field={**field, **screens},
-                )
-                jobs.append((a_key, d_key, d_st["hp"], req))
+            pk = (
+                a_mon,
+                _state_key(a_st),
+                a_sp.nature,
+                a_sp.sps,
+                d_mon,
+                _state_key(d_st),
+                d_sp.nature,
+                d_sp.sps,
+                fkey,
+            )
+            got = _PAIRS.get(pk)
+            if got is None:
+                todo[(a_key, d_key)] = (pk, a_mon, a_st, a_sp, d_mon, d_st, d_sp)
+            elif got != _NONE:
+                out[(a_key, d_key)] = got
+    jobs = []
+    for (a_key, d_key), (_pk, a_mon, a_st, a_sp, d_mon, d_st, d_sp) in todo.items():
+        for move in _usable_moves(a_mon, a_st):
+            m = dex.moves.get(move) or {}
+            if not m or m.get("category") == "Status":
+                continue
+            req = damage_request(
+                a_mon,
+                a_st,
+                a_sp,
+                d_mon,
+                d_st,
+                d_sp,
+                move,
+                dex,
+                field={**field, **screens},
+            )
+            jobs.append((a_key, d_key, d_st["hp"], req))
     answers = ctx.calc.run([j[-1] for j in jobs]) if jobs else []
-    out: dict = {}
+    new: dict = {}
     for (a_key, d_key, hp, _r), ans in zip(jobs, answers):
         rolls = ans.get("rolls")
         if not rolls or "error" in ans or ans.get("unknown"):
@@ -840,8 +911,13 @@ def _matchups(attackers, defenders, dex: Dex, field: Mapping, screens, ctx) -> d
         share = min(1.0, (sum(rolls) / len(rolls)) / hp_now) if hp_now > 0 else 1.0
         ko = sum(1 for r in rolls if r >= hp_now) / len(rolls)
         two = _two_hits(rolls, hp_now)
-        b = out.get((a_key, d_key), (0.0, 0.0, 0.0))
-        out[(a_key, d_key)] = (max(b[0], share), max(b[1], ko), max(b[2], two))
+        b = new.get((a_key, d_key), (0.0, 0.0, 0.0))
+        new[(a_key, d_key)] = (max(b[0], share), max(b[1], ko), max(b[2], two))
+    if len(_PAIRS) > _PAIRS_MAX:
+        _PAIRS.clear()
+    for k, (pk, *_rest) in todo.items():
+        _PAIRS[pk] = new.get(k, _NONE)
+    out.update(new)
     return out
 
 
