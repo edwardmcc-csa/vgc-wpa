@@ -45,6 +45,22 @@ ROLES = ("p1", "p2")
 PROTECT_LIKE = PROTECT_MOVES | {"wideguard", "quickguard", "endure"}
 SCREENS = {"reflect": 5, "lightscreen": 5, "auroraveil": 5}
 SIDE_TIMED = {"tailwind": 4, **SCREENS, "safeguard": 5, "mist": 5}
+# abilities that stop the other side's priority moves aimed at their side
+QUEENLY = {"armortail", "dazzling", "queenlymajesty"}
+# move targets that are not aimed at a Pokemon of the other side
+NOT_AIMED = {
+    "self",
+    "allySide",
+    "foeSide",
+    "all",
+    "allies",
+    "allyTeam",
+    "adjacentAlly",
+    "adjacentAllyOrSelf",
+}
+# single-target moves, which Lightning Rod and Storm Drain can draw
+SINGLE = {"normal", "any", "adjacentFoe", "randomNormal"}
+RODS = {"Electric": "lightningrod", "Water": "stormdrain"}
 WEATHER_ROCKS = {
     "sunnyday": "heatrock",
     "raindance": "damprock",
@@ -627,6 +643,8 @@ class Resolver:
             return [w]
         if mv in {"fakeout", "firstimpression"} and not first_turn:
             return [w]  # it works only on the Pokemon's first turn in
+        if self._queenly(w, role, a, m):
+            return [w]  # Armor Tail, Dazzling, Queenly Majesty: the move fails
         if m.get("category") == "Status":
             return self._status(w, role, a, m)
         return self._attack(w, role, a, m)
@@ -687,10 +705,14 @@ class Resolver:
         side = foe if a.target[0] == "foe" else role
         who = self._current(w, (side, a.target[1]))
         tgt = w.sides[who[0]][who[1]]
+        rod = self._rod(w, role, a, m)
         if side == foe:
             red = w.redirect.get(foe)
             if red is not None and self._redirectable(w, role, a, red):
                 return [(red[0], red[1])]
+        if rod is not None and rod != who:
+            return [rod]
+        if side == foe:
             if tgt["fainted"] or not tgt["active"]:
                 return foes[:1]  # retarget the other opposing Pokemon
             return [who]
@@ -735,7 +757,55 @@ class Resolver:
             return True
         if (tgt[0], "quickguard") in w.guards and self._priority(w, role, a) > 0:
             return True
+        if (
+            w.fld.terrain == "psychicterrain"
+            and self._priority(w, role, a) > 0
+            and self._grounded(tgt, w.sides[tgt[0]][tgt[1]])
+        ):
+            return True
         return False
+
+    def _grounded(self, who: tuple[str, int], st: Mapping) -> bool:
+        return (
+            "Flying" not in self.types(who[0], who[1], st)
+            and self.ability(who[0], who[1], st) != "levitate"
+            and st.get("item") != "airballoon"
+        )
+
+    def _queenly(self, w: _World, role: str, a: Action, m: Mapping) -> bool:
+        """A priority move aimed at a side with Armor Tail, Dazzling or Queenly
+        Majesty fails (Showdown's onFoeTryMove; moves aimed at a whole side or the
+        whole field are not stopped)."""
+        if m.get("target") in NOT_AIMED or self._priority(w, role, a) <= 0:
+            return False
+        if a.target is not None and a.target[0] != "foe":
+            return False
+        foe = _other(role)
+        return any(
+            x["active"] and not x["fainted"] and self.ability(foe, j, x) in QUEENLY
+            for j, x in enumerate(w.sides[foe])
+        )
+
+    def _rod(self, w: _World, role: str, a: Action, m: Mapping):
+        """Lightning Rod or Storm Drain draws a single-target Electric or Water
+        move from any other Pokemon on the field (Stalwart, Propeller Tail and
+        Snipe Shot ignore it)."""
+        want = RODS.get(m.get("type", ""))
+        if want is None or m.get("target") not in SINGLE:
+            return None
+        user = w.sides[role][a.user]
+        if (
+            self.ability(role, a.user, user) in {"stalwart", "propellertail"}
+            or a.move == "snipeshot"
+        ):
+            return None
+        for r in (_other(role), role):
+            for j, x in enumerate(w.sides[r]):
+                if (r, j) == (role, a.user) or not x["active"] or x["fainted"]:
+                    continue
+                if self.ability(r, j, x) == want:
+                    return (r, j)
+        return None
 
     # ---------------------------------------------------------------- status
 
@@ -1063,6 +1133,10 @@ class Resolver:
                 ):
                     nxt.append(b)
                     continue
+                if self._absorbs(b, role, a, m, tgt):
+                    self._boost(tt, {"spa": 1})
+                    nxt.append(b)
+                    continue
                 acc = self._accuracy(b, role, a, m, tgt)
                 if acc < 1:
                     miss = b.clone(b.p * (1 - acc))
@@ -1105,6 +1179,13 @@ class Resolver:
             g = groups.setdefault(key, [0.0, dmg])
             g[0] += pd
         return [(p, dmg) for p, dmg in groups.values()]
+
+    def _absorbs(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> bool:
+        want = RODS.get(m.get("type", ""))
+        if want is None or tgt == (role, a.user):
+            return False
+        st = w.sides[tgt[0]][tgt[1]]
+        return self.ability(tgt[0], tgt[1], st) == want
 
     def _sucker_ok(self, w: _World, role: str, a: Action) -> bool:
         tgt = self._targets(w, role, a, self.move(a.move))

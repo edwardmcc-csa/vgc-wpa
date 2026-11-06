@@ -278,3 +278,78 @@ def test_a_cap_merges_boards_on_a_coarser_grid_and_keeps_every_chance(dex, moves
         return p_of(outs, lambda o: o.sides["p1"][0]["fainted"])
 
     assert abs(ko(small) - ko(full)) < 1e-9  # knock-outs are never merged away
+
+
+def _with(sheets_p2_0):
+    sheets = dict(SHEETS, p2=(sheets_p2_0, SHEETS["p2"][1]))
+    return sheets
+
+
+def test_armor_tail_blocks_priority_moves_at_its_side(dex, moves, calc):
+    fari = SheetMon(1, "farigiraf", "", "armortail", ("protect", "swordsdance"), "")
+    sheets = _with(fari)
+    b = board()
+    b["p2"][0]["species"] = "farigiraf"
+    acts = {
+        "p1": (
+            Action(0, "move", move="protect"),
+            Action(1, "move", move="suckerpunch", target=("foe", 1)),
+        ),
+        "p2": (
+            Action(0, "move", move="swordsdance"),
+            Action(1, "move", move="moonblast", target=("foe", 1)),
+        ),
+    }
+    outs = R.Resolver(dex, moves, calc, sheets, SPREADS).resolve(b, R.Field(), acts)
+    assert all(
+        o.sides["p2"][1]["hp_fraction"] == 1.0 for o in outs
+    )  # Whimsicott untouched
+
+
+def test_psychic_terrain_blocks_priority_moves_at_grounded_targets(dex, moves, calc):
+    acts = {
+        "p1": (
+            Action(0, "move", move="protect"),
+            Action(1, "move", move="suckerpunch", target=("foe", 0)),
+        ),
+        "p2": (
+            Action(0, "move", move="knockoff", target=("foe", 1)),
+            Action(1, "move", move="protect"),
+        ),
+    }
+    plain = resolver(dex, moves, calc).resolve(board(), R.Field(), acts)
+    assert any(o.sides["p2"][0]["hp_fraction"] < 1.0 for o in plain)
+    fld = R.Field(terrain="psychicterrain", terrain_left=3)
+    outs = resolver(dex, moves, calc).resolve(board(), fld, acts)
+    assert all(o.sides["p2"][0]["hp_fraction"] == 1.0 for o in outs)  # grounded
+
+
+def test_lightning_rod_draws_single_target_electric_moves(dex, moves, calc):
+    rod = SheetMon(2, "raichu", "", "lightningrod", ("protect",), "")
+    sheets = dict(SHEETS, p2=(SHEETS["p2"][0], rod))
+    spreads = dict(SPREADS)
+    b = board()
+    b["p2"][1]["species"] = "raichu"
+    sheets = dict(
+        sheets,
+        p1=(
+            SheetMon(
+                1, "archaludon", "", "stamina", ("electroshot", "thunderbolt"), ""
+            ),
+            SHEETS["p1"][1],
+        ),
+    )
+    b["p1"][0]["species"] = "archaludon"
+    acts = {
+        "p1": (
+            Action(0, "move", move="thunderbolt", target=("foe", 0)),
+            Action(1, "move", move="protect"),
+        ),
+        "p2": (
+            Action(0, "move", move="swordsdance"),
+            Action(1, "move", move="swordsdance"),
+        ),
+    }
+    outs = R.Resolver(dex, moves, calc, sheets, spreads).resolve(b, R.Field(), acts)
+    assert all(o.sides["p2"][0]["hp_fraction"] == 1.0 for o in outs)  # drawn to Raichu
+    assert all(o.sides["p2"][1]["hp_fraction"] == 1.0 for o in outs)  # which absorbs it
