@@ -66,58 +66,58 @@ def _timers_by_turn(game, role: str) -> dict:
     return out
 
 
-def examples_for_game(
-    tag: str, log: str, fmt: str, dex, moves, table, calc, store, bring, rates
-) -> list[tuple[np.ndarray, int]]:
-    from wpa import decisions as D
-    from wpa.bring import marginals
-    from wpa.features import _field
+def game_tools(tag: str, log: str, fmt: str, store, bring, dex):
+    """What every turn of one game shares: both sheets, each Pokemon's most
+    likely spread from the usage statistics, and each side's bring odds."""
     from wpa.spreads import Belief, priors_for
     from wpa.team_sheets import sheets_from_log
 
     sheets = sheets_from_log(log)
-    if set(sheets) != {"p1", "p2"}:
-        return []
-    game = D.build_game(log, table)
-    timers = {r: _timers_by_turn(game, r) for r in ("p1", "p2")}
     usage = store.for_game(tag, log) if store is not None else {}
     spreads = {
         k: Belief(v).best() for k, v in priors_for(sheets, usage, dex).items() if v
     }
     odds = (
         {r: bring.odds(fmt, tuple(m.species for m in sheets[r]), None) for r in sheets}
-        if bring is not None
+        if bring is not None and set(sheets) == {"p1", "p2"}
         else {}
     )
-    out = []
-    for t in C.turns(log, dex):
-        role = t.role
-        j = timers[role].get(t.turn)
-        our_side = {
-            e
-            for e, tt, lo, _h in (j.ours if j else ())
-            if tt == "side" and lo > 0 and e in SIDE_KEYS
-        }
-        trickroom = any(
-            e == "trickroom" and lo > 0 for e, _t, lo, _h in (j.field if j else ())
-        )
-        s = {"our_pokemon": t.ours, "opp_pokemon": t.theirs}
-        revealed = [
-            i
-            for i, p in enumerate(t.ours)
-            if p["active"] or p["fainted"] or p["hp_fraction"] > 0
-        ]
-        bring_p = marginals(odds[role], revealed) if role in odds else None
-        ctx = (
-            DamageInfo(s, sheets, role, spreads, dex, calc, _field(j) if j else {})
-            if calc is not None
-            else None
-        )
-        opts = C.options(t.ours, t.theirs, sheets[role], dex)
-        for idx, act in t.taken.items():
-            if isinstance(act, str) or idx in t.hidden or act not in opts.get(idx, []):
-                continue
-            o = opts[idx]
+    return sheets, spreads, odds
+
+
+def turn_options(
+    t: C.Turn, j, sheets, spreads, dex, moves, rates, calc, odds
+) -> dict[int, tuple[list, np.ndarray]]:
+    """For each Pokemon of `t.role` active at the start of the turn: its options
+    and their facts (`wpa.policy.option_features`), as the opponent would see
+    them. `j`: the role's timers at the turn start."""
+    from wpa.bring import marginals
+    from wpa.features import _field
+
+    role = t.role
+    our_side = {
+        e
+        for e, tt, lo, _h in (j.ours if j else ())
+        if tt == "side" and lo > 0 and e in SIDE_KEYS
+    }
+    trickroom = any(
+        e == "trickroom" and lo > 0 for e, _t, lo, _h in (j.field if j else ())
+    )
+    s = {"our_pokemon": t.ours, "opp_pokemon": t.theirs}
+    revealed = [
+        i
+        for i, p in enumerate(t.ours)
+        if p["active"] or p["fainted"] or p["hp_fraction"] > 0
+    ]
+    bring_p = marginals(odds[role], revealed) if role in odds else None
+    ctx = (
+        DamageInfo(s, sheets, role, spreads, dex, calc, _field(j) if j else {})
+        if calc is not None
+        else None
+    )
+    out = {}
+    for idx, o in C.options(t.ours, t.theirs, sheets[role], dex).items():
+        if o:
             X = np.array(
                 [
                     option_features(
@@ -127,7 +127,35 @@ def examples_for_game(
                 ],
                 dtype=float,
             )
-            out.append((X, o.index(act)))
+            out[idx] = (list(o), X)
+    return out
+
+
+def examples_for_game(
+    tag: str, log: str, fmt: str, dex, moves, table, calc, store, bring, rates
+) -> list[tuple[np.ndarray, int]]:
+    from wpa import decisions as D
+
+    sheets, spreads, odds = game_tools(tag, log, fmt, store, bring, dex)
+    if set(sheets) != {"p1", "p2"}:
+        return []
+    game = D.build_game(log, table)
+    timers = {r: _timers_by_turn(game, r) for r in ("p1", "p2")}
+    out = []
+    for t in C.turns(log, dex):
+        usable = {
+            idx: act
+            for idx, act in t.taken.items()
+            if not isinstance(act, str) and idx not in t.hidden
+        }
+        if not usable:
+            continue
+        j = timers[t.role].get(t.turn)
+        feats = turn_options(t, j, sheets, spreads, dex, moves, rates, calc, odds)
+        for idx, act in usable.items():
+            if idx in feats and act in feats[idx][0]:
+                o, X = feats[idx]
+                out.append((X, o.index(act)))
     return out
 
 
@@ -242,4 +270,4 @@ def _features() -> tuple[str, ...]:
     return FEATURES
 
 
-__all__ = ["collect", "count_moves", "examples_for_game"]
+__all__ = ["collect", "count_moves", "examples_for_game", "game_tools", "turn_options"]
