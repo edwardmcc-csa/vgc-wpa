@@ -1,6 +1,6 @@
 # DEFINITIONS
 
-**Status:** approved by the product owner. Revision 8 — §3 rewritten as a three-way split, and §4's first line to match (PO, 6 Nov 2026). Revision 7 added §15 (two formats).
+**Status:** approved by the product owner. Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
 **Applies to:** milestones M4, M4b, M5, M7.
 
 This document is the contract. If code and this document disagree, the code is wrong.
@@ -94,15 +94,17 @@ No WPA is produced for games ending in forfeit, timeout, or disconnection. Mark 
 
 All user-facing WPA figures are expressed in percentage points, signed. "That switch cost you 14 points." Internal computation stays in raw probability; conversion happens at the display boundary only.
 
-### 10.2 Reporting threshold — 0.5 percentage points
+### 10.2 Reporting threshold — 3 percentage points
 
-Swings at or above 0.5pp are surfaced in the M7 report. Below that, aggregated and not itemised.
+Swings at or above 3pp are surfaced in the M7 report. Below that, aggregated and not itemised.
 
 **Compute-versus-display separation is mandatory.** Every decision point is computed and stored at full precision regardless of threshold. The threshold is a display filter, configurable at runtime, never a shortcut that skips calculation. The §3 conservation check runs over all computed values, not the displayed subset.
 
-**Engineering must raise a blocker if the model's own uncertainty exceeds this threshold.** A 0.5pp filter is only meaningful if the model can resolve differences at that scale. Before M7 ships, measure the run-to-run variation of `WP` on identical states and report it. If that variation is larger than 0.5pp, the report is showing noise as insight and we raise the threshold rather than ship it. Do not quietly adjust the number — bring the measurement to the PO.
+**The `WP` the report shows is an average of models.** It is the average of 5 to 10 models, each trained with the same settings on a resample of the training sets (whole sets drawn with replacement). Averaging brings the model's own noise down, roughly with the square root of the number of models.
 
-Rationale for the low setting: VGC games are short, roughly 15–25 decision points, so the itemised list stays readable even at a fine threshold, and small consistent leaks are exactly what a coaching tool should catch. The risk is noise, hence the measurement requirement above.
+**Engineering must raise a blocker if the model's own uncertainty exceeds this threshold.** Before M7 ships, measure the run-to-run variation of the averaged `WP` on identical states and report it. If that variation is larger than 3pp, the report is showing noise as insight and we raise the threshold rather than ship it. Do not quietly adjust the number — bring the measurement to the PO.
+
+Rationale: the threshold was 0.5pp until 6 Nov 2026. A single v4 model's own noise measured about 3pp (Week 9, Task 6), so a 0.5pp filter would have shown noise. Small consistent leaks under 3pp are still found by aggregating over many games; they are not itemised per decision.
 
 ### 10.3 `WP_oracle` stays internal
 

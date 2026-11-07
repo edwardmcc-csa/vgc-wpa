@@ -1,8 +1,9 @@
 """How much win probability wobbles (Week 9 Task 6, DEFINITIONS §10.2).
 
 Before M7 ships, §10.2 asks how far `WP` moves on identical positions from run to
-run. If that is more than the 0.5-point reporting threshold, the report would show
-noise as insight. Training here is deterministic, so a rerun gives the same model.
+run. If that is more than the reporting threshold (3 points since revision 9; it
+was 0.5 when this was first measured), the report would show noise as insight.
+Training here is deterministic, so a rerun gives the same model.
 The honest measure of the model's own noise is to retrain it on resamples of the
 training sets: draw whole sets with replacement, as many as there are, and train
 with the same settings and the same number of rounds as the real model. Then see
@@ -25,7 +26,7 @@ import numpy as np
 
 from wpa.features import Table
 
-THRESHOLD = 0.5  # percentage points (DEFINITIONS §10.2)
+THRESHOLD = 3.0  # percentage points (DEFINITIONS §10.2, revision 9)
 
 
 def resample_units(table: Table, seed: int) -> Table:

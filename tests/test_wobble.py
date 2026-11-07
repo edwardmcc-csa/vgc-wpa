@@ -57,3 +57,10 @@ def test_swings_are_taken_within_one_side_of_one_game_in_turn_order():
     preds = np.array([[0.6, 0.5, 0.5, 0.5], [0.7, 0.5, 0.5, 0.5]])
     w = W.wobble(preds, t)
     assert len(w["swings"]) == 1  # only g1/p1 has two decision points
+
+
+def test_the_threshold_is_definitions_revision_9():
+    # DEFINITIONS §10.2, revision 9 (PO, 6 Nov 2026): 3 percentage points
+    from wpa import wobble
+
+    assert wobble.THRESHOLD == 3.0
