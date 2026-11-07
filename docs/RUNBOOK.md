@@ -1054,7 +1054,19 @@ facts are read from Showdown instead (a little slower to start).
    games, and saves `models_v4\policy.json` and `models_v4\policy.txt`. (A copy
    made here is already in `models_v4`; this remakes it on your computer.)
 
-2. **Decision versus luck on the validation sample** (overnight; 300 Reg M-A sets
+2. **The opponent model's sharpness** (about an hour; your decisions of 6 Nov).
+   One setting that gives the opponent model's likeliest replies more of the
+   chance, in the same order. It is measured on training sets, and you chose 4:
+   ```
+   python -m wpa.attribution --fit-sharpness --sharpness 4 --models models_v4_full --moves-dir build --sets 10 10 --workers 6
+   ```
+   It prints "your decision" on average for each setting, and saves 4 in
+   `models_v4\policy.json` (the curve goes in `models_v4\policy_sharpness.txt`).
+   Without `--sharpness 4` it would save the setting closest to zero instead.
+   Step 1 resets the setting to 1, so after step 1 always run this step again.
+   **The copy already in `models_v4` has 4: you do not need this step now.**
+
+3. **Decision versus luck on the validation sample** (overnight; 300 Reg M-A sets
    and all 199 Reg M-B sets, the same sets every run):
    ```
    python -m wpa.attribution --models models_v4_full --moves-dir build --workers 6 --alternatives-every 3 --out reports/attribution_week9.jsonl
@@ -1073,7 +1085,7 @@ facts are read from Showdown instead (a little slower to start).
    python -m wpa.attribution --report --out reports/attribution_week9.jsonl
    ```
 
-3. **Blank sheets with team preview** (report only; replaces Section 17 step 6's
+4. **Blank sheets with team preview** (report only; replaces Section 17 step 6's
    blank build). The opponent's six species are known, as team preview shows
    them; their items, abilities, moves and spreads stay hidden until revealed.
    New folders, so Week 8's blank models stay for comparison:
@@ -1084,7 +1096,7 @@ facts are read from Showdown instead (a little slower to start).
    python -m wpa.evaluate v2-report --features features_v4_preview --models models_v4_preview --full ABCDEFGHIJ
    ```
 
-4. **How much win probability wobbles** (DEFINITIONS §10.2; several hours a
+5. **How much win probability wobbles** (DEFINITIONS §10.2; several hours a
    format). Three models retrained on resamples of the training sets:
    ```
    python -m wpa.wobble --features features_v4 --models models_v4 --groups ABCDEFGHIJ --format regma --resamples 3 --out wobble_v4

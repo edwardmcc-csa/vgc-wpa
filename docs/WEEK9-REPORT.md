@@ -195,7 +195,7 @@ of the examples before it (tested).
 - **A choice the log does not show** (a Pokemon that could not move or fell
   first, or a hidden target) is averaged with the opponent model.
 - **Cost against the best and the average** compares the choice made with the
-  player's 5 likeliest choices, in every third game.
+  player's 10 likeliest choices, in every third game.
 
 The split is computed for both players at every turn; each player's three parts
 add up to their own swing.
@@ -223,8 +223,8 @@ used the v4 models trained here on 20% of Reg M-A's training sets; your run uses
   §3 it should average about zero. The reason is the opponent model: real replies
   are better than its average reply (decision 2).
 - **Cost against the best is not believable yet.** Half of all choices would cost
-  5 points or more against the best of the player's 5 likeliest. Two things inflate
-  it. The best alternative is judged against the weak opponent model, and 5 points
+  5 points or more against the best of the player's 10 likeliest. Two things
+  inflate it. The best alternative is judged against the weak opponent model, and 5 points
   is under twice the model's wobble. Against the average, choices come out ahead
   (+1.3 and +1.7), which is the expected direction.
 - **Their replies taken exactly:** 37% of the chance on average (lowest 10%) in
@@ -420,9 +420,80 @@ report would show noise as insight. This is decision 1 below.
    Week 10 average over the 2 or 3 likeliest, as the brief asked? Each one
    multiplies the time per turn. I recommend it for the resolver, where misses
    come from bulk, and measuring the cost first.
-4. **The full sample on your computer** (runbook Section 18, step 2): one command,
+4. **The full sample on your computer** (runbook Section 18, step 3): one command,
    overnight. Then the 10 biggest swings per format come from the brief's whole
    sample, scored with `models_v4_full`.
 5. **The replies method.** The brief allowed dropping up to 5% of the chance; I
    drop none and draw instead. I recommend keeping this. It is the default
    (`--top 6 --draws 6`).
+
+---
+
+## Addendum, 6 November: the PO's decisions, and the opponent model's sharpness
+
+**Decisions** (PO, 6 Nov 2026):
+1. **Wobble: (c), both.** Win probability will be the average of 5 to 10 models
+   trained on resamples, and the reporting threshold rises to about 3 points.
+   This changes DEFINITIONS §10.2: revision 9, approved and committed (wording
+   below). The models are trained in Week 10, on your computer.
+2. **The opponent model: (a), sharper now.** Zero turned out to be out of reach;
+   you chose sharpness 4 (below).
+3. **Spreads: yes.** Week 10 averages over each Pokemon's 2 or 3 likeliest
+   spreads, measuring the cost first.
+4. **The full sample on your computer: agreed.** Runbook Section 18, step 3. It
+   uses sharpness 4.
+5. **The replies method: agreed.** The likeliest 6 exactly, the rest drawn.
+
+### The opponent model's sharpness
+
+One setting multiplies the opponent model's scores. It keeps the model's order
+of replies and gives the likeliest more of the chance. I measured it on 34
+training games (345 decision points where the log shows the whole choice):
+
+| sharpness | 1 (as before) | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| your decision, on average | +5.6 | +3.9 | **+2.8** | +2.3 | +2.1 |
+
+- **Zero is out of reach.** The curve flattens at about +2 points. Even the
+  model's single best guess of each reply (sharpness 16) is about 2 points worse
+  for the opponent than what real players chose. So what remains is the opponent
+  model's quality, not how thinly it spreads its chance. The real fix is option
+  (b): weigh each reply by how good it is for them (Week 10 or later).
+- **You chose 4** (6 Nov): it halves the lean and still spreads their reply over
+  several likely options. It is saved in `models_v4\policy.json` on your
+  computer, so the overnight run uses it. The first-look numbers above were made
+  before it, at sharpness 1.
+- It was measured with the models trained here (20% of Reg M-A's training sets),
+  not `models_v4_full`. The difference should be small; runbook Section 18,
+  step 2, remeasures it on your computer if wanted.
+
+**DEFINITIONS revision 9** (below) was approved on 6 Nov and committed.
+
+### DEFINITIONS §10.2, revision 9 (approved 6 Nov 2026)
+
+> ### 10.2 Reporting threshold — 3 percentage points
+>
+> Swings at or above 3pp are surfaced in the M7 report. Below that, aggregated
+> and not itemised.
+>
+> **Compute-versus-display separation is mandatory.** Every decision point is
+> computed and stored at full precision regardless of threshold. The threshold is
+> a display filter, configurable at runtime, never a shortcut that skips
+> calculation. The §3 conservation check runs over all computed values, not the
+> displayed subset.
+>
+> **The `WP` the report shows is an average of models.** It is the average of 5 to
+> 10 models, each trained with the same settings on a resample of the training
+> sets (whole sets drawn with replacement). Averaging brings the model's own
+> noise down, roughly with the square root of the number of models.
+>
+> **Engineering must raise a blocker if the model's own uncertainty exceeds this
+> threshold.** Before M7 ships, measure the run-to-run variation of the averaged
+> `WP` on identical states and report it. If that variation is larger than 3pp,
+> the report is showing noise as insight and we raise the threshold rather than
+> ship it. Do not quietly adjust the number — bring the measurement to the PO.
+>
+> Rationale: the threshold was 0.5pp until 6 Nov 2026. A single v4 model's own
+> noise measured about 3pp (Week 9, Task 6), so a 0.5pp filter would have shown
+> noise. Small consistent leaks under 3pp are still found by aggregating over
+> many games; they are not itemised per decision.

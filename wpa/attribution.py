@@ -863,7 +863,9 @@ def fit_run(a) -> None:  # pragma: no cover - runs on the corpus
                 print(
                     f"{i}/{len(jobs)} games, {len(samples)} decision points", flush=True
                 )
-    b, curve = fit_sharpness(samples)
+    fitted, curve = fit_sharpness(samples)
+    # the PO's chosen setting, when given (6 Nov: 4; zero is out of reach)
+    b = a.sharpness if a.sharpness is not None else fitted
     model = PolicyModel.load(a.policy)
     plain = mean_yours(samples, 1.0)
     model.sharpness = b
@@ -872,7 +874,9 @@ def fit_run(a) -> None:  # pragma: no cover - runs on the corpus
         "Opponent model sharpness (PO decision, 6 Nov 2026), fitted on training sets",
         f"  {len(jobs)} games, {len(samples)} decision points",
         f"  your decision on average: {100 * plain:+.1f} points at sharpness 1",
-        f"  sharpness {b:.2f}: {100 * mean_yours(samples, b):+.1f} points",
+        f"  closest to zero: sharpness {fitted:.2f}, "
+        f"{100 * mean_yours(samples, fitted):+.1f} points",
+        f"  saved: sharpness {b:.2f}, {100 * mean_yours(samples, b):+.1f} points",
         "  the curve (sharpness: your decision on average, points):",
     ]
     lines += [f"    {x:.2f}: {100 * m:+.1f}" for x, m in curve[::4]]
@@ -1078,6 +1082,12 @@ def main() -> None:  # pragma: no cover
         "--fit-sharpness",
         action="store_true",
         help="fit the opponent model sharpness on training sets, into --policy",
+    )
+    p.add_argument(
+        "--sharpness",
+        type=float,
+        default=None,
+        help="with --fit-sharpness: save this setting instead of the fitted one",
     )
     a = p.parse_args()
     if a.fit_sharpness:
