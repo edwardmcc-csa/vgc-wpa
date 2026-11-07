@@ -195,6 +195,56 @@ def taken_mixture(
 
 
 # --------------------------------------------------------------------------
+# The opponent model's sharpness (PO decision, 6 Nov)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SharpSample:
+    """One decision point for fitting the sharpness: WP(before) from the analysed
+    side, and each of the opponent's replies with its chance at sharpness 1 and
+    E[WP | the choice taken, that reply]."""
+
+    before: float
+    chances: list[float]
+    values: list[float]
+
+
+def mean_yours(samples: Sequence[SharpSample], b: float) -> float:
+    """ "Your decision" on average when the opponent model has sharpness `b`
+    (each reply's chance to the power `b`, scaled back to 1)."""
+    out = 0.0
+    for x in samples:
+        p = np.asarray(x.chances, dtype=float)
+        logq = b * np.log(np.clip(p, 1e-300, None))
+        q = np.exp(logq - logq.max())
+        out += float((q * np.asarray(x.values)).sum() / q.sum()) - x.before
+    return out / len(samples)
+
+
+def fit_sharpness(
+    samples: Sequence[SharpSample], lo: float = 0.25, hi: float = 16.0
+) -> tuple[float, list[tuple[float, float]]]:
+    """The sharpness at which "your decision" averages zero (DEFINITIONS §3), or
+    the closest to it in [lo, hi]; with the curve (sharpness, average)."""
+    grid = list(np.exp(np.linspace(np.log(lo), np.log(hi), 49)))
+    curve = [(float(b), mean_yours(samples, b)) for b in grid]
+    for (b0, m0), (b1, m1) in zip(curve, curve[1:]):
+        if m0 == 0:
+            return b0, curve
+        if (m0 > 0) != (m1 > 0):
+            for _ in range(60):  # bisection on the log scale
+                mid = float(np.sqrt(b0 * b1))
+                mm = mean_yours(samples, mid)
+                if (mm > 0) == (m0 > 0):
+                    b0, m0 = mid, mm
+                else:
+                    b1 = mid
+            return float(np.sqrt(b0 * b1)), curve
+    return min(curve, key=lambda x: abs(x[1]))[0], curve
+
+
+# --------------------------------------------------------------------------
 # One turn's values: the resolver and a win-probability function
 # --------------------------------------------------------------------------
 
@@ -435,13 +485,35 @@ class Tools:
     cap: int = 300
     top: int = 6
     draws: int = 6
-    alternatives: int = 5
+    alternatives: int = 10
 
 
-def analyse_game(
-    tag: str, log: str, fmt: str, tools: Tools, with_alternatives: bool = True
-) -> list[dict]:
-    """One record per decision point (each turn, each player) of one game."""
+@dataclass
+class TurnSetup:
+    """One turn of one game, ready to value: the resolver's values, both WPs
+    from p1's side, and each player's options with the opponent model's chances."""
+
+    base: dict
+    turn: int
+    tv: TurnValues
+    bw: BoardWP
+    before: float
+    after: float
+    actual: dict
+    turns: dict  # role -> wpa.choices.Turn
+    opts: dict  # role -> {Pokemon: options}
+    chances: dict  # role -> {Pokemon: chances}
+    t0: float
+
+
+def _error(base: dict, e: Exception) -> list[dict]:
+    why = f"error: {type(e).__name__}: {str(e)[:80]}"
+    return [dict(base, role=r, skipped=why) for r in ("p1", "p2")]
+
+
+def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
+    """Each move-selection turn of one game: a TurnSetup, or a list of records
+    saying why the turn is left out."""
     from wpa import choices as C
     from wpa import decisions as D
     from wpa import resolver as R
@@ -453,11 +525,11 @@ def analyse_game(
     dex, table = tools.dexes[fmt], tools.tables[fmt]
     sheets, spreads, odds = game_tools(tag, log, fmt, tools.store, tools.bring, dex)
     if set(sheets) != {"p1", "p2"}:
-        return []
+        return
     game = D.build_game(log, table)
     states, joined = game.states["p1"], game.joined["p1"]
     if not states or states[-1]["outcome"] is None:
-        return []
+        return
     ctxs = damage_contexts(
         tag, log, game, sheets, dex, tools.calc, tools.store, tools.bring
     )["p1"]
@@ -470,7 +542,6 @@ def analyse_game(
         tools.policy.rates.get(fmt, {}) if isinstance(tools.policy.rates, dict) else {}
     )
     cols = columns(tools.groups)
-    out: list[dict] = []
     for k, s in enumerate(states[:-1]):
         if s["moment"] != "turn_start" or s["turn"] not in turns:
             continue
@@ -482,9 +553,7 @@ def analyse_game(
         if end is None:
             continue
         if end[3] is not None and loser_has_pokemon_left(end[3]):
-            out += [
-                dict(base, role=r, skipped="forfeit or timer") for r in ("p1", "p2")
-            ]
+            yield [dict(base, role=r, skipped="forfeit or timer") for r in ("p1", "p2")]
             continue
         t0 = time.time()
         try:
@@ -517,18 +586,14 @@ def analyse_game(
                 tools.groups,
                 ctxs[k],
             )
-            tv = TurnValues(rv, sides, fld, bw)
             f0 = state_features(
                 states, k, "p1", joined[k], sheets, dex, table, tools.groups, ctxs[k]
             )
-            before = float(
-                tools.predict[fmt](np.array([[f0[c] for c in cols]], dtype=np.float32))[
-                    0
-                ]
-            )
+            x0 = np.array([[f0[c] for c in cols]], dtype=np.float32)
+            before = float(tools.predict[fmt](x0)[0])
             a_p1, a_p2, a_j, _term = end
             after = float(bw.boards([(a_p1, a_p2, R.field_from_timers(a_j, "p1"))])[0])
-            mixes = {}
+            opts, chances = {}, {}
             for r in ("p1", "p2"):
                 t = tt[r]
                 feats = turn_options(
@@ -542,63 +607,132 @@ def analyse_game(
                     tools.calc,
                     odds,
                 )
-                opts = {i: o for i, (o, _X) in feats.items()}
-                ch = {i: list(tools.policy.chances(X)) for i, (_o, X) in feats.items()}
-                taken = taken_mixture(t.taken, t.hidden, opts, ch)
-                full = mixture({i: list(zip(opts[i], ch[i])) for i in opts})
-                seed = f"{tag} {s['turn']} {r}"
-                lk, kept = likely(full, tools.top, tools.draws, seed)
-                alts = None
-                if with_alternatives and tools.alternatives:
-                    top, _ = trim(full, 1.0, tools.alternatives)
-                    alts = [[(j, 1.0)] for j, _ in top]
-                    if not (len(taken) == 1 and any(taken[0][0] == j for j, _ in top)):
-                        alts.append(taken)
-                unknown = sum(
-                    1
-                    for i in opts
-                    if not isinstance(t.taken.get(i), Action) or i in t.hidden
-                )
-                mixes[r] = (taken, lk, kept, alts, unknown)
-            t1, l1, _k1, alts1, _u1 = mixes["p1"]
-            t2, l2, _k2, alts2, _u2 = mixes["p2"]
-            pairs = [(x, y) for x, _ in t1 for y, _ in l2 + t2]
-            pairs += [(x, y) for x, _ in l1 for y, _ in t2]
-            for alt in alts1 or ():
-                pairs += [(x, y) for x, _ in alt for y, _ in l2]
-            for alt in alts2 or ():
-                pairs += [(x, y) for x, _ in l1 for y, _ in alt]
-            tv.prepare(pairs)
-            recs = []
-            for r, other in (("p1", "p2"), ("p2", "p1")):
-                taken, _l, _k, alts, unknown = mixes[r]
-                _t, lk, kept, _a, _u = mixes[other]
-                b, a = (before, after) if r == "p1" else (1 - before, 1 - after)
-                sp = decompose(
-                    tv.for_role(r), b, a, taken, mixes[other][0], lk, alts, kept
-                )
-                recs.append(dict(base, role=r, unknown=unknown, **asdict(sp)))
-            pairs = [(x, y) for x, _ in mixes["p1"][0] for y, _ in mixes["p2"][0]]
-            outs = [o for key in pairs for o in tv.outcomes.get(key, ())]
-            actual = {"p1": a_p1, "p2": a_p2}
-            tol = max(0.03, tools.resolution + 0.01)
-            found = any(_close(o.sides, actual, tol) for o in outs)
-            partial = sorted(set().union(*(o.partial for o in outs))) if outs else []
-            secs = time.time() - t0
-            for rec in recs:
-                rec.update(
-                    found=found,
-                    partial=partial,
-                    seconds=secs,
-                    resolves=len(tv.outcomes),
-                    boards=len(bw._cache),
-                )
-            out += recs
+                opts[r] = {i: o for i, (o, _X) in feats.items()}
+                chances[r] = {
+                    i: list(tools.policy.chances(X)) for i, (_o, X) in feats.items()
+                }
         except Exception as e:  # pragma: no cover - reported, not hidden
-            out += [
-                dict(base, role=r, skipped=f"error: {type(e).__name__}: {str(e)[:80]}")
-                for r in ("p1", "p2")
-            ]
+            yield _error(base, e)
+            continue
+        yield TurnSetup(
+            base,
+            s["turn"],
+            TurnValues(rv, sides, fld, bw),
+            bw,
+            before,
+            after,
+            {"p1": a_p1, "p2": a_p2},
+            tt,
+            opts,
+            chances,
+            t0,
+        )
+
+
+def analyse_game(
+    tag: str, log: str, fmt: str, tools: Tools, with_alternatives: bool = True
+) -> list[dict]:
+    """One record per decision point (each turn, each player) of one game."""
+    out: list[dict] = []
+    for ts in turn_setups(tag, log, fmt, tools):
+        if isinstance(ts, list):
+            out += ts
+            continue
+        try:
+            out += _analyse_turn(ts, tools, with_alternatives)
+        except Exception as e:  # pragma: no cover - reported, not hidden
+            out += _error(ts.base, e)
+    return out
+
+
+def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[dict]:
+    tv = ts.tv
+    mixes = {}
+    for r in ("p1", "p2"):
+        t, opts, ch = ts.turns[r], ts.opts[r], ts.chances[r]
+        taken = taken_mixture(t.taken, t.hidden, opts, ch)
+        full = mixture({i: list(zip(opts[i], ch[i])) for i in opts})
+        seed = f"{ts.base['tag']} {ts.turn} {r}"
+        lk, kept = likely(full, tools.top, tools.draws, seed)
+        alts = None
+        if with_alternatives and tools.alternatives:
+            top, _ = trim(full, 1.0, tools.alternatives)
+            alts = [[(j, 1.0)] for j, _ in top]
+            if not (len(taken) == 1 and any(taken[0][0] == j for j, _ in top)):
+                alts.append(taken)
+        unknown = sum(
+            1 for i in opts if not isinstance(t.taken.get(i), Action) or i in t.hidden
+        )
+        mixes[r] = (taken, lk, kept, alts, unknown)
+    t1, l1, _k1, alts1, _u1 = mixes["p1"]
+    t2, l2, _k2, alts2, _u2 = mixes["p2"]
+    pairs = [(x, y) for x, _ in t1 for y, _ in l2 + t2]
+    pairs += [(x, y) for x, _ in l1 for y, _ in t2]
+    for alt in alts1 or ():
+        pairs += [(x, y) for x, _ in alt for y, _ in l2]
+    for alt in alts2 or ():
+        pairs += [(x, y) for x, _ in l1 for y, _ in alt]
+    tv.prepare(pairs)
+    recs = []
+    for r, other in (("p1", "p2"), ("p2", "p1")):
+        taken, _l, _k, alts, unknown = mixes[r]
+        _t, lk, kept, _a, _u = mixes[other]
+        b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
+        sp = decompose(tv.for_role(r), b, a, taken, mixes[other][0], lk, alts, kept)
+        recs.append(dict(ts.base, role=r, unknown=unknown, **asdict(sp)))
+    pairs = [(x, y) for x, _ in t1 for y, _ in t2]
+    outs = [o for key in pairs for o in tv.outcomes.get(key, ())]
+    tol = max(0.03, tools.resolution + 0.01)
+    found = any(_close(o.sides, ts.actual, tol) for o in outs)
+    partial = sorted(set().union(*(o.partial for o in outs))) if outs else []
+    secs = time.time() - ts.t0
+    for rec in recs:
+        rec.update(
+            found=found,
+            partial=partial,
+            seconds=secs,
+            resolves=len(tv.outcomes),
+            boards=len(ts.bw._cache),
+        )
+    return recs
+
+
+def sharp_samples(
+    tag: str, log: str, fmt: str, tools: Tools, most: int = 150
+) -> list[SharpSample]:
+    """For fitting the sharpness: at each turn, for each player whose choice the
+    log shows in full, E[WP | that choice, each reply] over the opponent's replies
+    (the likeliest `most`), with each reply's chance at sharpness 1."""
+    out: list[SharpSample] = []
+    for ts in turn_setups(tag, log, fmt, tools):
+        if isinstance(ts, list):
+            continue
+        try:
+            want = {}
+            for r, other in (("p1", "p2"), ("p2", "p1")):
+                t, opts = ts.turns[r], ts.opts[r]
+                if not opts or any(
+                    not isinstance(t.taken.get(i), Action) or i in t.hidden
+                    for i in opts
+                ):
+                    continue
+                taken = taken_mixture(t.taken, t.hidden, opts, ts.chances[r])
+                o_opts, o_ch = ts.opts[other], ts.chances[other]
+                full = mixture({i: list(zip(o_opts[i], o_ch[i])) for i in o_opts})
+                top = sorted(full, key=lambda x: -x[1])[:most]
+                want[r] = (taken[0][0], top)
+            pairs = []
+            for r, (c, top) in want.items():
+                pairs += [(c, j) if r == "p1" else (j, c) for j, _ in top]
+            ts.tv.prepare(pairs)
+            for r, (c, top) in want.items():
+                v = ts.tv.for_role(r)
+                before = ts.before if r == "p1" else 1 - ts.before
+                out.append(
+                    SharpSample(before, [p for _, p in top], [v(c, j) for j, _ in top])
+                )
+        except Exception:  # pragma: no cover - a turn left out of the fit
+            continue
     return out
 
 
@@ -608,10 +742,15 @@ def analyse_game(
 
 
 def sample_sets(
-    logs: Path, splits: Mapping[str, str], sets: Mapping[str, int]
+    logs: Path,
+    splits: Mapping[str, str],
+    sets: Mapping[str, int],
+    split: str = "validation",
 ) -> dict[str, list[tuple[str, str]]]:
-    """A fixed sample of validation sets per format (by a hash of the set id,
-    so the same sets every run), with all their games."""
+    """A fixed sample of sets per format from `split` (by a hash of the set id,
+    so the same sets every run), with all their games. Never the test split."""
+    if split == "test":
+        raise ValueError("the test split is never read here")
     import hashlib
 
     from wpa.features import unit_of
@@ -620,7 +759,7 @@ def sample_sets(
 
     by_unit: dict[str, dict[str, list]] = {f: {} for f in sets}
     for tag, log in _iter_logs(logs):
-        if splits.get(tag) != "validation":
+        if splits.get(tag) != split:
             continue  # the test split is never read
         try:
             fmt = format_of(tag)
@@ -694,6 +833,54 @@ _W: dict = {}
 
 def _init(a) -> None:  # pragma: no cover
     _W["tools"] = _tools(a)
+    if getattr(a, "fit_sharpness", False):
+        _W["tools"].policy.sharpness = 1.0  # the fit starts from the plain model
+
+
+def _one_sharp(job) -> list[SharpSample]:  # pragma: no cover
+    tag, log, fmt, _alt = job
+    return sharp_samples(tag, log, fmt, _W["tools"])
+
+
+def fit_run(a) -> None:  # pragma: no cover - runs on the corpus
+    """Fit the opponent model's sharpness on training sets (PO decision, 6 Nov)
+    and save it into the policy file."""
+    from multiprocessing import Pool
+
+    from wpa.policy import PolicyModel
+
+    splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
+    games = sample_sets(
+        a.logs, splits, {"regma": a.sets[0], "regmb": a.sets[1]}, split="train"
+    )
+    jobs = [(tag, log, fmt, False) for fmt, gs in games.items() for tag, log in gs]
+    print(f"{len(jobs)} training games", flush=True)
+    samples: list[SharpSample] = []
+    with Pool(a.workers, _init, (a,)) as pool:
+        for i, got in enumerate(pool.imap_unordered(_one_sharp, jobs), 1):
+            samples += got
+            if i % 5 == 0:
+                print(
+                    f"{i}/{len(jobs)} games, {len(samples)} decision points", flush=True
+                )
+    b, curve = fit_sharpness(samples)
+    model = PolicyModel.load(a.policy)
+    plain = mean_yours(samples, 1.0)
+    model.sharpness = b
+    model.save(a.policy)
+    lines = [
+        "Opponent model sharpness (PO decision, 6 Nov 2026), fitted on training sets",
+        f"  {len(jobs)} games, {len(samples)} decision points",
+        f"  your decision on average: {100 * plain:+.1f} points at sharpness 1",
+        f"  sharpness {b:.2f}: {100 * mean_yours(samples, b):+.1f} points",
+        "  the curve (sharpness: your decision on average, points):",
+    ]
+    lines += [f"    {x:.2f}: {100 * m:+.1f}" for x, m in curve[::4]]
+    text = "\n".join(lines)
+    print(text)
+    Path(a.policy).with_name("policy_sharpness.txt").write_text(
+        text + "\n", encoding="utf-8"
+    )
 
 
 def _one(job) -> list[dict]:  # pragma: no cover
@@ -887,7 +1074,15 @@ def main() -> None:  # pragma: no cover
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--out", type=Path, default=Path("reports/attribution.jsonl"))
     p.add_argument("--report", action="store_true", help="summarise --out and stop")
+    p.add_argument(
+        "--fit-sharpness",
+        action="store_true",
+        help="fit the opponent model sharpness on training sets, into --policy",
+    )
     a = p.parse_args()
+    if a.fit_sharpness:
+        fit_run(a)
+        return
     if a.report:
         text = report(a.out)
         print(text)
@@ -905,13 +1100,18 @@ if __name__ == "__main__":
 
 __all__ = [
     "BoardWP",
+    "SharpSample",
+    "TurnSetup",
     "Split",
     "TurnValues",
     "analyse_game",
     "decompose",
     "expected",
+    "fit_sharpness",
     "likely",
+    "mean_yours",
     "mixture",
+    "sharp_samples",
     "report",
     "taken_mixture",
     "trim",

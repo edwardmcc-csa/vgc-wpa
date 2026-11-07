@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 
 from tests.test_board_actions import T1, log
 from tests.test_board_effects import at_turn_start
@@ -117,3 +118,26 @@ def test_fitting_recovers_a_clear_preference():
     assert m.weights[0] > 1.0
     ll, uniform = P.score(m, groups)
     assert ll > uniform and abs(uniform - math.log(1 / 4)) < 1e-12
+
+
+def test_sharpness_keeps_the_order_and_concentrates_the_chance(tmp_path):
+    X = np.array(
+        [
+            [1.0] + [0.0] * (len(P.FEATURES) - 1),
+            [0.0] * len(P.FEATURES),
+            [-1.0] + [0.0] * (len(P.FEATURES) - 1),
+        ]
+    )
+    w = [1.0] + [0.0] * (len(P.FEATURES) - 1)
+    plain = P.PolicyModel(w).chances(X)
+    sharp = P.PolicyModel(w, sharpness=2.0).chances(X)
+    assert list(np.argsort(plain)) == list(np.argsort(sharp))
+    assert sharp[0] > plain[0] and sharp[2] < plain[2]
+    # each chance is the plain one to the power of the sharpness, scaled back to 1
+    q = plain**2.0
+    assert sharp == pytest.approx(q / q.sum())
+    m = P.PolicyModel(w, {"regma": {"protect": 0.5}}, sharpness=1.7)
+    m.save(tmp_path / "p.json")
+    back = P.PolicyModel.load(tmp_path / "p.json")
+    assert back.sharpness == 1.7 and back.rates == m.rates
+    assert P.PolicyModel(w).sharpness == 1.0

@@ -344,3 +344,28 @@ def test_a_pair_with_no_boards_is_an_error_not_a_blank():
     tv = A.TurnValues(Nothing(), {"p1": [], "p2": []}, None, lambda outs: [])
     with pytest.raises(ValueError, match="no boards"):
         tv((SD,), (PR,))
+
+
+# ------------------------------------------ the opponent model's sharpness (PO 6 Nov)
+
+
+def test_your_decision_on_average_for_a_given_sharpness():
+    # one decision: their two replies, chances 3/4 and 1/4, worth 0.4 and 0.8 to us
+    samples = [A.SharpSample(0.5, [0.75, 0.25], [0.4, 0.8])]
+    assert A.mean_yours(samples, 1.0) == pytest.approx(0.75 * 0.4 + 0.25 * 0.8 - 0.5)
+    q = [0.75**2, 0.25**2]
+    want = (q[0] * 0.4 + q[1] * 0.8) / sum(q) - 0.5
+    assert A.mean_yours(samples, 2.0) == pytest.approx(want)
+
+
+def test_the_sharpness_is_where_your_decision_averages_zero():
+    # at sharpness 1 the average reply is worth exactly WP(before): the answer is 1
+    samples = [A.SharpSample(0.5, [2 / 3, 1 / 3], [0.4, 0.7])]
+    b, curve = A.fit_sharpness(samples)
+    assert b == pytest.approx(1.0, abs=1e-3)
+    assert abs(A.mean_yours(samples, b)) < 1e-4
+    assert curve and all(len(x) == 2 for x in curve)
+    # sharper is needed when their likeliest reply is their strongest
+    samples = [A.SharpSample(0.5, [0.5, 0.25, 0.25], [0.3, 0.8, 0.8])]
+    b, _ = A.fit_sharpness(samples)
+    assert b > 1.0 and abs(A.mean_yours(samples, b)) < 1e-4

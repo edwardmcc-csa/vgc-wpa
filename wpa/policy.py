@@ -253,9 +253,13 @@ class PolicyModel:
     rates: dict[str, dict[str, float]] = field(
         default_factory=dict
     )  # format -> move -> logit
+    # multiplies every score: above 1 the likeliest options get more of the
+    # chance, in the same order (PO decision, 6 Nov; `wpa.attribution`)
+    sharpness: float = 1.0
 
     def chances(self, X: np.ndarray) -> np.ndarray:
         z = np.asarray(X, dtype=float) @ np.asarray(self.weights, dtype=float)
+        z = self.sharpness * z
         z = np.exp(z - z.max())
         return z / z.sum()
 
@@ -266,6 +270,7 @@ class PolicyModel:
                     "features": list(FEATURES),
                     "weights": self.weights,
                     "rates": self.rates,
+                    "sharpness": self.sharpness,
                 }
             ),
             encoding="utf-8",
@@ -276,7 +281,7 @@ class PolicyModel:
         d = json.loads(Path(path).read_text(encoding="utf-8"))
         if d["features"] != list(FEATURES):
             raise ValueError("policy features changed since this model was saved")
-        return cls(d["weights"], d.get("rates", {}))
+        return cls(d["weights"], d.get("rates", {}), float(d.get("sharpness", 1.0)))
 
 
 def fit(groups: Sequence[tuple[np.ndarray, int]], l2: float = 1e-2) -> PolicyModel:
