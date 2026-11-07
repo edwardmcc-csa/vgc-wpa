@@ -371,3 +371,12 @@ def test_roar_at_an_ally_that_fell_first_keeps_the_board(dex, moves, calc):
     assert outs
     assert sum(o.prob for o in outs) == pytest.approx(1.0)
     assert all(o.sides["p2"][0]["fainted"] for o in outs)
+
+
+def test_a_move_whose_power_needs_the_game_so_far_marks_the_turn(dex, moves, calc):
+    # Last Respects and Rage Fist grow with fainted allies and hits taken, which
+    # the calculator is not told: the turn is partly modelled, never full
+    outs = attack("lastrespects", dex=dex, moves=moves, calc=calc)
+    assert outs and all("power:lastrespects" in o.partial for o in outs)
+    plain = attack("dragonclaw", dex=dex, moves=moves, calc=calc)
+    assert not any(o.partial for o in plain)

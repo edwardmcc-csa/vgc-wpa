@@ -61,6 +61,9 @@ NOT_AIMED = {
 # single-target moves, which Lightning Rod and Storm Drain can draw
 SINGLE = {"normal", "any", "adjacentFoe", "randomNormal"}
 RODS = {"Electric": "lightningrod", "Water": "stormdrain"}
+# moves whose power grows with the game so far (fainted allies, hits taken),
+# which the calculator is not told
+HISTORY_POWER = {"lastrespects", "ragefist"}
 WEATHER_ROCKS = {
     "sunnyday": "heatrock",
     "raindance": "damprock",
@@ -1106,6 +1109,8 @@ class Resolver:
 
     def _attack(self, w: _World, role: str, a: Action, m: Mapping) -> list[_World]:
         mv = a.move
+        if mv in HISTORY_POWER:
+            w.partial.add(f"power:{mv}")
         if mv in {"suckerpunch", "thunderclap"} and not self._sucker_ok(w, role, a):
             return [w]
         if m.get("target") == "randomNormal" and a.target is None:
