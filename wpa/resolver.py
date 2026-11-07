@@ -896,7 +896,11 @@ class Resolver:
         if m.get("selfSwitch"):
             out = [x for b in out for x in self._self_switch(b, role, a.user)]
         if m.get("forceSwitch"):
-            out = [x for b in out for tgt in targets[:1] for x in self._drag(b, tgt)]
+            # no target left (it fell earlier in the turn): the move fails, the
+            # board stays
+            out = [
+                x for b in out for x in (self._drag(b, targets[0]) if targets else [b])
+            ]
         return out
 
     def _accuracy(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> float:

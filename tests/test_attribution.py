@@ -334,3 +334,13 @@ def test_an_obviously_losing_switch_costs_a_lot(tools):
     # the other player's view of the same turn is its mirror
     them = tv.for_role("p2")
     assert them(blitz, out) == pytest.approx(1 - value(out, blitz))
+
+
+def test_a_pair_with_no_boards_is_an_error_not_a_blank():
+    class Nothing:
+        def resolve(self, sides, fld, actions):
+            return []
+
+    tv = A.TurnValues(Nothing(), {"p1": [], "p2": []}, None, lambda outs: [])
+    with pytest.raises(ValueError, match="no boards"):
+        tv((SD,), (PR,))

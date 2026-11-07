@@ -225,6 +225,9 @@ class TurnValues:
                 copy.deepcopy(self.fld),
                 {"p1": p1, "p2": p2},
             )
+        empty = [k for k in todo if not got[k]]
+        if empty:
+            raise ValueError(f"the resolver gave no boards for {empty[0]}")
         flat = [o for k in todo for o in got[k]]
         wps = np.asarray(self.board_wp(flat), dtype=float)
         i = 0

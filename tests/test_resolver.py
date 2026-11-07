@@ -353,3 +353,21 @@ def test_lightning_rod_draws_single_target_electric_moves(dex, moves, calc):
     outs = R.Resolver(dex, moves, calc, sheets, spreads).resolve(b, R.Field(), acts)
     assert all(o.sides["p2"][0]["hp_fraction"] == 1.0 for o in outs)  # drawn to Raichu
     assert all(o.sides["p2"][1]["hp_fraction"] == 1.0 for o in outs)  # which absorbs it
+
+
+def test_roar_at_an_ally_that_fell_first_keeps_the_board(dex, moves, calc):
+    # Roar moves last; by then the ally it aims at is gone, and the turn goes on
+    acts = {
+        "p1": (
+            Action(0, "move", move="dragonclaw", target=("foe", 0)),
+            Action(1, "move", move="protect"),
+        ),
+        "p2": (
+            Action(0, "move", move="swordsdance"),
+            Action(1, "move", move="roar", target=("ally", 0)),
+        ),
+    }
+    outs = resolver(dex, moves, calc).resolve(board(target_hp=0.01), R.Field(), acts)
+    assert outs
+    assert sum(o.prob for o in outs) == pytest.approx(1.0)
+    assert all(o.sides["p2"][0]["fainted"] for o in outs)
