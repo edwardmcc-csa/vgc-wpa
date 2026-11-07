@@ -157,7 +157,7 @@ this brief on 6 Nov, and DEFINITIONS is now at revision 8.
       against the average choice** (§4), always both.
       *First look done here on 62 Reg M-A and 112 Reg M-B games (the start of
       the same fixed sample). The whole sample runs on the PO's computer
-      overnight: runbook Section 18, step 2.*
+      overnight: runbook Section 18, step 3.*
 - [x] **The plan's M5 tests:**
       - the parts add up to the whole swing at every decision point, within 0.001;
       - a scripted turn where only a critical hit differs: the dice get it, and
