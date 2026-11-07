@@ -55,17 +55,19 @@ this brief on 6 Nov, and DEFINITIONS is now at revision 8.
 ## Tasks
 
 ### Task 0 — Carried over from Week 8
-- [ ] **Blank sheets with team preview** (decision 3). With `--blank`, the
+- [x] **Blank sheets with team preview** (decision 3). With `--blank`, the
       opponent's six species are known from team preview. Their
       items, abilities and moves stay hidden until revealed, and their natures and
       spreads stay hidden. Tests first. Rebuild the blank table, retrain one-sided,
       and report the loss against full sheets beside Week 8's.
+      *Done 6 Nov: no measurable difference from Week 8's blank run; both
+      formats pass the gate (Week 9 report, Task 0).*
 - [x] **The PO's full-data v4 and the test opening:** the results are folded into
       this week's report, per format, against Week 7's test numbers. *Done 6 Nov:
       both formats pass on test (Week 8 report, addendum).*
 
 ### Task 1 — The choices on offer
-- [ ] At each move-selection decision point, for each of the player's active
+- [x] At each move-selection decision point, for each of the player's active
       Pokemon, list:
       - each move on its sheet it can use, with each legal target. This respects
         Choice lock, Fake Out after the first turn, and anything else group H
@@ -76,26 +78,26 @@ this brief on 6 Nov, and DEFINITIONS is now at revision 8.
 
       A choice is one option per active Pokemon, with impossible pairs removed
       (both switching to the same Pokemon, for example).
-- [ ] **Real-data check per format:** every choice the logs show a player making is
+- [x] **Real-data check per format:** every choice the logs show a player making is
       in the list. Anything else is listed and explained. A Pokemon that fainted or
       flinched before moving shows no choice, so it is counted separately.
-- [ ] Report how many choices a typical decision point offers.
-- [ ] Tests first.
+- [x] Report how many choices a typical decision point offers.
+- [x] Tests first.
 
 ### Task 2 — What can happen this turn (M3: the turn resolver)
-- [ ] Given a board, both sides' choices and the spread estimates, list every
+- [x] Given a board, both sides' choices and the spread estimates, list every
       possible next board with its chance. The chances add up to 1.
-- [ ] **Order:** priority, then Speed, including Tailwind, Trick Room, paralysis
+- [x] **Order:** priority, then Speed, including Tailwind, Trick Room, paralysis
       and stat stages. A Speed tie is 50/50, and it is luck (§8).
-- [ ] **Damage** from the Smogon calculator:
+- [x] **Damage** from the Smogon calculator:
       - all 16 rolls and the critical-hit branch kept separate;
       - spread moves at reduced damage;
       - accuracy;
       - a Pokemon knocked out before it moves does not act.
-- [ ] **Protect** and its chance of working; **Fake Out** flinch.
-- [ ] **Field moves** start their timers from the durations table: Tailwind, Trick
+- [x] **Protect** and its chance of working; **Fake Out** flinch.
+- [x] **Field moves** start their timers from the durations table: Tailwind, Trick
       Room, screens, weather and terrain.
-- [ ] **Common secondary effects as luck branches:**
+- [x] **Common secondary effects as luck branches:**
       - Speed drops (Icy Wind, Electroweb);
       - Snarl;
       - Intimidate on switching in;
@@ -104,9 +106,9 @@ this brief on 6 Nov, and DEFINITIONS is now at revision 8.
 
       Anything not modelled is listed. A turn that uses it is marked "partly
       modelled", never silently treated as fully understood.
-- [ ] Identical next boards are merged. Different HP from different rolls are
+- [x] Identical next boards are merged. Different HP from different rolls are
       different boards.
-- [ ] **The plan's M3 tests,** checked against the calculator run on its own:
+- [x] **The plan's M3 tests,** checked against the calculator run on its own:
       - a known knock-out range;
       - a 50/50 knock-out roll;
       - an accuracy check;
@@ -114,31 +116,38 @@ this brief on 6 Nov, and DEFINITIONS is now at revision 8.
       - every list adds up to 1;
       - two different rolls that both leave the target standing give two
         different boards, never one averaged board.
-- [ ] **Real-data check per format:** for real turns, the board that actually came
+- [x] **Real-data check per format:** for real turns, the board that actually came
       next is among the resolver's outcomes: hit points within the roll range,
       the same knock-outs, the same order. Report the share of turns fully
       modelled, and the share where the real outcome is found.
-- [ ] **Stop rule:** if fewer than 70% of Reg M-A turns are fully modelled, stop and
+- [x] **Stop rule:** if fewer than 70% of Reg M-A turns are fully modelled, stop and
       report before Task 4.
 
 ### Task 3 — What the opponent was likely to do (§7)
-- [ ] A model of the choice each Pokemon makes, learned from the training split,
+- [x] A model of the choice each Pokemon makes, learned from the training split,
       like the bring model. It uses the board and each option's own features:
       expected damage, knock-out chance, Protect, switching.
-- [ ] **Test per format on validation:** it beats a uniform guess over the legal
+- [x] **Test per format on validation:** it beats a uniform guess over the legal
       options (the mean log chance of the choice actually made).
-- [ ] It uses nothing from later in the game. Cutting a game after a decision
+- [x] It uses nothing from later in the game. Cutting a game after a decision
       changes nothing.
 
 ### Task 4 — A choice's expected win probability
-- [ ] For a decision point and one of our choices: v4's win probability of each
+- [x] For a decision point and one of our choices: v4's win probability of each
       possible next board, averaged with the opponent model's chances (Task 3) and
       the resolver's chances (Task 2).
-- [ ] The opponent's least likely replies may be dropped to save time, keeping at
+- [x] The opponent's least likely replies may be dropped to save time, keeping at
       least 95% of the chance. The report says how much was kept.
+      *Done differently, 6 Nov: the likeliest 6 replies cover only about a third
+      of the chance, so the rest is drawn in proportion to it instead of
+      dropped. None is dropped; the report says how much is taken exactly
+      (decision 5 in the report).*
 - [ ] **This is `WP_public`.** Spreads we cannot see are averaged over as hidden
       information. They are not luck.
-- [ ] **Time per decision point is measured.** The report says whether the whole
+      *Not done: each Pokemon gets its single most likely spread, and what that
+      misses lands in the dice. Averaging over the likeliest 2 or 3 is decision
+      3 in the report.*
+- [x] **Time per decision point is measured.** The report says whether the whole
       validation split fits in a night on the PO's computer.
 
 ### Task 5 — Decision versus luck, a first look (M5, part 1)
@@ -146,24 +155,30 @@ this brief on 6 Nov, and DEFINITIONS is now at revision 8.
       sets), at each move-selection decision point, split the swing as the PO
       decides below. Report it with **cost against the best choice** and **cost
       against the average choice** (§4), always both.
-- [ ] **The plan's M5 tests:**
+      *First look done here on 62 Reg M-A and 112 Reg M-B games (the start of
+      the same fixed sample). The whole sample runs on the PO's computer
+      overnight: runbook Section 18, step 2.*
+- [x] **The plan's M5 tests:**
       - the parts add up to the whole swing at every decision point, within 0.001;
       - a scripted turn where only a critical hit differs: the dice get it, and
         the decision part is about 0;
       - a scripted turn with an obviously losing switch: the decision part is
         strongly negative.
-- [ ] **For the PO to judge:** the 10 biggest swings per format, each with its
+- [x] **For the PO to judge:** the 10 biggest swings per format, each with its
       split and the replay link.
+      *Done on the first-look sample (Week 9 report, Task 5).*
 
 ### Task 6 — How much does win probability wobble? (§10.2)
-- [ ] DEFINITIONS §10.2 requires this before M7: if the model's own noise is above
+- [x] DEFINITIONS §10.2 requires this before M7: if the model's own noise is above
       0.5 points, the report would show noise as insight. Training is
       deterministic, so the honest measure is to retrain v4 on three resamples of
       the training sets. Then measure how much win probability moves on the same
       validation positions, per format, against the 0.5-point threshold.
+      *Done: about 3 points in both formats, six times the threshold. The PO's
+      decision on ensemble and threshold is open (report, decision 1).*
 
 ### Task 7 — Runbook and report
-- [ ] Runbook section for this week's commands. A report in prose, with a
+- [x] Runbook section for this week's commands. A report in prose, with a
       surprises section.
 
 ## Out of scope this week
