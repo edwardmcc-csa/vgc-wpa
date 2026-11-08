@@ -319,7 +319,9 @@ class TurnValues:
 
 def wp_model(models: Path, fmt: str, groups: str):
     """v4's prediction as the Week 8 test opening used it: Reg M-A's model
-    (recalibrated if it was), Reg M-B the pooled model with its temperature."""
+    (recalibrated if it was), Reg M-B the pooled model with its temperature; or
+    the averaged model, when `wpa.ensemble finish` has made one."""
+    from wpa.ensemble import load_averaged
     from wpa.evaluate import _temperature, apply_temperature, use_recalibration
     from wpa.features import columns
     from wpa.model import load
@@ -327,11 +329,17 @@ def wp_model(models: Path, fmt: str, groups: str):
     which = "pooled" if fmt == "regmb" else fmt
     d = Path(models) / which
     cols = columns(groups) + (["z_format_regmb"] if which == "pooled" else [])
-    model = load(d / f"{groups}.pkl", cols)
-    recal = d / f"{groups}.recal.pkl"
-    if recal.exists() and use_recalibration(fmt):
-        model = load(recal, cols)
-    temp = _temperature(d, groups) if fmt == "regmb" else None
+    # the averaged model (Week 10, DEFINITIONS §10.2 revision 9) when there is
+    # one: it carries its own Reg M-B temperature
+    avg = load_averaged(Path(models), which, groups, cols)
+    if avg is not None:
+        model, temp = avg, None
+    else:
+        model = load(d / f"{groups}.pkl", cols)
+        recal = d / f"{groups}.recal.pkl"
+        if recal.exists() and use_recalibration(fmt):
+            model = load(recal, cols)
+        temp = _temperature(d, groups) if fmt == "regmb" else None
 
     def predict(X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=np.float32)
