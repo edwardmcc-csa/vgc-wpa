@@ -231,8 +231,15 @@ class _World:
             self.winner,
         )
 
-    def key(self, resolution: float | None) -> tuple:
+    def key(self, resolution: float | None, coarsen: int = 0) -> tuple:
+        """The board's identity, hit points on the `resolution` grid. `coarsen`
+        k > 0 is the cap's grid: 2**k whole cells of the base grid (the
+        resolution, or 0.01) per cell, so each grid nests in the next."""
+        base = resolution or 0.01
+
         def hp(x: float) -> float:
+            if coarsen:
+                return round(x / base) >> coarsen
             return round(x / resolution) * resolution if resolution else round(x, 12)
 
         mons = tuple(
@@ -271,20 +278,77 @@ class _World:
 
 
 def _merge(
-    worlds: Sequence[_World], resolution: float | None, prune: float = 0.0
+    worlds: Sequence[_World],
+    resolution: float | None,
+    prune: float = 0.0,
+    coarsen: int = 0,
 ) -> list[_World]:
-    """Identical boards merged (hit points to `resolution`, if given); boards
-    less likely than `prune` dropped (the caller renormalises)."""
+    """Identical boards merged (hit points to `resolution`, if given, or to the
+    cap's grid `coarsen`); boards less likely than `prune` dropped (the caller
+    renormalises)."""
     out: dict[tuple, _World] = {}
     for w in worlds:
         if w.p <= prune:
             continue
-        k = w.key(resolution)
+        k = w.key(resolution, coarsen)
         if k in out:
             out[k].p += w.p
         else:
             out[k] = w
     return list(out.values())
+
+
+class _Pool:
+    """Boards merged as they arrive: the same boards and chances as `_merge` over
+    all of them at once, without holding them all (two real turns made about
+    89,000 boards in one step before the merge at its end).
+
+    With a `cap`, the grid is coarsened as the pool grows, as `Resolver._capped`
+    does at the end, and lands on the same grid with the same boards: the cap's
+    grids nest, so merging on a grid and then on the next is merging on the next
+    (the first board in each cell is kept, the chances add), and a pool that is
+    over the cap on a grid means every board together is over it too."""
+
+    def __init__(
+        self, resolution: float | None, prune: float = 0.0, cap: int | None = None
+    ) -> None:
+        self.resolution, self.prune, self.cap = resolution, prune, cap
+        self.level = 0  # the cap's grid boards are keyed on now (0: none)
+        self.coarsest = 0.0  # the coarser grid the cap needed (0: none)
+        self.peak = 0  # the most boards held at once: the pool and one arrival
+        self._out: dict[tuple, _World] = {}
+
+    def add(self, worlds: Sequence[_World]) -> None:
+        out = self._out
+        self.peak = max(self.peak, len(out) + len(worlds))
+        for w in worlds:
+            if w.p <= self.prune:
+                continue
+            k = w.key(self.resolution, self.level)
+            if k in out:
+                out[k].p += w.p
+            else:
+                out[k] = w
+        if self.cap is not None and len(out) > self.cap:
+            self._coarsen()
+
+    def _coarsen(self) -> None:
+        assert self.cap is not None
+        base = self.resolution or 0.01
+        while len(self._out) > self.cap and base * 2**self.level < 0.5:
+            self.level += 1
+            new: dict[tuple, _World] = {}
+            for w in self._out.values():
+                k = w.key(self.resolution, self.level)
+                if k in new:
+                    new[k].p += w.p
+                else:
+                    new[k] = w
+            self._out = new
+        self.coarsest = base * 2**self.level
+
+    def worlds(self) -> list[_World]:
+        return list(self._out.values())
 
 
 def _other(role: str) -> str:
@@ -323,6 +387,7 @@ class Resolver:
         self.sheets, self.spreads = sheets, spreads
         self.resolution, self.prune, self.cap = resolution, prune, cap
         self.coarsest = resolution or 0.0  # the grid the last resolve needed
+        self.held = 0  # the most boards the last resolve held at once in a step
         self._hp: dict = {}
         self._dmg: dict = {}  # damage answers by what changes them
         self._spe: dict = {}
@@ -410,19 +475,23 @@ class Resolver:
                         start.partial.add("substitute hit points")
         worlds = self._switches(start, actions)
         worlds = [w2 for w in worlds for w2 in self._megas(w, actions)]
-        out: list[_World] = []
+        end = _Pool(self.resolution, self.prune)
+        self.held = 0
         for w in worlds:
             for order, p in self._orders(w, actions):
                 branch = [w.clone(w.p * p)]
                 for role, act in order:
-                    nxt: list[_World] = []
+                    # merged, and capped, as they arrive: a step never holds
+                    # every board it makes at once
+                    pool = _Pool(self.resolution, self.prune, self.cap)
                     for b in branch:
-                        nxt += self._act(b, role, act)
-                    branch = self._capped(_merge(nxt, self.resolution, self.prune))
-                out += branch
-        out = _merge(
-            [e for w in out for e in self._end_of_turn(w)], self.resolution, self.prune
-        )
+                        pool.add(self._act(b, role, act))
+                    branch = pool.worlds()
+                    self.coarsest = max(self.coarsest, pool.coarsest)
+                    self.held = max(self.held, pool.peak)
+                for b in branch:
+                    end.add(self._end_of_turn(b))
+        out = end.worlds()
         total = sum(w.p for w in out)
         self.dropped = max(0.0, 1.0 - total)
         return [
@@ -435,11 +504,11 @@ class Resolver:
         Nothing is dropped; the grid used is kept in `coarsest`."""
         if self.cap is None or len(worlds) <= self.cap:
             return worlds
-        res = max(self.resolution or 0.01, 0.01)
-        while len(worlds) > self.cap and res < 0.5:
-            res *= 2
-            worlds = _merge(worlds, res)
-        self.coarsest = max(self.coarsest, res)
+        base, level = self.resolution or 0.01, 0
+        while len(worlds) > self.cap and base * 2**level < 0.5:
+            level += 1
+            worlds = _merge(worlds, self.resolution, 0.0, level)
+        self.coarsest = max(self.coarsest, base * 2**level)
         return worlds
 
     # ------------------------------------------------------------- switching
