@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import product
 
 from wpa.decisions import ROLES, _Board, to_id
@@ -118,12 +118,35 @@ def options(
     return out
 
 
+# moves that switch the user out; which Pokemon comes in is part of the choice
+# (Week 10): an Action's `switch_to` on one of these is the Pokemon it brought in
+PIVOT_MOVES = {
+    "uturn",
+    "voltswitch",
+    "flipturn",
+    "partingshot",
+    "batonpass",
+    "chillyreception",
+    "shedtail",
+    "teleport",
+}
+
+
+def base(a: Action) -> Action:
+    """The option as `options` lists it: a switching move without the Pokemon it
+    brought in."""
+    if a.kind == "move" and a.switch_to is not None:
+        return replace(a, switch_to=None)
+    return a
+
+
 def joint(opts: Mapping[int, Sequence[Action]]) -> list[tuple[Action, ...]]:
-    """Every allowed pair (or single, with one Pokemon active) of actions."""
+    """Every allowed pair (or single, with one Pokemon active) of actions. Two
+    actions cannot bring in the same Pokemon, by a switch or a switching move."""
     keys = sorted(opts)
     out = []
     for combo in product(*(opts[k] for k in keys)):
-        to = [a.switch_to for a in combo if a.kind == "switch"]
+        to = [a.switch_to for a in combo if a.switch_to is not None]
         if len(to) != len(set(to)) or sum(a.mega for a in combo) > 1:
             continue
         out.append(tuple(combo))
@@ -222,6 +245,20 @@ def turns(log: str, dex: Dex | None = None) -> list[Turn]:
                 new = board._index(role, p[2], p[3])
                 if old is not None and taken.get(old) == "none" and new is not None:
                     taken[old] = Action(old, "switch", switch_to=new)
+            elif t == "switch" and moved and len(p) > 3:
+                # a switching move's switch-in, during the turn: part of its choice
+                old = board.slots[role].get(p[2][2:3]) if len(p[2]) > 2 else None
+                new = board._index(role, p[2], p[3])
+                act = taken.get(old) if old is not None else None
+                if (
+                    old is not None
+                    and isinstance(act, Action)
+                    and act.kind == "move"
+                    and act.move in PIVOT_MOVES
+                    and act.switch_to is None
+                    and new is not None
+                ):
+                    taken[old] = replace(act, switch_to=new)
             elif t == "-mega":
                 idx = board._index(role, p[2])
                 if idx is not None:
@@ -316,7 +353,7 @@ def check(log: str, dex: Dex, sheets: Mapping | None = None) -> Counter:
                 counts["target_hidden" if same else "out"] += 1
                 if not same:
                     counts[f"out:move:{act.move}"] += 1
-            elif act in opts.get(idx, []):
+            elif base(act) in opts.get(idx, []):
                 counts["in"] += 1
             else:
                 counts["out"] += 1

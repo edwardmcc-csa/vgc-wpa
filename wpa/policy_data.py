@@ -153,6 +153,7 @@ def examples_for_game(
         j = timers[t.role].get(t.turn)
         feats = turn_options(t, j, sheets, spreads, dex, moves, rates, calc, odds)
         for idx, act in usable.items():
+            act = C.base(act)  # a switching move is listed without its switch-in
             if idx in feats and act in feats[idx][0]:
                 o, X = feats[idx]
                 out.append((X, o.index(act)))

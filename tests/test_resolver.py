@@ -470,3 +470,200 @@ def test_when_both_last_pokemon_would_fall_the_side_whose_last_goes_first_loses(
     assert all(not o.sides["p1"][1]["fainted"] for o in outs)  # the game ended first
     outs = resolver(dex, moves, calc).resolve(b, R.Field(trickroom=3), QUIET)
     assert all(o.winner == "p2" for o in outs)  # Garchomp goes before Whimsicott
+
+
+# ------------------------------------- moves that switch the user out (Week 10 Task 3)
+
+BENCH = SheetMon(3, "dragonite", "", "multiscale", ("extremespeed", "protect"), "")
+
+
+def with_bench():
+    """p1 with Dragonite on the bench (third on the sheet)."""
+    b = board()
+    b["p1"].append(dict(mon("dragonite"), active=False))  # seen on the bench
+    sheets = dict(SHEETS, p1=(*SHEETS["p1"], BENCH))
+    spreads = {**SPREADS, ("p1", 2): FULL}
+    return b, sheets, spreads
+
+
+def run(acts1, acts2, b, sheets, spreads, *, dex, moves, calc, fld=None):
+    return R.Resolver(dex, moves, calc, sheets, spreads).resolve(
+        b, fld or R.Field(), {"p1": acts1, "p2": acts2}
+    )
+
+
+def test_u_turn_brings_in_the_chosen_pokemon_after_its_hit(dex, moves, calc):
+    b, sh, sp = with_bench()
+    u = Action(0, "move", move="uturn", target=("foe", 0), switch_to=2)
+    outs = run(
+        (u, QUIET["p1"][1]), QUIET["p2"], b, sh, sp, dex=dex, moves=moves, calc=calc
+    )
+    for o in outs:
+        assert o.sides["p1"][2]["active"] and not o.sides["p1"][0]["active"]
+        assert o.sides["p2"][0]["hp_fraction"] < 1.0
+    assert not any(o.partial for o in outs)
+
+
+def test_no_switch_when_the_hit_did_not_land(dex, moves, calc):
+    b, sh, sp = with_bench()
+    u = Action(
+        0, "move", move="uturn", target=("foe", 1), switch_to=2
+    )  # Whimsicott protects
+    outs = run(
+        (u, QUIET["p1"][1]), QUIET["p2"], b, sh, sp, dex=dex, moves=moves, calc=calc
+    )
+    assert all(o.sides["p1"][0]["active"] for o in outs)
+    # Volt Switch into a Ground type: immune, so no switch either
+    sheets = dict(
+        sh, p2=(SheetMon(1, "garchomp", "", "roughskin", ("protect",), ""), sh["p2"][1])
+    )
+    b2, _sh, _sp = with_bench()
+    b2["p2"][0]["species"] = "garchomp"
+    v = Action(0, "move", move="voltswitch", target=("foe", 0), switch_to=2)
+    outs = run(
+        (v, QUIET["p1"][1]),
+        QUIET["p2"],
+        b2,
+        sheets,
+        sp,
+        dex=dex,
+        moves=moves,
+        calc=calc,
+    )
+    assert all(o.sides["p1"][0]["active"] for o in outs)
+
+
+def test_parting_shot_lowers_both_attacks_then_switches(dex, moves, calc):
+    b, sh, sp = with_bench()
+    ps = Action(0, "move", move="partingshot", target=("foe", 0), switch_to=2)
+    outs = run(
+        (ps, QUIET["p1"][1]), QUIET["p2"], b, sh, sp, dex=dex, moves=moves, calc=calc
+    )
+    for o in outs:
+        assert o.sides["p2"][0]["boosts"].get("atk") == 1  # Swords Dance +2, then -1
+        assert o.sides["p2"][0]["boosts"].get("spa") == -1
+        assert o.sides["p1"][2]["active"]
+    into = Action(0, "move", move="partingshot", target=("foe", 1), switch_to=2)
+    outs = run(
+        (into, QUIET["p1"][1]), QUIET["p2"], b, sh, sp, dex=dex, moves=moves, calc=calc
+    )
+    assert all(o.sides["p1"][0]["active"] for o in outs)  # protected: no switch
+
+
+def test_baton_pass_hands_over_stat_changes_the_perish_count_and_a_substitute(
+    dex, moves, calc
+):
+    b, sh, sp = with_bench()
+    b["p1"][0].update(boosts={"atk": 2, "spe": 1}, perish=2, sub=40)
+    bp = Action(0, "move", move="batonpass", switch_to=2)
+    outs = run(
+        (bp, QUIET["p1"][1]), QUIET["p2"], b, sh, sp, dex=dex, moves=moves, calc=calc
+    )
+    for o in outs:
+        new = o.sides["p1"][2]
+        assert new["active"] and new["boosts"] == {"atk": 2, "spe": 1}
+        assert new["perish"] == 1  # passed at 2, counted down at the end of the turn
+        assert new["sub"] == 40
+        assert "sub" not in o.sides["p1"][0] and not o.sides["p1"][0]["boosts"]
+
+
+def test_chilly_reception_sets_snow_then_switches(dex, moves, calc):
+    b, sh, sp = with_bench()
+    cr = Action(0, "move", move="chillyreception", switch_to=2)
+    outs = run(
+        (cr, QUIET["p1"][1]), QUIET["p2"], b, sh, sp, dex=dex, moves=moves, calc=calc
+    )
+    for o in outs:
+        assert o.field.weather == "snowscape" and o.sides["p1"][2]["active"]
+
+
+def test_shed_tail_costs_half_and_leaves_a_substitute(dex, moves, calc):
+    b, sh, sp = with_bench()
+    st = Action(0, "move", move="shedtail", switch_to=2)
+    rv = R.Resolver(dex, moves, calc, sh, sp)
+    outs = rv.resolve(b, R.Field(), {"p1": (st, QUIET["p1"][1]), "p2": QUIET["p2"]})
+    quarter = rv.max_hp("p1", 0) // 4
+    for o in outs:
+        assert o.sides["p1"][0]["hp_fraction"] == pytest.approx(0.5, abs=0.01)
+        assert o.sides["p1"][2]["active"] and o.sides["p1"][2]["sub"] == quarter
+    b["p1"][0]["hp_fraction"] = 0.5  # half or less: it fails
+    outs = rv.resolve(b, R.Field(), {"p1": (st, QUIET["p1"][1]), "p2": QUIET["p2"]})
+    assert all(
+        o.sides["p1"][0]["active"] and o.sides["p1"][0]["hp_fraction"] == 0.5
+        for o in outs
+    )
+
+
+def test_a_substitute_takes_the_hit_and_blocks_status_but_not_sound(dex, moves, calc):
+    b = board()
+    b["p2"][0]["sub"] = 30  # Incineroar's substitute, 30 hit points
+    hit = Action(0, "move", move="dragonclaw", target=("foe", 0))
+    outs = attack_with(b, (hit, QUIET["p1"][1]), dex=dex, moves=moves, calc=calc)
+    for o in outs:
+        assert o.sides["p2"][0]["hp_fraction"] == 1.0  # behind the substitute
+        assert "sub" not in o.sides["p2"][0] or o.sides["p2"][0]["sub"] < 30
+    wisp = Action(1, "move", move="willowisp", target=("foe", 0))
+    outs = attack_with(b, (QUIET["p1"][0], wisp), dex=dex, moves=moves, calc=calc)
+    assert all(o.sides["p2"][0]["status"] == "" for o in outs)  # blocked
+    voice = Action(0, "move", move="hypervoice")  # a sound move goes through
+    outs = attack_with(b, (voice, QUIET["p1"][1]), dex=dex, moves=moves, calc=calc)
+    assert any(o.sides["p2"][0]["hp_fraction"] < 1.0 for o in outs)
+    # making one: a quarter of its hit points
+    b2 = board()
+    rv = resolver(dex, moves, calc)
+    sub = Action(0, "move", move="substitute")
+    outs = rv.resolve(b2, R.Field(), {"p1": (sub, QUIET["p1"][1]), "p2": QUIET["p2"]})
+    for o in outs:
+        assert o.sides["p1"][0]["sub"] == rv.max_hp("p1", 0) // 4
+        assert o.sides["p1"][0]["hp_fraction"] == pytest.approx(0.75, abs=0.01)
+
+
+def attack_with(b, p1, *, dex, moves, calc):
+    return resolver(dex, moves, calc).resolve(
+        b, R.Field(), {"p1": p1, "p2": QUIET["p2"]}
+    )
+
+
+def test_a_switch_in_the_choice_does_not_name_is_partly_modelled(dex, moves, calc):
+    b, sh, sp = with_bench()
+    u = Action(0, "move", move="uturn", target=("foe", 0))  # no switch_to
+    outs = run(
+        (u, QUIET["p1"][1]), QUIET["p2"], b, sh, sp, dex=dex, moves=moves, calc=calc
+    )
+    assert all("switch-in after a pivot move" in o.partial for o in outs)
+
+
+def test_eject_button_and_eject_pack_are_marked_partly_modelled(dex, moves, calc):
+    b = board()
+    b["p2"][0]["item"] = "ejectbutton"
+    b["p2"].append(dict(mon("garchomp"), active=False))  # something to switch to
+    sheets = dict(SHEETS, p2=(*SHEETS["p2"], SHEETS["p1"][0]))
+    rv = R.Resolver(dex, moves, calc, sheets, {**SPREADS, ("p2", 2): BULK})
+    hit = Action(0, "move", move="dragonclaw", target=("foe", 0))
+    outs = rv.resolve(b, R.Field(), {"p1": (hit, QUIET["p1"][1]), "p2": QUIET["p2"]})
+    assert any(o.sides["p2"][2]["active"] for o in outs)
+    assert all(
+        "eject button" in o.partial for o in outs if o.sides["p2"][0]["hp_fraction"] < 1
+    )
+    b = board()
+    b["p2"][0]["item"] = "ejectpack"
+    ps = Action(
+        0, "move", move="partingshot", target=("foe", 0)
+    )  # nothing to switch to
+    outs = attack_with(b, (ps, QUIET["p1"][1]), dex=dex, moves=moves, calc=calc)
+    assert all("eject pack" in o.partial for o in outs)
+
+
+def test_a_substitute_already_up_holds_a_quarter_and_a_hit_one_is_partly_modelled(
+    dex, moves, calc
+):
+    b = board()
+    b["p2"][0]["sub_up"] = "full"
+    hit = Action(0, "move", move="dragonclaw", target=("foe", 0))
+    rv = resolver(dex, moves, calc)
+    outs = rv.resolve(b, R.Field(), {"p1": (hit, QUIET["p1"][1]), "p2": QUIET["p2"]})
+    assert all(o.sides["p2"][0]["hp_fraction"] == 1.0 for o in outs)
+    assert not any(o.partial for o in outs)
+    b["p2"][0]["sub_up"] = "hit"
+    outs = rv.resolve(b, R.Field(), {"p1": (hit, QUIET["p1"][1]), "p2": QUIET["p2"]})
+    assert all("substitute hit points" in o.partial for o in outs)

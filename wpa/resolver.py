@@ -198,6 +198,7 @@ class _World:
     # this action only: targets hit, damage dealt by the user
     hit: set = field(default_factory=set)
     dealt: int = 0
+    subbed: set = field(default_factory=set)  # targets whose substitute took it
     winner: str | None = None  # the game ended this turn (Perish Song's order)
 
     def clone(self, p: float | None = None) -> _World:
@@ -226,6 +227,7 @@ class _World:
             dict(self.replaced),
             set(self.hit),
             self.dealt,
+            set(self.subbed),
             self.winner,
         )
 
@@ -246,6 +248,7 @@ class _World:
                 m["last_move"],
                 m["protect_streak"],
                 m.get("perish", 0),
+                m.get("sub", 0),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -396,6 +399,15 @@ class Resolver:
             copy.deepcopy(fld),
             set(),
         )
+        for r in ROLES:
+            for j, x in enumerate(start.sides[r]):
+                # a substitute the board says is up: a quarter of the hit points,
+                # unless it has been hit (the log never shows what is left)
+                up = x.pop("sub_up", None)
+                if up and not x.get("sub") and x["active"]:
+                    x["sub"] = self.max_hp(r, j) // 4
+                    if up == "hit":
+                        start.partial.add("substitute hit points")
         worlds = self._switches(start, actions)
         worlds = [w2 for w in worlds for w2 in self._megas(w, actions)]
         out: list[_World] = []
@@ -476,6 +488,8 @@ class Resolver:
         o.update(active=False, boosts={}, moved=False, last_move="", protect_streak=0)
         o.pop("perish", None)  # switching out ends the count
         n.pop("perish", None)
+        o.pop("sub", None)  # and a substitute
+        n.pop("sub", None)
         if n["hp_fraction"] <= 0:
             n["hp_fraction"] = 1.0  # first time in
         n.update(active=True, boosts={}, moved=False, last_move="", protect_streak=0)
@@ -502,6 +516,8 @@ class Resolver:
         if ab == "mirrorarmor":
             return  # reflected; the user's side is not tracked here
         self._boost(st, {"atk": -1})
+        if st.get("item") == "ejectpack":
+            w.partial.add("eject pack")
         if ab == "defiant":
             self._boost(st, {"atk": 2})
         elif ab == "competitive":
@@ -623,7 +639,7 @@ class Resolver:
         protect_used = mv in PROTECT_LIKE
         first_turn = not st["moved"]
         st["moved"], st["last_move"] = True, mv
-        w.hit, w.dealt = set(), 0
+        w.hit, w.dealt, w.subbed = set(), 0, set()
         if not protect_used:
             st["protect_streak"] = 0
         w.acted.add((role, a.user))
@@ -862,7 +878,11 @@ class Resolver:
             return [w]
         if m.get("weather"):
             self._set_weather(w, to_id(m["weather"]), st.get("item") or "")
+            if m.get("selfSwitch"):  # Chilly Reception
+                return self._self_switch(w, role, a.user, a.switch_to)
             return [w]
+        if mv in ("substitute", "shedtail"):
+            return self._substitute(w, role, a, m)
         if m.get("terrain"):
             self._set_terrain(w, to_id(m["terrain"]), st.get("item") or "")
             return [w]
@@ -893,10 +913,18 @@ class Resolver:
             return [w]
         out = [w]
         prankster = self.ability(role, a.user, st) == "prankster"
+        failed: set[int] = set()  # boards where the move did nothing (no switch)
+        # Parting Shot lowers both attacks in the move's code, not its data
+        drops = m.get("boosts") or (
+            {"atk": -1, "spa": -1} if mv == "partingshot" else None
+        )
         for tgt in targets:
             nxt = []
             for b in out:
-                if self._blocked(b, role, a, m, tgt, len(targets) > 1):
+                if self._blocked(b, role, a, m, tgt, len(targets) > 1) or (
+                    self._behind_sub(b, role, a, m, tgt)
+                ):
+                    failed.add(id(b))
                     nxt.append(b)
                     continue
                 if (
@@ -910,15 +938,27 @@ class Resolver:
                 hit = b.clone(b.p * acc) if acc < 1 else b
                 if acc < 1:
                     b.p *= 1 - acc
+                    failed.add(id(b))
                     nxt.append(b)
                 if m.get("status"):
                     self._inflict(hit, tgt, m["status"], mv)
-                if m.get("boosts"):
-                    self._drop(hit, tgt, m["boosts"])
+                if drops and not self._drop(hit, tgt, drops):
+                    if tgt[0] != role:
+                        failed.add(id(hit))  # Parting Shot: no drop, no switch
                 nxt.append(hit)
             out = nxt
         if m.get("selfSwitch"):
-            out = [x for b in out for x in self._self_switch(b, role, a.user)]
+            out = [
+                x
+                for b in out
+                for x in (
+                    [b]
+                    if id(b) in failed
+                    else self._self_switch(
+                        b, role, a.user, a.switch_to, m["selfSwitch"]
+                    )
+                )
+            ]
         if m.get("forceSwitch"):
             # no target left (it fell earlier in the turn): the move fails, the
             # board stays
@@ -978,10 +1018,11 @@ class Resolver:
             return
         t["status"] = status
 
-    def _drop(self, w: _World, tgt, boosts: Mapping[str, int]) -> None:
+    def _drop(self, w: _World, tgt, boosts: Mapping[str, int]) -> bool:
+        """Stat changes from another Pokemon's move; False if none took."""
         t = w.sides[tgt[0]][tgt[1]]
         if t["fainted"]:
-            return
+            return False
         ab = self.ability(tgt[0], tgt[1], t)
         lowering = any(v < 0 for v in boosts.values())
         if lowering and (
@@ -989,12 +1030,18 @@ class Resolver:
             or t.get("item") == "clearamulet"
             or "mist" in w.fld.sides[tgt[0]]
         ):
-            return
+            return False
+        before = dict(t["boosts"])
         self._boost(t, boosts)
+        if t["boosts"] == before:
+            return False  # already at the limit
+        if lowering and t.get("item") == "ejectpack":
+            w.partial.add("eject pack")  # it would switch out; not modelled
         if lowering and ab == "defiant":
             self._boost(t, {"atk": 2})
         elif lowering and ab == "competitive":
             self._boost(t, {"spa": 2})
+        return True
 
     def _heal(self, w: _World, role: str, idx: int, frac: float) -> None:
         st = w.sides[role][idx]
@@ -1010,18 +1057,68 @@ class Resolver:
             and (x["hp_fraction"] > 0 or x.get("_brought"))
         ]
 
-    def _self_switch(self, w: _World, role: str, idx: int) -> list[_World]:
+    def _self_switch(
+        self,
+        w: _World,
+        role: str,
+        idx: int,
+        to: int | None = None,
+        how: object = True,
+        sub: int | None = None,
+    ) -> list[_World]:
+        """The user switches out to `to` (the Pokemon its choice brings in);
+        without one, each Pokemon on the bench alike, marked partly modelled.
+        Baton Pass (`how` "copyvolatile") hands over stat changes, the Perish
+        count and a substitute; Shed Tail hands over a new substitute (`sub`)."""
         st = w.sides[role][idx]
         bench = self._bench(w, role)
         if st["fainted"] or not st["active"] or not bench:
             return [w]
-        w.partial.add("switch-in after a pivot move")
+        passed: dict = {}
+        if how == "copyvolatile":
+            passed = {
+                "boosts": dict(st["boosts"]),
+                "perish": st.get("perish"),
+                "sub": st.get("sub"),
+            }
+        elif how == "shedtail":
+            passed = {"sub": sub}
+        if to in bench:
+            picks = [to]
+        else:
+            w.partial.add("switch-in after a pivot move")
+            picks = bench
         out = []
-        for j in bench:
-            b = w.clone(w.p / len(bench))
+        for j in picks:
+            b = w.clone(w.p / len(picks))
             self._switch(b, role, idx, j)
+            new = b.sides[role][j]
+            for k, v in passed.items():
+                if v:
+                    new[k] = dict(v) if isinstance(v, dict) else v
             out.append(b)
         return out
+
+    def _eject_button(self, w: _World, role: str) -> list[_World]:
+        """A Pokemon holding an Eject Button that this move hit switches out. Its
+        player picks the Pokemon; here each on the bench alike, marked partly
+        modelled. Only the first one hit goes."""
+        for tgt in sorted(w.hit):
+            t = w.sides[tgt[0]][tgt[1]]
+            if tgt[0] == role or t["fainted"] or t.get("item") != "ejectbutton":
+                continue
+            bench = self._bench(w, tgt[0])
+            if not bench:
+                continue
+            w.partial.add("eject button")
+            t["item"] = ""
+            out = []
+            for j in bench:
+                b = w.clone(w.p / len(bench))
+                self._switch(b, tgt[0], tgt[1], j)
+                out.append(b)
+            return out
+        return [w]
 
     def _drag(self, w: _World, tgt) -> list[_World]:
         bench = self._bench(w, tgt[0])
@@ -1181,8 +1278,17 @@ class Resolver:
         for b in out:
             self._after_attack(b, role, a, m)
         out = [x for b in out for x in self._secondaries(b, role, a, m)]
+        out = [x for b in out for x in self._eject_button(b, role)]
         if m.get("selfSwitch"):
-            out = [x for b in out for x in self._self_switch(b, role, a.user)]
+            out = [
+                x
+                for b in out
+                for x in (
+                    self._self_switch(b, role, a.user, a.switch_to, m["selfSwitch"])
+                    if b.hit or b.subbed
+                    else [b]
+                )
+            ]
         return out
 
     def _grouped(
@@ -1233,6 +1339,15 @@ class Resolver:
         self, w: _World, role: str, a: Action, m: Mapping, tgt, dmg: int
     ) -> None:
         t = w.sides[tgt[0]][tgt[1]]
+        if t.get("sub") and tgt != (role, a.user) and not self._bypasses(role, a, m):
+            took = min(dmg, t["sub"])  # the substitute takes it, the Pokemon none
+            t["sub"] -= took
+            if t["sub"] <= 0:
+                t.pop("sub")
+            w.dealt += took
+            if dmg > 0:
+                w.subbed.add(tgt)
+            return
         max_hp = self.max_hp(*tgt)
         hp = round(t["hp_fraction"] * max_hp)
         new = max(0, hp - dmg)
@@ -1303,6 +1418,44 @@ class Resolver:
             if not _left(w, r):
                 w.winner = _other(r)
                 return
+
+    def _bypasses(self, role: str, a: Action, m: Mapping) -> bool:
+        """Sound moves (and others flagged so) and Infiltrator get past a
+        substitute."""
+        flags = m.get("flags") or []
+        user = self.sheets[role][a.user]
+        return "bypasssub" in flags or "sound" in flags or user.ability == "infiltrator"
+
+    def _behind_sub(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> bool:
+        """A status move aimed at another Pokemon's substitute does nothing."""
+        t = w.sides[tgt[0]][tgt[1]]
+        return (
+            tgt != (role, a.user)
+            and bool(t.get("sub"))
+            and not self._bypasses(role, a, m)
+        )
+
+    def _substitute(self, w: _World, role: str, a: Action, m: Mapping) -> list[_World]:
+        """Substitute: a quarter of the user's hit points into a substitute; fails
+        at a quarter or less. Shed Tail: half of them, fails at half or less, and
+        the substitute (a quarter) goes to the Pokemon that comes in."""
+        import math
+
+        st = w.sides[role][a.user]
+        max_hp = self.max_hp(role, a.user)
+        hp = round(st["hp_fraction"] * max_hp)
+        quarter = max_hp // 4
+        if a.move == "shedtail":
+            cost = math.ceil(max_hp / 2)
+            if st.get("sub") or hp <= cost or not self._bench(w, role):
+                return [w]
+            st["hp_fraction"] = (hp - cost) / max_hp
+            return self._self_switch(w, role, a.user, a.switch_to, "shedtail", quarter)
+        if st.get("sub") or hp <= quarter:
+            return [w]
+        st["hp_fraction"] = (hp - quarter) / max_hp
+        st["sub"] = quarter
+        return [w]
 
     def _faint(self, w: _World, who) -> None:
         st = w.sides[who[0]][who[1]]
@@ -1461,7 +1614,7 @@ class Resolver:
             fld.sides[r] = {k: v - 1 for k, v in fld.sides[r].items() if v - 1 > 0}
         w.protected, w.guards, w.flinched, w.acted = set(), set(), set(), set()
         w.redirect, w.helped, w.replaced = {}, set(), {}
-        w.hit, w.dealt = set(), 0
+        w.hit, w.dealt, w.subbed = set(), 0, set()
         return [w]
 
 

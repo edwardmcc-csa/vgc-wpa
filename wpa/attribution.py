@@ -172,6 +172,35 @@ def likely(full: Mix, top: int, draws: int, seed: str) -> tuple[Mix, float]:
     return list(head) + [(rest[i][0], share) for i in picks], exact
 
 
+def expand_pivots(
+    opts: Mapping[int, Sequence[Action]], chances: Mapping[int, Sequence[float]]
+) -> tuple[dict, dict]:
+    """Each switching move spread over the bench: the Pokemon it brings in is
+    part of the choice (Week 10), weighted by the opponent model's chances for
+    switching to each Pokemon. With nothing on the bench it stays as it is."""
+    from dataclasses import replace
+
+    from wpa.choices import PIVOT_MOVES
+
+    o2: dict = {}
+    c2: dict = {}
+    for i, o in opts.items():
+        ch = list(chances[i])
+        sw = {a.switch_to: p for a, p in zip(o, ch) if a.kind == "switch"}
+        total = sum(sw.values())
+        no, nc = [], []
+        for a, p in zip(o, ch):
+            if a.kind == "move" and a.move in PIVOT_MOVES and sw:
+                for j, q in sw.items():
+                    no.append(replace(a, switch_to=j))
+                    nc.append(p * (q / total if total > 0 else 1 / len(sw)))
+            else:
+                no.append(a)
+                nc.append(p)
+        o2[i], c2[i] = no, nc
+    return o2, c2
+
+
 def taken_mixture(
     taken: Mapping[int, Action | str],
     hidden: set[int],
@@ -626,10 +655,10 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
                     tools.calc,
                     odds,
                 )
-                opts[r] = {i: o for i, (o, _X) in feats.items()}
-                chances[r] = {
-                    i: list(tools.policy.chances(X)) for i, (_o, X) in feats.items()
-                }
+                opts[r], chances[r] = expand_pivots(
+                    {i: o for i, (o, _X) in feats.items()},
+                    {i: list(tools.policy.chances(X)) for i, (_o, X) in feats.items()},
+                )
         except Exception as e:  # pragma: no cover - reported, not hidden
             yield _error(base, e)
             continue
@@ -1189,6 +1218,7 @@ __all__ = [
     "TurnValues",
     "analyse_game",
     "decompose",
+    "expand_pivots",
     "expected",
     "fit_sharpness",
     "likely",
