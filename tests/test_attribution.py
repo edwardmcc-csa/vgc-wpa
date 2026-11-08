@@ -11,6 +11,7 @@ the win-probability model, so they check the split, not the model.
 
 from __future__ import annotations
 
+import json
 import random
 from pathlib import Path
 
@@ -369,3 +370,59 @@ def test_the_sharpness_is_where_your_decision_averages_zero():
     samples = [A.SharpSample(0.5, [0.5, 0.25, 0.25], [0.3, 0.8, 0.8])]
     b, _ = A.fit_sharpness(samples)
     assert b > 1.0 and abs(A.mean_yours(samples, b)) < 1e-4
+
+
+# ------------------------------------------------- the summary (Week 10 Task 0)
+
+
+def _rec(tag, turn, role, before, after, found=True, partial=(), alt=False):
+    sw = after - before
+    return {
+        "tag": tag,
+        "format": "regma",
+        "turn": turn,
+        "role": role,
+        "before": before,
+        "after": after,
+        "yours": sw / 2,
+        "theirs": 0.0,
+        "dice": sw / 2,
+        "vs_best": -0.01 if alt else None,
+        "vs_average": 0.01 if alt else None,
+        "kept": 0.9,
+        "unknown": 0,
+        "found": found,
+        "partial": list(partial),
+        "seconds": 1.0,
+    }
+
+
+def test_the_summary_names_each_big_swings_reasons_and_counts_them_by_cause(tmp_path):
+    rows = []
+    for tag, b, a, found, partial in (
+        ("g1", 0.1, 0.9, True, ()),  # clean
+        ("g2", 0.9, 0.1, False, ("power:lastrespects",)),
+        ("g3", 0.2, 0.7, True, ("move:leechseed", "sleep")),
+        ("g4", 0.5, 0.0, False, ()),
+        ("g5", 0.5, 0.6, True, ("sleep",)),  # small: not counted
+    ):
+        rows.append(_rec(tag, 3, "p1", b, a, found, partial))
+        rows.append(_rec(tag, 3, "p2", 1 - b, 1 - a, found, partial))
+    path = tmp_path / "a.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    text = A.report(path)
+    line = next(x for x in text.splitlines() if "g2 turn 3" in x)
+    assert "partly modelled: lastrespects power" in line
+    line = next(x for x in text.splitlines() if "g3 turn 3" in x)
+    assert "partly modelled: leechseed, sleep" in line
+    line = next(x for x in text.splitlines() if "g1 turn 3" in x)
+    assert "partly modelled" not in line
+    # turns with a swing over 40 points, by cause (each turn once)
+    assert "turns with a swing over 40 points: 4" in text
+    assert "found, fully modelled 1" in text
+    assert "found, partly modelled 1" in text
+    assert "not found, partly modelled 1" in text
+    assert "not found, fully modelled 1" in text
+    # DEFINITIONS §10.2, revision 9: the share of parts at or above 3 points
+    assert "a part of 3 points or more (the reporting threshold)" in text
+    assert text.startswith("Decision versus luck (DEFINITIONS §3 and §4)")

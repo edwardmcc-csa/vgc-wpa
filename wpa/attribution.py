@@ -952,7 +952,55 @@ def _turn_line(pair: Mapping[str, Mapping]) -> str:
             text += f" (vs best {pt(r['vs_best'])}, vs average {pt(r['vs_average'])})"
     if not r1["found"]:
         text += "; the board that happened is not among the resolver's"
+    if r1.get("partial"):
+        text += "; partly modelled: " + ", ".join(_reason(x) for x in r1["partial"])
     return text
+
+
+def _reason(code: str) -> str:
+    """A resolver reason in plain words: "move:leechseed" -> "leechseed",
+    "power:lastrespects" -> "lastrespects power"."""
+    kind, _, what = code.partition(":")
+    if not what:
+        return code
+    return f"{what} power" if kind == "power" else what
+
+
+BIG = 0.40  # a swing over 40 points, for the table by cause
+THRESHOLD = 0.03  # DEFINITIONS §10.2, revision 9: 3 points
+
+
+def _by_cause(turns: Mapping) -> list[str]:
+    """Turns with a swing over 40 points, by cause (Week 9's table, kept each
+    week so progress can be compared), with the commonest reasons."""
+    big = []
+    for d in turns.values():
+        r = next(iter(d.values()))
+        if abs(r["after"] - r["before"]) > BIG:
+            big.append(r)
+    cause: dict[str, int] = {}
+    reasons: dict[str, int] = {}
+    for r in big:
+        key = ("found, " if r["found"] else "not found, ") + (
+            "partly modelled" if r.get("partial") else "fully modelled"
+        )
+        cause[key] = cause.get(key, 0) + 1
+        for x in r.get("partial") or ():
+            reasons[_reason(x)] = reasons.get(_reason(x), 0) + 1
+    order = (
+        "found, fully modelled",
+        "found, partly modelled",
+        "not found, partly modelled",
+        "not found, fully modelled",
+    )
+    lines = [
+        f"  turns with a swing over 40 points: {len(big)}; "
+        + "; ".join(f"{k} {cause.get(k, 0)}" for k in order)
+    ]
+    if reasons:
+        top = sorted(reasons.items(), key=lambda x: -x[1])[:8]
+        lines.append("    commonest reasons: " + ", ".join(f"{k} {n}" for k, n in top))
+    return lines
 
 
 def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
@@ -981,6 +1029,11 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
         f"  their decision: {_pts([r['theirs'] for r in ok])}",
         f"  the dice: {_pts([r['dice'] for r in ok])}",
         f"  the parts add up: largest error {err:.2e} (allowed 1e-3)",
+        "  a part of 3 points or more (the reporting threshold): "
+        + ", ".join(
+            f"{name} {100 * np.mean([abs(r[k]) >= THRESHOLD for r in ok]):.0f}%"
+            for k, name in (("yours", "yours"), ("theirs", "theirs"), ("dice", "dice"))
+        ),
     ]
     alt = [r for r in ok if r.get("vs_best") is not None]
     if alt:
@@ -1009,6 +1062,7 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
     turns_: dict = {}
     for r in ok:
         turns_.setdefault((r["tag"], r["turn"]), {})[r["role"]] = r
+    lines[-2:-2] = _by_cause(turns_)
     big = sorted(
         turns_.values(),
         key=lambda d: -abs(
@@ -1023,7 +1077,7 @@ def report(path: Path, top: int = 10) -> str:
     the time, and the biggest swings with their replay links."""
     text = Path(path).read_text(encoding="utf-8")
     recs = [json.loads(x) for x in text.splitlines() if x.strip()]
-    lines = ["Decision versus luck, a first look (DEFINITIONS rev 8, §3 and §4)", ""]
+    lines = ["Decision versus luck (DEFINITIONS §3 and §4)", ""]
     for fmt, name in (("regma", "Reg M-A"), ("regmb", "Reg M-B")):
         lines += _format_lines(name, [r for r in recs if r.get("format") == fmt], top)
     return "\n".join(lines)
