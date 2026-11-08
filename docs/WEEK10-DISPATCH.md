@@ -1,8 +1,8 @@
 # Week 10 — Dispatch Brief (M5 part 2: make the biggest swings right, average the models, add forced switches)
 
 **Status:** drafted 7 Nov 2026 from the PO's decisions on the Week 9 report and
-the full-sample run of 7 Nov. Waiting for the PO's answers to the two questions at
-the end.
+the full-sample run of 7 Nov. The PO answered question 2 and widened Task 3 on 7
+Nov (decisions 6 and 7). Question 1 is still open.
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -50,6 +50,13 @@ forced switches so that a game's swings add up from turn 1 to the end.
 5. **The replies method stays:** the likeliest 6 replies exactly, the rest drawn
    in proportion to their chances.
 
+**On this brief (PO, 7 Nov 2026):**
+
+6. **Task 3 covers every switching move:** U-turn, Volt Switch, Flip Turn and
+   Parting Shot, and also Baton Pass, Chilly Reception and Shed Tail.
+7. **The averaged model uses 10 models per format** (Task 5), so its noise is
+   measured directly.
+
 ## Tasks
 
 ### Task 0 — Say "partly modelled" everywhere it applies
@@ -86,18 +93,35 @@ forced switches so that a game's swings add up from turn 1 to the end.
 - [ ] **Tests first,** checked against the calculator run on its own. Once a move
       is handled, its "partly modelled" mark from Week 9 goes.
 
-### Task 3 — The switch-in after U-turn, Volt Switch, Flip Turn and Parting Shot
-- [ ] The resolver plays the pivot through: the Pokemon that comes in, then the
-      rest of the turn with it on the field (Intimidate on entry included).
-- [ ] **Which Pokemon comes in is part of the pivoting player's choice.** For the
+### Task 3 — Moves that switch the user out (decision 6)
+- [ ] **The moves:** U-turn, Volt Switch, Flip Turn, Parting Shot, Baton Pass,
+      Chilly Reception and Shed Tail. The resolver plays each through: the move's
+      own effect, the Pokemon that comes in, then the rest of the turn with it on
+      the field (Intimidate and weather on entry included).
+- [ ] **What each one adds to the switch:**
+      - **U-turn, Volt Switch, Flip Turn:** damage first; no switch if the user
+        faints first or the target was protected from the hit.
+      - **Parting Shot:** lowers the target's Attack and Special Attack, then
+        switches.
+      - **Baton Pass:** the incoming Pokemon keeps the user's stat changes, and
+        the passed effects the resolver models. Any other passed effect marks
+        the turn "partly modelled".
+      - **Chilly Reception:** sets snow (with its turns from the durations
+        table), then switches.
+      - **Shed Tail:** costs the user half its maximum hit points and fails at
+        half or less. It leaves a Substitute for the incoming Pokemon.
+      - **Substitute itself:** Shed Tail and Baton Pass hand one over, so the
+        resolver models it. It absorbs damage until broken and blocks most
+        status moves. Sound moves and Infiltrator get past it.
+- [ ] **Which Pokemon comes in is part of the switching player's choice.** For the
       choice taken it is the one the log shows. For likely replies and for
       alternatives it is weighted by the opponent model's chances for switching
       to each Pokemon.
 - [ ] Eject Button and Eject Pack, if cheap to add the same way. If not, they stay
       "partly modelled".
-- [ ] **Tests first.** Rerun the Week 9 resolver check per format and report the
-      share of turns fully modelled and the share where the board is found,
-      beside Week 9's.
+- [ ] **Tests first,** one per move at least. Rerun the Week 9 resolver check per
+      format and report the share of turns fully modelled and the share where the
+      board is found, beside Week 9's.
 
 ### Task 4 — Spreads (decision 3)
 - [ ] **Measure first.** On a sample of turns, the time per turn with each
@@ -175,9 +199,5 @@ forced switches so that a game's swings add up from turn 1 to the end.
    switches make a game's swings add up from turn 1 to the end, which Week 9
    could not do. Team preview and leads are a larger piece, built on the bring
    model. I recommend this order.
-2. **20 trainings on your computer for the averaged model** (Task 5: 10 per
-   format, on the full table). Ten per format lets the noise be measured
-   directly, as revision 9 asks. The alternative is 5 per format, in about half
-   the time: the noise would then be estimated from Week 9's single-model
-   measure divided by √5, not measured. I recommend 10. The first model's time
-   will say how many nights it takes.
+2. ~~20 trainings on your computer for the averaged model~~ **Answered 7 Nov:
+   10 per format** (decision 7).
