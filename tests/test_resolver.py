@@ -373,13 +373,31 @@ def test_roar_at_an_ally_that_fell_first_keeps_the_board(dex, moves, calc):
     assert all(o.sides["p2"][0]["fainted"] for o in outs)
 
 
-def test_a_move_whose_power_needs_the_game_so_far_marks_the_turn(dex, moves, calc):
-    # Last Respects and Rage Fist grow with fainted allies and hits taken, which
-    # the calculator is not told: the turn is partly modelled, never full
-    outs = attack("lastrespects", dex=dex, moves=moves, calc=calc)
-    assert outs and all("power:lastrespects" in o.partial for o in outs)
-    plain = attack("dragonclaw", dex=dex, moves=moves, calc=calc)
-    assert not any(o.partial for o in plain)
+def test_last_respects_grows_with_the_fainted_and_is_fully_modelled(dex, moves, calc):
+    # Week 10 Task 2: the calculator is told the user's side's fainted count
+    plain = attack("lastrespects", dex=dex, moves=moves, calc=calc)
+    b = board()
+    for _ in range(2):
+        b["p1"].append(dict(mon("garchomp", 0.0), fainted=True, active=False))
+    sheets = dict(SHEETS, p1=(*SHEETS["p1"], SHEETS["p1"][0], SHEETS["p1"][0]))
+    spreads = {**SPREADS, ("p1", 2): FULL, ("p1", 3): FULL}
+    acts = {
+        "p1": (
+            Action(0, "move", move="lastrespects", target=("foe", 0)),
+            Action(1, "move", move="protect"),
+        ),
+        "p2": (
+            Action(0, "move", move="swordsdance"),
+            Action(1, "move", move="protect"),
+        ),
+    }
+    outs = R.Resolver(dex, moves, calc, sheets, spreads).resolve(b, R.Field(), acts)
+
+    def lost(os):
+        return sum(o.prob * (1 - o.sides["p2"][0]["hp_fraction"]) for o in os)
+
+    assert lost(outs) > 2.5 * lost(plain)  # 150 power against 50: about 3 times
+    assert not any(o.partial for o in outs) and not any(o.partial for o in plain)
 
 
 # --------------------------------------------- Perish Song (Week 10 Task 1)

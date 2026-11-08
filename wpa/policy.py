@@ -118,12 +118,16 @@ class DamageInfo:
             return sp
 
         a_st, d_st = mons[a_side][i], mons[d_side][j]
+
+        def down(side):
+            return sum(bool(x["fainted"]) for x in mons[side])
+
         req = damage_request(
             self.sheets[role_of[a_side]][i],
-            _board_state(a_st),
+            _board_state(a_st, down(a_side)),
             spread_of(a_side, i),
             self.sheets[role_of[d_side]][j],
-            _board_state(d_st),
+            _board_state(d_st, down(d_side)),
             spread_of(d_side, j),
             move,
             self.dex,

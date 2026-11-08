@@ -48,6 +48,8 @@ function mon(m, attacking) {
     boosts: m.boosts || {},
     status: m.status || '',
   };
+  // Supreme Overlord: the fainted allies (Week 10)
+  if (m.fainted) options.alliesFainted = m.fainted;
   const name = named(gen.species, m.species, 'species');
   let p = new Pokemon(gen, name, options);
   if (m.hp !== undefined && m.hp !== null) {
@@ -140,6 +142,9 @@ function answer(req) {
   const probe = new Move(gen, moveName);
   const options = {isCrit: !!req.crit};
   if (SPREAD.has(probe.target) && !req.spread) options.overrides = {target: 'normal'};
+  // a power the game so far decides (Last Respects, Rage Fist), worked out by
+  // the caller (Week 10)
+  if (req.bp) options.overrides = {...(options.overrides || {}), basePower: req.bp};
   const move = new Move(gen, moveName, options);
   const result = calculate(gen, attacker, defender, move, field(req.field));
   const several = Array.isArray(result.damage) && Array.isArray(result.damage[0]);

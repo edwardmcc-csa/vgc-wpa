@@ -44,6 +44,7 @@ def request(
     spread: bool = False,
     crit: bool = False,
     field: Mapping | None = None,
+    bp: int | None = None,
 ) -> dict:
     """One damage request. `field` uses Showdown ids for weather and terrain
     ("sunnyday", "electricterrain") and true/false for reflect, lightscreen,
@@ -54,7 +55,7 @@ def request(
         f["weather"] = WEATHER.get(f["weather"])
     if f.get("terrain"):
         f["terrain"] = TERRAIN.get(f["terrain"])
-    return {
+    out = {
         "attacker": dict(attacker),
         "defender": dict(defender),
         "move": move,
@@ -62,6 +63,9 @@ def request(
         "crit": bool(crit),
         "field": {k: v for k, v in f.items() if v},
     }
+    if bp:
+        out["bp"] = int(bp)  # a power the game so far decides (Week 10)
+    return out
 
 
 class Calc:

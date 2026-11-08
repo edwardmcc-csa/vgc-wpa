@@ -426,6 +426,9 @@ class _Board:
                 m = self.mons[role][idx]
                 m["hp"], fainted = _hp(p[3])
                 m["status"] = "" if fainted else _status(p[3])
+                if t == "-damage" and not any(x.startswith("[from]") for x in p[4:]):
+                    # hit by a move (Rage Fist counts these; they stay on switching)
+                    m["hits"] = m.get("hits", 0) + 1
         elif t == "faint":
             idx = self._index(role, ident)
             if idx is not None:
@@ -473,6 +476,7 @@ class _Board:
                 "rev_item": m["rev_item"],
                 "rev_ability": m["rev_ability"],
                 **({"perish": m["perish"]} if m.get("perish") else {}),
+                **({"hits": m["hits"]} if m.get("hits") else {}),
             }
             for sp, m in zip(self.species.get(role, []), self.mons.get(role, []))
         ]

@@ -250,7 +250,15 @@ def test_damage_features_read_only_public_fields(calc, dex):
     from tests.test_features import GuardedMon, GuardedState
 
     class Mon(GuardedMon):
-        ALLOWED = GuardedMon.ALLOWED | {"mega", "boosts", "status", "item", "last_move"}
+        # hits taken (Rage Fist, Week 10) is public: both players see every hit
+        ALLOWED = GuardedMon.ALLOWED | {
+            "mega",
+            "boosts",
+            "status",
+            "item",
+            "last_move",
+            "hits",
+        }
 
     s = state()
     s = dict(

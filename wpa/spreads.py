@@ -405,6 +405,9 @@ def events_from_log(log: str, dex) -> tuple[list[Hit], list[Order]]:
             "mega": m["mega"],
             "hp": m["hp"],
             "form": forms.get(pos, ""),
+            # the game so far (Week 10): Supreme Overlord, Last Respects, Rage Fist
+            "fainted": sum(x["fainted"] for x in board.mons[pos[0]]),
+            "hits": m.get("hits", 0),
         }
 
     def ally_abilities(pos: tuple[str, int]) -> set[str]:
@@ -680,7 +683,7 @@ def _damage_mon(
         for s in stats:
             if s != "hp" and _nature_for(spread.nature, s) != "serious":
                 nature = _nature_for(spread.nature, s)
-    return {
+    out = {
         "species": species,
         "nature": nature,
         "sps": sps,
@@ -690,6 +693,19 @@ def _damage_mon(
         "status": st.get("status") or "",
         "hp": keep_hp(st.get("hp", 1.0)),
     }
+    if ability == "supremeoverlord" and st.get("fainted"):
+        out["fainted"] = min(5, int(st["fainted"]))  # the calculator's boost
+    return out
+
+
+def history_power(move: str, state: Mapping) -> int | None:
+    """The power of a move the game so far decides (Week 10 Task 2), from the
+    user's side's fainted count and the user's hits taken; None for the rest."""
+    if move == "lastrespects":
+        return 50 + 50 * int(state.get("fainted") or 0)
+    if move == "ragefist":
+        return min(350, 50 + 50 * int(state.get("hits") or 0))
+    return None
 
 
 def damage_request(
@@ -730,6 +746,7 @@ def damage_request(
         a,
         d,
         move,
+        bp=history_power(move, a_state),
         spread=spread,
         crit=crit,
         field={

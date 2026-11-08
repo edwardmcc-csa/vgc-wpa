@@ -61,9 +61,6 @@ NOT_AIMED = {
 # single-target moves, which Lightning Rod and Storm Drain can draw
 SINGLE = {"normal", "any", "adjacentFoe", "randomNormal"}
 RODS = {"Electric": "lightningrod", "Water": "stormdrain"}
-# moves whose power grows with the game so far (fainted allies, hits taken),
-# which the calculator is not told
-HISTORY_POWER = {"lastrespects", "ragefist"}
 WEATHER_ROCKS = {
     "sunnyday": "heatrock",
     "raindance": "damprock",
@@ -1068,6 +1065,7 @@ class Resolver:
         for s in SCREENS:
             f[s] = bool(w.fld.sides[tgt[0]].get(s)) and tgt[0] != role
         f["helpinghand"] = (role, a.user) in w.helped
+        down = {r: sum(bool(x["fainted"]) for x in w.sides[r]) for r in ROLES}
         key = (
             role,
             a.user,
@@ -1078,15 +1076,18 @@ class Resolver:
             tuple(sorted(f.items())),
             _mon_key(st),
             _mon_key(t),
+            down[role],
+            down[tgt[0]],
+            st.get("hits", 0),
         )
         if key in self._dmg:
             return self._dmg[key]
         req = damage_request(
             self.sheets[role][a.user],
-            _board_state(st),
+            _board_state(st, down[role]),
             self.spread(role, a.user),
             self.sheets[tgt[0]][tgt[1]],
-            _board_state(t),
+            _board_state(t, down[tgt[0]]),
             self.spread(*tgt),
             a.move,
             self.dex,
@@ -1133,8 +1134,6 @@ class Resolver:
 
     def _attack(self, w: _World, role: str, a: Action, m: Mapping) -> list[_World]:
         mv = a.move
-        if mv in HISTORY_POWER:
-            w.partial.add(f"power:{mv}")
         if mv in {"suckerpunch", "thunderclap"} and not self._sucker_ok(w, role, a):
             return [w]
         if m.get("target") == "randomNormal" and a.target is None:
@@ -1249,6 +1248,7 @@ class Resolver:
         w.dealt += dealt
         if dmg > 0:
             w.hit.add(tgt)
+            t["hits"] = t.get("hits", 0) + 1  # Rage Fist counts it
         if new == 0:
             self._faint(w, tgt)
         elif t.get("item") == "sitrusberry" and new <= max_hp / 2:

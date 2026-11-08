@@ -430,8 +430,10 @@ class DamageContext:
 _SCREENS = ("reflect", "lightscreen", "auroraveil")
 
 
-def _board_state(p: Mapping) -> dict:
-    """What the calculator needs of one Pokemon on the board (public fields)."""
+def _board_state(p: Mapping, fainted: int = 0) -> dict:
+    """What the calculator needs of one Pokemon on the board (public fields).
+    `fainted`: how many of its side have fainted (Supreme Overlord, Last
+    Respects); its hits taken come from the board (Rage Fist)."""
     hp = p["hp_fraction"]
     return {
         "mega": bool(p.get("mega")),
@@ -440,6 +442,8 @@ def _board_state(p: Mapping) -> dict:
         "status": p.get("status") or "",
         "hp": hp if hp > 0 else 1.0,
         "last_move": p.get("last_move") or "",
+        "fainted": int(fainted),
+        "hits": int(p.get("hits") or 0),
     }
 
 
@@ -463,7 +467,8 @@ def _roster(side, sheet, sheet_role: str, dex: Dex, ctx: DamageContext):
         if spread is None:
             base = (dex.species.get(mon.species) or {}).get("baseStats")
             spread = default_spread(mon.nature, base)
-        out.append((_where(p), mon, _board_state(p), spread, (sheet_role, idx)))
+        down = sum(bool(x["fainted"]) for x in side)
+        out.append((_where(p), mon, _board_state(p, down), spread, (sheet_role, idx)))
     return out
 
 
@@ -613,6 +618,8 @@ def _state_key(st: Mapping) -> tuple:
         st.get("hp"),
         st.get("last_move"),
         st.get("form"),
+        st.get("fainted", 0),
+        st.get("hits", 0),
     )
 
 
