@@ -1,8 +1,8 @@
 # Week 10 — Dispatch Brief (M5 part 2: make the biggest swings right, average the models, add forced switches)
 
 **Status:** drafted 7 Nov 2026 from the PO's decisions on the Week 9 report and
-the full-sample run of 7 Nov. The PO answered question 2 and widened Task 3 on 7
-Nov (decisions 6 and 7). Question 1 is still open.
+the full-sample run of 7 Nov. The PO widened Task 3 and answered both questions
+on 7 Nov (decisions 6 to 8); started 7 Nov (PO: go ahead).
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -56,6 +56,7 @@ forced switches so that a game's swings add up from turn 1 to the end.
    Parting Shot, and also Baton Pass, Chilly Reception and Shed Tail.
 7. **The averaged model uses 10 models per format** (Task 5), so its noise is
    measured directly.
+8. **Forced switches this week; team preview and leads in Week 11.**
 
 ## Tasks
 
@@ -195,9 +196,7 @@ forced switches so that a game's swings add up from turn 1 to the end.
   says whether it fits after this week's changes.
 
 ## For the PO before starting
-1. **Forced switches this week, team preview and leads in Week 11?** Forced
-   switches make a game's swings add up from turn 1 to the end, which Week 9
-   could not do. Team preview and leads are a larger piece, built on the bring
-   model. I recommend this order.
+1. ~~Forced switches this week, team preview and leads in Week 11?~~ **Answered
+   7 Nov: yes** (decision 8).
 2. ~~20 trainings on your computer for the averaged model~~ **Answered 7 Nov:
    10 per format** (decision 7).
