@@ -426,3 +426,24 @@ def test_the_summary_names_each_big_swings_reasons_and_counts_them_by_cause(tmp_
     # DEFINITIONS §10.2, revision 9: the share of parts at or above 3 points
     assert "a part of 3 points or more (the reporting threshold)" in text
     assert text.startswith("Decision versus luck (DEFINITIONS §3 and §4)")
+
+
+def test_a_board_where_the_game_ended_is_worth_exactly_its_result():
+    from wpa.resolver import Field, Outcome
+
+    class Ends:
+        def resolve(self, sides, fld, actions):
+            return [
+                Outcome(0.25, {"p1": [], "p2": []}, Field(), winner="p1"),
+                Outcome(0.75, {"p1": [], "p2": []}, Field(), winner="p2"),
+            ]
+
+    asked = []
+    tv = A.TurnValues(
+        Ends(),
+        {"p1": [], "p2": []},
+        Field(),
+        lambda outs: asked.append(outs) or [0.5] * len(outs),
+    )
+    assert tv((SD,), (PR,)) == pytest.approx(0.25)
+    assert tv.for_role("p2")((PR,), (SD,)) == pytest.approx(0.75)

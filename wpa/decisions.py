@@ -352,6 +352,15 @@ class _Board:
             self._protecting = None
 
     def handle(self, p: list[str]) -> None:
+        if len(p) > 3 and p[1] == "-start":
+            n = re.fullmatch(r"perish(\d)", to_id(p[3]))
+            m = self._mon(p[2]) if n else None
+            if m is not None and n is not None:
+                # the count the log shows; it faints when the count reaches 0
+                if int(n.group(1)) > 0:
+                    m["perish"] = int(n.group(1))
+                else:
+                    m.pop("perish", None)
         if len(p) > 2:
             self._reveal(p)
         if len(p) > 2 and p[1] == "move":
@@ -384,9 +393,12 @@ class _Board:
             self.seen_as[role][ident.split(": ", 1)[-1]] = idx
             old = self.slots[role][slot]
             passed: dict = {}
+            perish = None
             if old is not None and old != idx:
                 if any(x == "[from] Baton Pass" for x in p[5:]):
                     passed = dict(self.mons[role][old]["boosts"])
+                    perish = self.mons[role][old].get("perish")
+                self.mons[role][old].pop("perish", None)
                 self.mons[role][old]["active"] = False
                 self.mons[role][old]["boosts"] = {}
                 self.mons[role][old].update(moved=False, last_move="", protect_streak=0)
@@ -404,6 +416,9 @@ class _Board:
             m["fainted"] = m["fainted"] or (fainted and m["hp"] == 0)
             m["status"] = _status(p[4])
             m["boosts"] = passed
+            m.pop("perish", None)
+            if perish:
+                m["perish"] = perish
             self.slots[role][slot] = idx
         elif t in ("-damage", "-heal", "-sethp") and len(p) > 3:
             idx = self._index(role, ident)
@@ -417,6 +432,7 @@ class _Board:
                 m = self.mons[role][idx]
                 m.update(hp=0.0, fainted=True, active=False, boosts={}, status="")
                 m.update(moved=False, last_move="", protect_streak=0)
+                m.pop("perish", None)
                 for s, v in self.slots[role].items():
                     if v == idx:
                         self.slots[role][s] = None
@@ -456,6 +472,7 @@ class _Board:
                 "rev_moves": sorted(m["rev_moves"]),
                 "rev_item": m["rev_item"],
                 "rev_ability": m["rev_ability"],
+                **({"perish": m["perish"]} if m.get("perish") else {}),
             }
             for sp, m in zip(self.species.get(role, []), self.mons.get(role, []))
         ]

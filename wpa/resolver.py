@@ -179,6 +179,8 @@ class Outcome:
     sides: dict[str, list[dict]]
     field: Field
     partial: frozenset[str] = frozenset()
+    # set when the turn ended the game before the board says so (Perish Song)
+    winner: str | None = None
 
 
 @dataclass
@@ -199,6 +201,7 @@ class _World:
     # this action only: targets hit, damage dealt by the user
     hit: set = field(default_factory=set)
     dealt: int = 0
+    winner: str | None = None  # the game ended this turn (Perish Song's order)
 
     def clone(self, p: float | None = None) -> _World:
         f = self.fld
@@ -226,6 +229,7 @@ class _World:
             dict(self.replaced),
             set(self.hit),
             self.dealt,
+            self.winner,
         )
 
     def key(self, resolution: float | None) -> tuple:
@@ -244,6 +248,7 @@ class _World:
                 m["moved"],
                 m["last_move"],
                 m["protect_streak"],
+                m.get("perish", 0),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -260,6 +265,7 @@ class _World:
             tuple(sorted(self.helped)),
             tuple(sorted(self.replaced.items())),
             tuple(sorted(self.hit)),
+            self.winner or "",
             self.dealt,
         )
 
@@ -410,7 +416,10 @@ class Resolver:
         )
         total = sum(w.p for w in out)
         self.dropped = max(0.0, 1.0 - total)
-        return [Outcome(w.p / total, w.sides, w.fld, frozenset(w.partial)) for w in out]
+        return [
+            Outcome(w.p / total, w.sides, w.fld, frozenset(w.partial), w.winner)
+            for w in out
+        ]
 
     def _capped(self, worlds: list[_World]) -> list[_World]:
         """Over `cap` boards: merge on a coarser hit-point grid until under it.
@@ -468,6 +477,8 @@ class Resolver:
         if n["fainted"] or n["active"]:
             return
         o.update(active=False, boosts={}, moved=False, last_move="", protect_streak=0)
+        o.pop("perish", None)  # switching out ends the count
+        n.pop("perish", None)
         if n["hp_fraction"] <= 0:
             n["hp_fraction"] = 1.0  # first time in
         n.update(active=True, boosts={}, moved=False, last_move="", protect_streak=0)
@@ -815,6 +826,19 @@ class Resolver:
     def _status(self, w: _World, role: str, a: Action, m: Mapping) -> list[_World]:
         mv = a.move
         st = w.sides[role][a.user]
+        if mv == "perishsong":
+            # every Pokemon on the field not already counting; through Protect,
+            # not through Soundproof. 4 now, so 3 shows after this turn
+            for r in ROLES:
+                for j, x in enumerate(w.sides[r]):
+                    if (
+                        x["active"]
+                        and not x["fainted"]
+                        and not x.get("perish")
+                        and self.ability(r, j, x) != "soundproof"
+                    ):
+                        x["perish"] = 4
+            return [w]
         vol = m.get("volatileStatus")
         if vol in ("followme", "ragepowder"):
             w.redirect[role] = (role, a.user, vol)
@@ -1255,9 +1279,35 @@ class Resolver:
         if new == 0:
             self._faint(w, who)
 
+    def _perish(self, w: _World) -> None:
+        """Perish Song counts down after the other end-of-turn effects, in Speed
+        order (Trick Room reverses it); a Pokemon reaching 0 faints. As in
+        Showdown, the game ends as soon as one side has no Pokemon left, so a
+        later count does not run. Speed ties keep the order of the sides."""
+        counting = [
+            (r, j)
+            for r in ROLES
+            for j, x in enumerate(w.sides[r])
+            if x["active"] and not x["fainted"] and x.get("perish")
+        ]
+        if not counting or w.winner:
+            return
+        sign = 1 if w.fld.trickroom else -1
+        counting.sort(key=lambda rj: sign * self._speed(w, rj[0], rj[1]))
+        for r, j in counting:
+            x = w.sides[r][j]
+            x["perish"] -= 1
+            if x["perish"] > 0:
+                continue
+            self._faint(w, (r, j))
+            if not _left(w, r):
+                w.winner = _other(r)
+                return
+
     def _faint(self, w: _World, who) -> None:
         st = w.sides[who[0]][who[1]]
         st.update(hp_fraction=0.0, fainted=True, active=False, boosts={}, status="")
+        st.pop("perish", None)
 
     def _after_attack(self, w: _World, role: str, a: Action, m: Mapping) -> None:
         st = w.sides[role][a.user]
@@ -1395,6 +1445,7 @@ class Resolver:
                     self._boost(st, {"spe": 1})
                 if not st["fainted"] and ab == "moody":
                     w.partial.add("moody")
+        self._perish(w)
         # every timer counts down one
         if fld.weather:
             fld.weather_left -= 1
@@ -1412,6 +1463,15 @@ class Resolver:
         w.redirect, w.helped, w.replaced = {}, set(), {}
         w.hit, w.dealt = set(), 0
         return [w]
+
+
+def _left(w: _World, role: str) -> bool:
+    """Whether `role` still has a Pokemon: on the field, seen on the bench, or
+    brought and not yet seen."""
+    return any(
+        not x["fainted"] and (x["active"] or x["hp_fraction"] > 0 or x.get("_brought"))
+        for x in w.sides[role]
+    )
 
 
 def timers_for(f: Field, role: str, before=None):

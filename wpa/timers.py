@@ -146,6 +146,9 @@ _ATTACH_BY_EVENT = {
     "start": ("volatileStatus", "slotCondition"),
 }
 _ALIASES = {"futuresight": "futuremove", "doomdesire": "futuremove"}
+# effects Showdown attaches in a move's code, so the durations table has no
+# attachment for them (Week 10: Perish Song's count never reached the timers)
+_ATTACH = {"perishsong": "volatileStatus"}
 # How the order of play inside the turn changes a length. The signs come from
 # the table; wpa.durations has the guard text, tests/test_durations.py pins them.
 _ORDERING = {"encore", "taunt", "disable"}
@@ -364,15 +367,18 @@ class _Walker:
     ) -> None:
         effect_id = _ALIASES.get(to_id(_strip(name)), to_id(_strip(name)))
         effect = self.table.timed.get(effect_id)
-        if effect is None or effect.attach not in _ATTACH_BY_EVENT[event]:
+        if effect is None:
             return
-        if effect.attach == "sideCondition":
+        attach = effect.attach or _ATTACH.get(effect_id)
+        if attach not in _ATTACH_BY_EVENT[event]:
+            return
+        if attach == "sideCondition":
             key = ("side", effect_id, display)
-        elif effect.attach == "weather":
+        elif attach == "weather":
             key = ("weather", effect_id)
-        elif effect.attach in ("pseudoWeather", "terrain"):
+        elif attach in ("pseudoWeather", "terrain"):
             key = ("field", effect_id)
-        elif effect.attach == "slotCondition":
+        elif attach == "slotCondition":
             key = ("slot", effect_id, target_key[:2])
         else:
             key = ("mon", effect_id, target_key)

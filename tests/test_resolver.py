@@ -380,3 +380,75 @@ def test_a_move_whose_power_needs_the_game_so_far_marks_the_turn(dex, moves, cal
     assert outs and all("power:lastrespects" in o.partial for o in outs)
     plain = attack("dragonclaw", dex=dex, moves=moves, calc=calc)
     assert not any(o.partial for o in plain)
+
+
+# --------------------------------------------- Perish Song (Week 10 Task 1)
+
+QUIET = {
+    "p1": (Action(0, "move", move="protect"), Action(1, "move", move="swordsdance")),
+    "p2": (Action(0, "move", move="swordsdance"), Action(1, "move", move="protect")),
+}
+
+
+def test_a_perish_count_of_one_faints_at_the_end_of_the_turn(dex, moves, calc):
+    b = board()
+    b["p2"][0]["perish"] = 1
+    b["p1"][1]["perish"] = 2
+    outs = resolver(dex, moves, calc).resolve(b, R.Field(), QUIET)
+    assert outs and all(o.sides["p2"][0]["fainted"] for o in outs)
+    assert all(o.sides["p1"][1]["perish"] == 1 for o in outs)
+    assert all(not o.sides["p1"][1]["fainted"] for o in outs)
+    assert not any(o.partial for o in outs)
+
+
+def test_switching_out_clears_the_count(dex, moves, calc):
+    b = board()
+    b["p1"].append(mon("garchomp", 0.0))
+    b["p1"][2]["active"] = False
+    b["p1"][0]["perish"] = 1
+    sheets = dict(SHEETS, p1=(*SHEETS["p1"], SHEETS["p1"][0]))
+    spreads = {**SPREADS, ("p1", 2): FULL}
+    acts = dict(QUIET, p1=(Action(0, "switch", switch_to=2), QUIET["p1"][1]))
+    outs = R.Resolver(dex, moves, calc, sheets, spreads).resolve(b, R.Field(), acts)
+    assert all(not o.sides["p1"][0]["fainted"] for o in outs)
+    assert all("perish" not in o.sides["p1"][0] for o in outs)
+    assert all("perish" not in o.sides["p1"][2] for o in outs)
+
+
+def test_perish_song_starts_the_count_but_not_through_soundproof(dex, moves, calc):
+    sheets = dict(
+        SHEETS,
+        p2=(
+            SHEETS["p2"][0],
+            SheetMon(2, "whimsicott", "", "soundproof", ("protect",), ""),
+        ),
+    )
+    b = board()
+    b["p1"][1]["perish"] = 2  # already counting: unchanged by a new song
+    acts = dict(QUIET, p1=(Action(0, "move", move="perishsong"), QUIET["p1"][1]))
+    outs = R.Resolver(dex, moves, calc, sheets, SPREADS).resolve(b, R.Field(), acts)
+    for o in outs:
+        assert o.sides["p1"][0]["perish"] == 3  # 4 when sung, 3 after the turn
+        assert o.sides["p1"][1]["perish"] == 1
+        assert o.sides["p2"][0]["perish"] == 3  # through Protect too
+        assert "perish" not in o.sides["p2"][1]  # Soundproof
+    assert not any(o.partial for o in outs)
+
+
+def test_when_both_last_pokemon_would_fall_the_side_whose_last_goes_first_loses(
+    dex, moves, calc
+):
+    # Showdown counts down in Speed order (Trick Room reverses it) and the game
+    # ends as soon as one side has no Pokemon left. Speeds here: Whimsicott,
+    # Garchomp, Incineroar, Kingambit.
+    b = board()
+    for r in ("p1", "p2"):
+        for m in b[r]:
+            m["perish"] = 1
+    outs = resolver(dex, moves, calc).resolve(b, R.Field(), QUIET)
+    assert outs and all(
+        o.winner == "p1" for o in outs
+    )  # Incineroar goes before Kingambit
+    assert all(not o.sides["p1"][1]["fainted"] for o in outs)  # the game ended first
+    outs = resolver(dex, moves, calc).resolve(b, R.Field(trickroom=3), QUIET)
+    assert all(o.winner == "p2" for o in outs)  # Garchomp goes before Whimsicott

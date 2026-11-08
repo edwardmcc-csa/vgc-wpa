@@ -279,7 +279,18 @@ class TurnValues:
         if empty:
             raise ValueError(f"the resolver gave no boards for {empty[0]}")
         flat = [o for k in todo for o in got[k]]
-        wps = np.asarray(self.board_wp(flat), dtype=float)
+        # a board where the game ended is worth its result; the rest, the model
+        need = [o for o in flat if getattr(o, "winner", None) is None]
+        rest = iter(np.asarray(self.board_wp(need), dtype=float) if need else ())
+        wps = np.array(
+            [
+                next(rest)
+                if getattr(o, "winner", None) is None
+                else float(o.winner == "p1")
+                for o in flat
+            ],
+            dtype=float,
+        )
         i = 0
         for k in todo:
             outs = got[k]
