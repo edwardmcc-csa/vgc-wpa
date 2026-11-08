@@ -497,3 +497,86 @@ training games (345 decision points where the log shows the whole choice):
 > noise measured about 3pp (Week 9, Task 6), so a 0.5pp filter would have shown
 > noise. Small consistent leaks under 3pp are still found by aggregating over
 > many games; they are not itemised per decision.
+
+---
+
+## Addendum, 7 November: the full sample on your computer
+
+Runbook Section 18, step 3: all 526 Reg M-A games (300 sets) and all 366 Reg M-B
+games (199 sets), scored with `models_v4_full`. The opponent model's sharpness was
+4. Each choice was compared with the player's 10 likeliest in every third game.
+"Typical size" is the root mean square, in points.
+
+| | games | decision points | swing | your decision | their decision | the dice |
+|---|---|---|---|---|---|---|
+| Reg M-A | 526 | 7,256 | 17.2 | mean +2.2, typical 13.7 | mean -2.2, typical 12.3 | mean 0.0, typical 12.6 |
+| Reg M-B | 366 | 5,228 | 16.4 | mean +2.2, typical 14.2 | mean -2.2, typical 12.6 | mean 0.0, typical 11.9 |
+
+| | decision points compared | cost vs best, median | cost vs best, mean | best choice taken | cost vs average, mean |
+|---|---|---|---|---|---|
+| Reg M-A | 2,398 | -4.1 | -8.8 | 22% | +3.5 |
+| Reg M-B | 1,654 | -3.9 | -8.8 | 23% | +3.6 |
+
+- **The checks hold.** The parts add up everywhere (largest error 1.1e-16), and no
+  turn failed. 278 Reg M-A and 192 Reg M-B decision points were left out because
+  the game ended by forfeit or on the timer during the turn.
+- **Sharpness 4 did what the fit said.** "Your decision" averages +2.2 points
+  (the fit on training games said +2.8), down from +5 in the first look. It is
+  positive at 58% of decision points, down from about two-thirds.
+- **Their replies taken exactly:** 85% (Reg M-A) and 83% (Reg M-B) of the chance on
+  average, as sharpening concentrates it. The lowest is 33%.
+- **The board that happened was among the resolver's** in 75% of turns in both
+  formats, as in the first look.
+
+### The biggest swings are mostly not clean yet
+
+This is the main finding. I checked the top of both lists against the logs:
+- **Reg M-A's first and second swings are Perish Song, and so is its tenth.** In
+  each, both of one side's Pokemon reached the end of their count and fainted:
+  certain, not luck. Win probability went from 2% to 100% on the first. The dice
+  got +99 points because the resolver does not count Perish Song down. Those
+  turns are not even marked "partly modelled", which breaks the rule in Task 2.
+- **Reg M-A's fourth and fifth are Last Respects**, Reg M-B's sixth too, and Reg
+  M-B's eighth is Rage Fist. Their power grows with the game so far, which the
+  calculator is not told. These are marked "partly modelled" since the fix of 6
+  November.
+- **Some top swings are real.** Reg M-B's ninth: a critical hit from Hyper Voice
+  and a double flinch from Rock Slide, +61 points to the dice. That is what the
+  dice are for.
+
+Every turn with a swing over 40 points, by cause:
+
+| | turns | board found, fully modelled | found, partly modelled | Last Respects or Rage Fist | Perish Song | board not found, other |
+|---|---|---|---|---|---|---|
+| Reg M-A | 132 | 52 (39%) | 24 | 20 | 8 | 28 |
+| Reg M-B | 79 | 47 (59%) | 8 | 11 | 2 | 11 |
+
+So in Reg M-A, fewer than 4 in 10 of the turns a report would lead with are fully
+understood. Where the board was not found, the dice are typically 18.6 points,
+against 9.8 where it was. The most common reason a board was not found is the
+switch-in after U-turn or Parting Shot, then Last Respects, sleep and Leech Seed.
+
+### Time
+
+The run took about 41 hours of one core: 26.0 for Reg M-A and 15.5 for Reg M-B.
+That is **about twice my estimate of 19**. Typical turns were as expected: a
+median of 4 to 5 seconds without the comparison, and 23 to 24 with it. The slow
+tail is longer: a tenth of turns took about a minute or more, and the slowest
+took 28 minutes. Each core may also be slower when six run at once. At this rate
+the whole validation split would take about three days with 6 workers.
+
+### What this means for Week 10
+
+Before any M7 report leads with "your biggest swings", the top of the list has to
+be right. In order:
+1. **Perish Song:** count it down in the resolver. Until then, mark those turns
+   "partly modelled".
+2. **Last Respects and Rage Fist:** tell the calculator the fainted allies and the
+   hits taken.
+3. **The switch-in after U-turn and Parting Shot:** the most common reason a
+   board is not found.
+4. **Spreads:** your decision 3, averaging over the 2 or 3 likeliest.
+5. **The averaged models** (your decision 1) and **the stronger opponent model**
+   (option (b) of decision 2).
+6. **The summary should show "partly modelled"** next to each big swing, so a
+   reader can tell a modelling gap from luck.
