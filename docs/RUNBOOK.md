@@ -1107,6 +1107,45 @@ facts are read from Showdown instead (a little slower to start).
 
 ---
 
+## 19. Week 10: the biggest swings made right, the averaged model, forced switches
+
+This week fixes what put the wrong turns at the top of Week 9's list (Perish
+Song, Last Respects, Rage Fist, Supreme Overlord), and makes the win probability
+an average of 10 models (DEFINITIONS §10.2, revision 9). Two of the fixes change
+the feature table, so it is built again first. It needs everything from
+Sections 17 and 18.
+
+1. **Build the full table again, with the fixes** (about 2½ hours at 4 workers,
+   as in Section 17). A new folder, so the old table stays:
+   ```
+   python -m wpa.features --from-logs logs_sets --out features_v4b_full --groups ABCDEFGHIJ --usage usage_stats --bring models_v4/bring.json --shards 64 --workers 4
+   ```
+
+2. **Train the 10 models for each format** (each one is a full training, like
+   Section 17's; the first one prints how long it took). Reg M-A first, then the
+   pooled model for Reg M-B:
+   ```
+   python -m wpa.ensemble train --features features_v4b_full --models models_v4_avg --format regma
+   python -m wpa.ensemble train --features features_v4b_full --models models_v4_avg --format pooled
+   ```
+   Each prints a line per model, such as `regma member 1 of 10: validation
+   Brier 0.18xx after N rounds, H hours`. They can be stopped (Ctrl+C) and run
+   again with the same command: finished models are kept, and the one in
+   progress carries on from its last save. Spreading them over several nights
+   is fine.
+
+3. **Put the average together and check it** (minutes):
+   ```
+   python -m wpa.ensemble finish --features features_v4b_full --models models_v4_avg --base models_v4_full
+   ```
+   For each format it prints the validation score, the comparison with
+   `models_v4_full` (negative is better), and the averaged model's own noise
+   against the 3-point threshold. It ends with `Gate: passed` or the bins that
+   failed, and saves it all in `models_v4_avg\report.txt`. A line starting
+   `BLOCKER` means the noise is over the threshold: stop there and send it to me.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
