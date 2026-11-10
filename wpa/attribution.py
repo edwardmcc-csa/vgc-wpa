@@ -256,9 +256,15 @@ def taken_mixture(
     hidden: set[int],
     opts: Mapping[int, Sequence[Action]],
     chances: Mapping[int, Sequence[float]],
+    priority: Mapping[str, int] | None = None,
 ) -> Mix:
     """The choice a side took: what the log shows, and where it shows nothing
-    (or a move but not its target) the model's chances over the options."""
+    (or a move but not its target) the model's chances over the options.
+
+    With `priority` (each move's priority), only over the choices the log allows
+    (Week 11): a switch or a Mega Evolution always shows, before any move, so a
+    hidden choice is neither; a Pokemon knocked out before moving ("fainted")
+    chose no move with raised priority, which would have gone first."""
     per: dict[int, list[tuple[Action, float]]] = {}
     for idx, o in opts.items():
         a = taken.get(idx)
@@ -268,6 +274,15 @@ def taken_mixture(
             pairs = same or pairs
         elif isinstance(a, Action):
             pairs = [(a, 1.0)]
+        elif priority is not None:
+            allowed = [
+                (x, p)
+                for x, p in pairs
+                if x.kind == "move"
+                and not x.mega
+                and not (a == "fainted" and priority.get(x.move, 0) > 0)
+            ]
+            pairs = allowed or pairs
         s = sum(p for _, p in pairs)
         per[idx] = [(x, p / s) for x, p in pairs] if s > 0 else []
     return mixture(per)
@@ -758,9 +773,9 @@ class Tools:
     # the lead model (`wpa.lead_model`); without it team preview keeps its WPs
     # (so a game still chains) but is not split
     leads: Any = None
-    # move order from each Pokemon's spread belief (Week 11 Task 2); off only to
-    # measure what it changes
-    speed_beliefs: bool = True
+    # move order from each Pokemon's spread belief (Week 11 Task 2): off by
+    # default, as it cost 2.6 times the time and changed nothing measured
+    speed_beliefs: bool = False
 
 
 @dataclass
@@ -1313,12 +1328,26 @@ def analyse_game(
     return out
 
 
+_PRIORITY: dict[int, dict[str, int]] = {}
+
+
+def _priorities(dex) -> dict[str, int]:
+    """Each move's priority in the format's data (kept per dex)."""
+    if id(dex) not in _PRIORITY:
+        _PRIORITY[id(dex)] = {
+            k: int((v or {}).get("priority", 0) or 0) for k, v in dex.moves.items()
+        }
+    return _PRIORITY[id(dex)]
+
+
 def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[dict]:
     tv = ts.tv
     mixes = {}
     for r in ("p1", "p2"):
         t, opts, ch = ts.turns[r], ts.opts[r], ts.chances[r]
-        taken = taken_mixture(t.taken, t.hidden, opts, ch)
+        taken = taken_mixture(
+            t.taken, t.hidden, opts, ch, _priorities(tools.dexes[ts.base["format"]])
+        )
         full = mixture({i: list(zip(opts[i], ch[i])) for i in opts})
         seed = f"{ts.base['tag']} {ts.turn} {r}"
         lk, kept = likely(full, tools.top, tools.draws, seed)
@@ -1575,7 +1604,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     )
     tools.budget = getattr(a, "budget", None) or None
     tools.typical = not getattr(a, "no_typical", False)
-    tools.speed_beliefs = not getattr(a, "no_speed_beliefs", False)
+    tools.speed_beliefs = bool(getattr(a, "speed_beliefs", False))
     if getattr(a, "leads", None) and Path(a.leads).exists():
         from wpa.lead_model import LeadModel
 
@@ -2149,10 +2178,10 @@ def main() -> None:  # pragma: no cover
         help="the lead model (Week 11 Task 1); without it, team preview not split",
     )
     p.add_argument(
-        "--no-speed-beliefs",
+        "--speed-beliefs",
         action="store_true",
-        help="move order from the likeliest spreads only (Week 10); only to "
-        "measure what the spread beliefs change",
+        help="move order from each Pokemon's spread belief (Week 11 Task 2; "
+        "2.6 times slower and no change measured, so off by default)",
     )
     p.add_argument(
         "--no-typical",
