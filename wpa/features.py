@@ -425,6 +425,9 @@ class DamageContext:
     spreads: Mapping[tuple[str, int], object]
     # each side's odds that each sheet Pokemon was brought (`wpa.bring`), by role
     odds: Mapping[str, Sequence[float]] | None = None
+    # each Pokemon's whole spread belief there, (spread, weight) pairs (Week 11
+    # Task 2: Speed order from the hidden spreads); not used by the features
+    dists: Mapping[tuple[str, int], Sequence[tuple[object, float]]] | None = None
 
 
 _SCREENS = ("reflect", "lightscreen", "auroraveil")
@@ -1660,7 +1663,8 @@ def damage_contexts(
             }
     return {
         role: [
-            DamageContext(calc, beliefs.at(point), odds) for point in game.points[role]
+            DamageContext(calc, beliefs.at(point), odds, beliefs.dists_at(point))
+            for point in game.points[role]
         ]
         for role in game.points
     }

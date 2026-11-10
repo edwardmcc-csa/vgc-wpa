@@ -382,9 +382,13 @@ class Resolver:
         resolution: float | None = None,
         prune: float = 0.0,
         cap: int | None = None,
+        dists: Mapping[tuple[str, int], Sequence[tuple[Spread, float]]] | None = None,
     ) -> None:
         self.dex, self.moves, self.calc = dex, moves, calc
         self.sheets, self.spreads = sheets, spreads
+        # each Pokemon's whole spread belief (Week 11 Task 2): move order then
+        # branches on the Speeds the evidence has not settled
+        self.dists = dists or {}
         self.resolution, self.prune, self.cap = resolution, prune, cap
         self.coarsest = resolution or 0.0  # the grid the last resolve needed
         self.held = 0  # the most boards the last resolve held at once in a step
@@ -513,14 +517,34 @@ class Resolver:
 
     # ------------------------------------------------------------- switching
 
-    def _speed(self, w: _World, role: str, idx: int) -> float:
+    def _speed_dist(self, w: _World, role: str, idx: int) -> list[tuple[float, float]]:
+        """The Speeds this Pokemon may have, each with its chance: from its
+        spread belief where there is one, else the likeliest spread's."""
+        d = self.dists.get((role, idx))
+        if not d or len(d) < 2:
+            return [(self._speed(w, role, idx), 1.0)]
+        by: dict[float, float] = {}
+        for sp, p in d:
+            if p > 0:
+                v = self._speed(w, role, idx, sp)
+                by[v] = by.get(v, 0.0) + p
+        tot = sum(by.values())
+        if tot <= 0:
+            return [(self._speed(w, role, idx), 1.0)]
+        return [(v, p / tot) for v, p in by.items()]
+
+    def _speed(
+        self, w: _World, role: str, idx: int, spread: Spread | None = None
+    ) -> float:
         st = w.sides[role][idx]
         mon = self.sheets[role][idx]
+        sp = spread or self.spread(role, idx)
         from wpa.features import _board_state
 
         key = (
             role,
             idx,
+            sp,
             w.fld.weather,
             w.fld.terrain,
             bool(w.fld.sides[role].get("tailwind")),
@@ -533,7 +557,7 @@ class Resolver:
             req = speed_request(
                 mon,
                 _board_state(st),
-                self.spread(role, idx),
+                sp,
                 self.dex,
                 {"weather": w.fld.weather, "terrain": w.fld.terrain},
                 bool(w.fld.sides[role].get("tailwind")),
@@ -727,25 +751,50 @@ class Resolver:
             if a.kind == "move" and w.sides[r][a.user]["active"]
         ]
         sign = 1 if w.fld.trickroom else -1
-        keyed = [
-            ((-self._priority(w, r, a), sign * self._speed(w, r, a.user)), (r, a))
-            for r, a in movers
-        ]
-        keyed.sort(key=lambda x: x[0])
-        groups: list[list] = []
-        for k, ra in keyed:
-            if groups and groups[-1][0] == k:
-                groups[-1][1].append(ra)
-            else:
-                groups.append([k, [ra]])
-        perms = [list(permutations(g[1])) for g in groups]
-        out = []
-        for combo in product(*perms):
-            p = 1.0
-            for g in perms:
-                p /= len(g)
-            out.append(([ra for part in combo for ra in part], p))
-        return out
+        pri = [-self._priority(w, r, a) for r, a in movers]
+        speeds = [self._speed_dist(w, r, a.user) for r, a in movers]
+        out: dict[tuple, float] = {}
+        for drawn in product(*speeds):
+            q = 1.0
+            for _v, p in drawn:
+                q *= p
+            if q <= 0:
+                continue
+            keyed = [
+                ((pri[i], sign * drawn[i][0]), movers[i]) for i in range(len(movers))
+            ]
+            keyed.sort(key=lambda x: x[0])
+            groups: list[list] = []
+            for k, ra in keyed:
+                if groups and groups[-1][0] == k:
+                    groups[-1][1].append(ra)
+                else:
+                    groups.append([k, [ra]])
+            perms = [list(permutations(g[1])) for g in groups]
+            for combo in product(*perms):
+                p = q
+                for g in perms:
+                    p /= len(g)
+                order = tuple(ra for part in combo for ra in part)
+                out[order] = out.get(order, 0.0) + p
+        return [(list(o), p) for o, p in out.items()]
+
+    def orders(
+        self,
+        sides: Mapping[str, Sequence[Mapping]],
+        fld: Field,
+        actions: Mapping[str, Sequence[Action]],
+    ) -> list[tuple[list, float]]:
+        """The order the moves can go in, each with its chance (priority, then
+        Speed; Speed ties 50/50; with spread beliefs, each Speed the evidence
+        has not settled)."""
+        w = _World(
+            1.0,
+            {r: [dict(m) for m in sides[r]] for r in ROLES},
+            copy.deepcopy(fld),
+            set(),
+        )
+        return self._orders(w, actions)
 
     # ---------------------------------------------------------------- acting
 

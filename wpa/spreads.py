@@ -779,13 +779,20 @@ def request_for(hit: Hit, sheets, dex, a_spread: Spread, d_spread: Spread) -> di
 
 
 class GameBeliefs:
-    """Each Pokemon's most likely spread, at each point of one game."""
+    """Each Pokemon's most likely spread, and its whole belief (each candidate
+    with its weight, Week 11 Task 2), at each point of one game."""
 
     def __init__(self, priors: Mapping[tuple[str, int], Sequence[Spread]]) -> None:
         self.prior = {k: Belief(v).best() for k, v in priors.items() if v}
+        self.prior_dists = {
+            k: [(c, c.weight) for c in v] for k, v in priors.items() if v
+        }
         self.changes: list[
             tuple[int, tuple[str, int], Spread]
         ] = []  # (block, mon, best)
+        self.dists: list[
+            tuple[int, tuple[str, int], list[tuple[Spread, float]]]
+        ] = []  # (block, mon, every candidate with its weight)
 
     def at(self, block: int) -> dict[tuple[str, int], Spread]:
         """The most likely spreads for a decision at `block`: hits before it."""
@@ -793,6 +800,14 @@ class GameBeliefs:
         for b, k, s in self.changes:
             if b < block:
                 out[k] = s
+        return out
+
+    def dists_at(self, block: int) -> dict[tuple[str, int], list[tuple[Spread, float]]]:
+        """Each Pokemon's belief for a decision at `block`: events before it."""
+        out = dict(self.prior_dists)
+        for b, k, d in self.dists:
+            if b < block:
+                out[k] = d
         return out
 
 
@@ -910,6 +925,7 @@ def refine(
         for key, b, old in ((a_key, A, before[0]), (b_key, B, before[1])):
             if b.best() != old:
                 g.changes.append((ev.block, key, b.best()))
+            g.dists.append((ev.block, key, list(zip(b.candidates, b.weights))))
     return g, records
 
 

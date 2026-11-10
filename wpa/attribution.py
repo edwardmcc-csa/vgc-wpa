@@ -758,6 +758,9 @@ class Tools:
     # the lead model (`wpa.lead_model`); without it team preview keeps its WPs
     # (so a game still chains) but is not split
     leads: Any = None
+    # move order from each Pokemon's spread belief (Week 11 Task 2); off only to
+    # measure what it changes
+    speed_beliefs: bool = True
 
 
 @dataclass
@@ -958,6 +961,7 @@ def turn_setups(
                 ctxs[k].spreads,
                 resolution=tools.resolution,
                 cap=tools.cap,
+                dists=ctxs[k].dists if tools.speed_beliefs else None,
             )
             bw = BoardWP(
                 tools.predict[fmt],
@@ -1571,6 +1575,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     )
     tools.budget = getattr(a, "budget", None) or None
     tools.typical = not getattr(a, "no_typical", False)
+    tools.speed_beliefs = not getattr(a, "no_speed_beliefs", False)
     if getattr(a, "leads", None) and Path(a.leads).exists():
         from wpa.lead_model import LeadModel
 
@@ -2142,6 +2147,12 @@ def main() -> None:  # pragma: no cover
         type=Path,
         default=Path("models_v4/leads.json"),
         help="the lead model (Week 11 Task 1); without it, team preview not split",
+    )
+    p.add_argument(
+        "--no-speed-beliefs",
+        action="store_true",
+        help="move order from the likeliest spreads only (Week 10); only to "
+        "measure what the spread beliefs change",
     )
     p.add_argument(
         "--no-typical",
