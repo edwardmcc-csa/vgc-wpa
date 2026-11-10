@@ -1,7 +1,7 @@
 # Week 11 — Dispatch Brief (M5 part 3: your choice and the position, team preview and leads)
 
 **Status:** drafted 10 Nov 2026 from the PO's decisions on the Week 10 report.
-Waiting on the PO: DEFINITIONS revision 10 (below) and a start.
+The PO approved DEFINITIONS revision 10 and started it on 10 Nov.
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -32,7 +32,7 @@ and sleep.
    the hidden spreads, then charging moves, confusion, Encore and sleep. The
    stronger opponent model and the full spread method wait for Week 12.
 
-## DEFINITIONS §3 and §4, revision 10 (draft, for the PO's approval)
+## DEFINITIONS §3 and §4, revision 10 (approved 10 Nov 2026, committed)
 
 > ## 3. The split: your choice, the position, their decision, the dice
 >
@@ -174,6 +174,6 @@ way the opponent's likely replies are weighted.)
   measurement.
 
 ## For the PO before starting
-1. **Approve DEFINITIONS revision 10** (above), or say what to change.
+1. ~~Approve DEFINITIONS revision 10~~ **Approved 10 Nov.**
 2. **Task 4 will likely need a weekend** on your computer rather than a night.
    Task 0 measures it first.

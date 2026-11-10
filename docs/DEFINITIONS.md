@@ -1,6 +1,6 @@
 # DEFINITIONS
 
-**Status:** approved by the product owner. Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
+**Status:** approved by the product owner. Revision 10 — §3 splits "your decision" into your choice and the position, and §4's average becomes the typical choice (PO, 10 Nov 2026). Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
 **Applies to:** milestones M4, M4b, M5, M7.
 
 This document is the contract. If code and this document disagree, the code is wrong.
@@ -22,30 +22,34 @@ For any decision point, `WPA = WP(after) − WP(before)`.
 
 Positive means the player's position improved. Summed over a whole game, WPA telescopes to `1.0 − WP(start)` for the winner. That is a useful end-to-end check.
 
-## 3. The split: your decision, their decision, the dice
+## 3. The split: your choice, the position, their decision, the dice
 
-Every `WPA` decomposes into exactly three components. All three are from the analysed player's side. Write:
+Every `WPA` decomposes into exactly four components. All four are from the analysed player's side. Write:
 
 - `WP(before)` for the win probability at the decision point;
-- `E[WP | your choice]` for the expected `WP` after the turn, averaged over the opponent's likely replies (§7) and every random outcome (§8);
+- `E[WP | a typical choice]` for the expected `WP` after the decision when your choice is drawn from what players typically choose in this position (the same choice model §7 uses for the opponent), averaged over the opponent's likely replies (§7) and every random outcome (§8);
+- `E[WP | your choice]` for the same with your actual choice;
 - `E[WP | your choice, their choice]` for the same, averaged over random outcomes only.
 
-The three components are:
+The four components are:
 
-- **Your decision** = `E[WP | your choice] − WP(before)`. *Did you choose well, compared with what this position usually gives?* Over typical play it averages to about zero.
+- **Your choice** = `E[WP | your choice] − E[WP | a typical choice]`. *Did you choose better than players typically do here?* This is the decision credited to you. With only one option it is exactly 0.
+- **The position** = `E[WP | a typical choice] − WP(before)`. *What did this decision point hold, whatever you chose?* It is credited to no one. It carries what playing the turn out reveals that the single `WP` estimate did not: a game that ends whatever anyone chooses, a Pokemon about to come in.
 - **Their decision** = `E[WP | your choice, their choice] − E[WP | your choice]`. *Did their actual reply do better or worse than their likely replies?* It is negative when they read you well.
 - **The dice** = `WP(after) − E[WP | your choice, their choice]`. *Did the random outcomes in §8 cooperate?*
 
-**Conservation:** your decision + their decision + the dice = `WPA`, at every decision point, in every game, with no exceptions. Tolerance ±0.001 for floating point only. A conservation failure is a P1 bug, not a rounding note.
+**Conservation:** your choice + the position + their decision + the dice = `WPA`, at every decision point, in every game, with no exceptions. Tolerance ±0.001 for floating point only. A conservation failure is a P1 bug, not a rounding note.
+
+Rationale (rev 10, PO, 10 Nov 2026): revision 8 called your choice plus the position "your decision". On the Week 10 sample the position was typically about 11 points a turn, as big as the choice itself, so "your decision" credited players with what no choice of theirs moved.
 
 ## 4. Baseline for Decision WPA
 
-Beside the split in §3 we report two more numbers, always both, never one alone. They are not part of the split, and they do not need to add up:
+Beside the split in §3 we report the choice against two baselines, always both, never one alone:
 
-- **Cost vs. best** — against the single best action available. This is the coaching number: "that switch cost you 14%."
-- **Cost vs. average** — against the mean over legal actions. This is the fairness number, and it stops the tool telling a competent player they misplayed every single turn because they weren't a solver.
+- **Cost vs. best** — against the best of the player's likely choices. This is the coaching number: "that switch cost you 14%."
+- **Cost vs. typical** — against the typical choice: this is **your choice** in §3. It is the fairness number, and it stops the tool telling a competent player they misplayed every single turn because they weren't a solver.
 
-Rationale: "vs. best" alone is demoralising and makes good players look bad. "Vs. average" alone hides real errors. Shipping both is a product requirement, not an implementation detail.
+Rationale: "vs. best" alone is demoralising and makes good players look bad. "Vs. typical" alone hides real errors. Shipping both is a product requirement, not an implementation detail.
 
 ## 5. Information set — the critical decision
 
