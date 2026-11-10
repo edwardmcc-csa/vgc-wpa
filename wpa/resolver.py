@@ -93,6 +93,18 @@ INTIMIDATE_BLOCK = {
 }
 DROP_BLOCK = {"clearbody", "whitesmoke", "fullmetalbody"}
 CRIT_IMMUNE = {"battlearmor", "shellarmor"}
+# Week 11 Task 3: the Champions rules (`data/mods/champions/conditions.ts`)
+PARALYSED = 1 / 8  # the chance a paralysed Pokemon cannot move
+SLEEP_WAKE = {1: 0.0, 2: 1 / 3}  # waking on the n-th try (third and later: sure)
+CONFUSED_HIT = 0.33  # Showdown's randomChance(33, 100)
+LEAVING = ("confused", "charging", "encore", "hits")
+OUT_OF_REACH = {"fly", "bounce", "dig", "dive", "phantomforce", "shadowforce"}
+REACHES = {  # moves that still hit it there (not modelled: marked)
+    "fly": {"gust", "twister", "thunder", "hurricane", "skyuppercut", "smackdown"},
+    "bounce": {"gust", "twister", "thunder", "hurricane", "skyuppercut", "smackdown"},
+    "dig": {"earthquake", "magnitude", "fissure"},
+    "dive": {"surf", "whirlpool"},
+}
 FLINCH_IMMUNE = {"innerfocus", "shielddust"}
 STATUS_TYPE_IMMUNE = {
     "brn": {"Fire"},
@@ -180,6 +192,13 @@ class Outcome:
     winner: str | None = None
 
 
+def _staged(stat: int, stage: int) -> int:
+    """A stat at a stage, as Showdown's calculateStat."""
+    table = (1, 1.5, 2, 2.5, 3, 3.5, 4)
+    stage = max(-6, min(6, stage))
+    return int(stat * table[stage]) if stage >= 0 else int(stat / table[-stage])
+
+
 @dataclass
 class _World:
     p: float
@@ -256,6 +275,11 @@ class _World:
                 m["protect_streak"],
                 m.get("perish", 0),
                 m.get("sub", 0),
+                m.get("confused", -1),
+                m.get("charging", ""),
+                m.get("encore", ""),
+                m.get("slp_n", 0),
+                m.get("frz_n", 0),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -656,6 +680,8 @@ class Resolver:
             return False
         o.update(active=False, boosts={}, moved=False, last_move="", protect_streak=0)
         o.pop("perish", None)  # switching out ends the count
+        for k in LEAVING:  # and confusion, a charging move, Encore, Rage Fist's hits
+            o.pop(k, None)
         n.pop("perish", None)
         o.pop("sub", None)  # and a substitute
         n.pop("sub", None)
@@ -807,26 +833,138 @@ class Resolver:
         st = w.sides[role][a.user]
         if st["fainted"] or not st["active"]:
             return [w]
+        # can it move at all? In Showdown's order: sleep and freeze, flinch,
+        # confusion, paralysis; with the Champions rules (`data/mods/champions`)
+        if st["status"] in ("slp", "frz"):
+            return self._asleep_or_frozen(w, role, a)
         if (role, a.user) in w.flinched:
             w.acted.add((role, a.user))
             return [w]
-        # can it move at all?
-        if st["status"] == "slp":
-            w.partial.add("sleep")
-            w.acted.add((role, a.user))
-            return [w]
-        if st["status"] == "frz":
-            thaw, stay = w.clone(w.p * 0.2), w
-            stay.p *= 0.8
-            thaw.sides[role][a.user]["status"] = ""
+        return self._confused_then(w, role, a)
+
+    def _asleep_or_frozen(self, w: _World, role: str, a: Action) -> list[_World]:
+        """Champions: sleep ends on the second try with chance 1/3, on the third
+        for sure (Early Bird counts each try twice); freeze thaws with chance 1/4
+        a try, on the third for sure, and at once for a move that thaws."""
+        st = w.sides[role][a.user]
+        status = st["status"]
+        n = st.get(status + "_n", 0) + 1
+        if status == "slp":
+            if self.ability(role, a.user, st) == "earlybird":
+                n = 2 * n
+            free = SLEEP_WAKE.get(n, 1.0)
+            if self.move(a.move).get("sleepUsable"):
+                w.partial.add("sleep talk")
+        else:
+            thaws = "defrost" in (self.move(a.move).get("flags") or [])
+            free = 1.0 if thaws or n >= 3 else 0.25
+        out = []
+        if free < 1:
+            stay = w.clone(w.p * (1 - free)) if free > 0 else w
+            stay.sides[role][a.user][status + "_n"] = n
             stay.acted.add((role, a.user))
-            return [stay, *self._use(thaw, role, a)]
-        if st["status"] == "par":
-            stuck, go = w.clone(w.p * 0.25), w
-            go.p *= 0.75
+            out.append(stay)
+        if free > 0:
+            go = w
+            go.p *= free
+            x = go.sides[role][a.user]
+            x["status"] = ""
+            x.pop(status + "_n", None)
+            if (role, a.user) in go.flinched:
+                go.acted.add((role, a.user))
+                out.append(go)
+            else:
+                out += self._confused_then(go, role, a)
+        return out
+
+    def _confused_then(self, w: _World, role: str, a: Action) -> list[_World]:
+        """Confusion (Showdown, unchanged in Champions): 2 to 5 tries; on the
+        n-th it snaps out with chance 1/(6 - n), else it hits itself 33 times in
+        100 instead of moving. Then paralysis: 1 time in 8 it cannot move."""
+        st = w.sides[role][a.user]
+        if "confused" not in st:
+            return self._paralysed_then(w, role, a)
+        n = st["confused"] + 1
+        snap = 0.0 if n < 2 else (1.0 if n >= 5 else 1 / (6 - n))
+        out = []
+        if snap > 0:
+            free = w.clone(w.p * snap) if snap < 1 else w
+            free.sides[role][a.user].pop("confused", None)
+            out += self._paralysed_then(free, role, a)
+            if snap >= 1:
+                return out
+            w.p *= 1 - snap
+        w.sides[role][a.user]["confused"] = n
+        hurt = w.clone(w.p * CONFUSED_HIT)
+        w.p *= 1 - CONFUSED_HIT
+        out += self._hits_itself(hurt, role, a.user)
+        out += self._paralysed_then(w, role, a)
+        return out
+
+    def _paralysed_then(self, w: _World, role: str, a: Action) -> list[_World]:
+        if w.sides[role][a.user]["status"] == "par":
+            stuck, go = w.clone(w.p * PARALYSED), w
+            go.p *= 1 - PARALYSED
             stuck.acted.add((role, a.user))
             return [stuck, *self._use(go, role, a)]
         return self._use(w, role, a)
+
+    def _hits_itself(self, w: _World, role: str, idx: int) -> list[_World]:
+        """Confusion's self-hit: Showdown's getConfusionDamage, a 40-power
+        typeless physical hit with its own Attack and Defense and their stages,
+        16 rolls; Focus Sash and Sturdy hold at full hit points."""
+        st = w.sides[role][idx]
+        w.acted.add((role, idx))
+        b = st.get("boosts") or {}
+        key = ("confused", role, idx, b.get("atk", 0), b.get("def", 0))
+        if key not in self._dmg:
+            atk, dfn = self._stats(role, idx, ("atk", "def"))
+            atk, dfn = _staged(atk, b.get("atk", 0)), _staged(dfn, b.get("def", 0))
+            base = ((2 * 50 // 5 + 2) * 40 * atk // dfn) // 50 + 2
+            self._dmg[key] = [max(1, base * (100 - r) // 100) for r in range(16)]
+        max_hp = self.max_hp(role, idx)
+        hp = round(st["hp_fraction"] * max_hp)
+        groups: dict[int, float] = {}
+        for dmg in self._dmg[key]:
+            new = max(0, hp - dmg)
+            if (
+                new == 0
+                and hp == max_hp
+                and (
+                    st.get("item") == "focussash"
+                    or self.ability(role, idx, st) == "sturdy"
+                )
+            ):
+                new = 1
+            groups[new] = groups.get(new, 0.0) + 1 / 16
+        out = []
+        for new, p in groups.items():
+            x = w.clone(w.p * p)
+            y = x.sides[role][idx]
+            if new == 1 and hp == max_hp and y.get("item") == "focussash":
+                y["item"], y["rev_item"] = "", "focussash"
+            y["hp_fraction"] = new / max_hp
+            if new == 0:
+                self._faint(x, (role, idx))
+            out.append(x)
+        return out
+
+    def _stats(self, role: str, idx: int, which: tuple[str, ...]) -> tuple[int, ...]:
+        key = ("stats", role, idx, which)
+        if key not in self._dmg:
+            from wpa.spreads import _damage_mon
+
+            m = _damage_mon(
+                self.sheets[role][idx],
+                {},
+                self.spread(role, idx),
+                self.dex,
+                which,
+                lambda h: 1.0,
+            )
+            ans = self.calc.run([{"op": "stats", "mon": m}])[0]["stats"]
+            self._dmg[key] = tuple(int(ans[k]) for k in which)
+        return self._dmg[key]
 
     def _use(self, w: _World, role: str, a: Action) -> list[_World]:
         mv = a.move
@@ -845,25 +983,24 @@ class Resolver:
         if protect_used:
             return self._protect(w, role, a)
         if "charge" in (m.get("flags") or []):
-            sunny = mv in {"solarbeam", "solarblade"} and w.fld.weather == "sunnyday"
-            rainy = mv == "electroshot" and w.fld.weather == "raindance"
-            if mv in {"electroshot", "meteorbeam"}:
-                self._boost(st, {"spa": 1})
-            if not (sunny or rainy or st.get("item") == "powerherb"):
-                w.partial.add("charging")
-                return [w]
-            if st.get("item") == "powerherb" and not (sunny or rainy):
-                st["item"] = ""
-        if "semiinvulnerable" in (m.get("flags") or []) or mv in {
-            "fly",
-            "dig",
-            "dive",
-            "bounce",
-            "phantomforce",
-            "shadowforce",
-        }:
-            w.partial.add("semi-invulnerable")
-            return [w]
+            if st.get("charging") == mv:
+                st.pop("charging")  # the turn after charging: it goes off
+            else:
+                sunny = (
+                    mv in {"solarbeam", "solarblade"} and w.fld.weather == "sunnyday"
+                )
+                rainy = mv == "electroshot" and w.fld.weather == "raindance"
+                if mv in {"electroshot", "meteorbeam"}:
+                    self._boost(st, {"spa": 1})
+                elif mv == "skullbash":
+                    self._boost(st, {"def": 1})
+                if not (sunny or rainy or st.get("item") == "powerherb"):
+                    # it charges; in the air or underground, out of reach
+                    # until it moves next turn (`_targets`)
+                    st["charging"] = mv
+                    return [w]
+                if st.get("item") == "powerherb" and not (sunny or rainy):
+                    st["item"] = ""
         if mv in {"fakeout", "firstimpression"} and not first_turn:
             return [w]  # it works only on the Pokemon's first turn in
         if self._queenly(w, role, a, m):
@@ -899,6 +1036,23 @@ class Resolver:
     # -------------------------------------------------------------- targets
 
     def _targets(
+        self, w: _World, role: str, a: Action, m: Mapping
+    ) -> list[tuple[str, int]]:
+        """Who the move hits; a Pokemon in the air, underground or vanished
+        (charging Fly, Dig, Phantom Force...) is out of reach (Week 11)."""
+        out = self._targets_all(w, role, a, m)
+        kept = []
+        for t in out:
+            away = w.sides[t[0]][t[1]].get("charging")
+            if t != (role, a.user) and away in OUT_OF_REACH:
+                if a.move in REACHES.get(away, ()):
+                    w.partial.add(f"{a.move} reaches {away}")
+                    kept.append(t)
+                continue
+            kept.append(t)
+        return kept
+
+    def _targets_all(
         self, w: _World, role: str, a: Action, m: Mapping
     ) -> list[tuple[str, int]]:
         kind = m.get("target", "normal")
@@ -1103,6 +1257,7 @@ class Resolver:
             or m.get("boosts")
             or m.get("selfSwitch")
             or m.get("forceSwitch")
+            or vol in ("confusion", "encore")
         )
         if not handled:
             w.partial.add(f"move:{mv}")
@@ -1138,6 +1293,10 @@ class Resolver:
                     nxt.append(b)
                 if m.get("status"):
                     self._inflict(hit, tgt, m["status"], mv)
+                if vol == "confusion":
+                    self._confuse(hit, tgt)
+                elif vol == "encore":
+                    self._encore(hit, tgt)
                 if drops and not self._drop(hit, tgt, drops):
                     if tgt[0] != role:
                         failed.add(id(hit))  # Parting Shot: no drop, no switch
@@ -1162,6 +1321,29 @@ class Resolver:
                 x for b in out for x in (self._drag(b, targets[0]) if targets else [b])
             ]
         return out
+
+    def _confuse(self, w: _World, tgt: tuple[str, int]) -> None:
+        """Confused from now: its next try is the first (Own Tempo, and Misty
+        Terrain for a grounded Pokemon, prevent it)."""
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"] or "confused" in x:
+            return
+        if self.ability(tgt[0], tgt[1], x) == "owntempo":
+            return
+        if w.fld.terrain == "mistyterrain" and self._grounded(tgt, x):
+            return
+        x["confused"] = 0
+
+    def _encore(self, w: _World, tgt: tuple[str, int]) -> None:
+        """Encore locks the target into the move it used last. If it has not
+        moved yet this turn, Champions changes its move to that one: not
+        modelled, so marked."""
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"] or x.get("encore") or not x.get("last_move"):
+            return
+        x["encore"] = x["last_move"]
+        if tgt not in w.acted:
+            w.partial.add("encore changes this turn's move")
 
     def _accuracy(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> float:
         acc = m.get("accuracy", True)
@@ -1735,6 +1917,8 @@ class Resolver:
                             and self.ability(tgt[0], tgt[1], yt) not in FLINCH_IMMUNE
                         ):
                             yes.flinched.add(tgt)
+                    elif vol == "confusion":
+                        self._confuse(yes, tgt)
                     elif vol:
                         yes.partial.add(vol)
                 nxt.append(yes)

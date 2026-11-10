@@ -94,6 +94,24 @@ def _clamp(n: int) -> int:
     return max(-6, min(6, n))
 
 
+# Week 11 Task 3: lines that start or end what the board tracks beside status
+_VOLATILE_LINES = frozenset(
+    {
+        "-status",
+        "-curestatus",
+        "cant",
+        "-start",
+        "-end",
+        "-activate",
+        "-prepare",
+        "-enditem",
+    }
+)
+# what leaving the field ends (Rage Fist's hits too, in Champions)
+LEAVING = ("confused", "charging", "encore", "hits")
+# what `side` passes on when present
+TRACKED = ("slp_n", "frz_n", "confused", "charging", "encore")
+
 _EFFECT_LINES = {
     "-boost",
     "-unboost",
@@ -319,12 +337,43 @@ class _Board:
         elif t == "-mega" and len(p) > 4:
             own["rev_item"] = to_id(p[4])
 
+    def _volatiles(self, p: list[str]) -> None:
+        """Week 11 Task 3: the tries spent asleep or frozen (the Champions rules
+        end both by the third), confusion and its tries, a charging move, and
+        Encore with the move it locks."""
+        m = self._mon(p[2])
+        if m is None:
+            return
+        t = p[1]
+        what = to_id(p[3].removeprefix("move: ")) if len(p) > 3 else ""
+        if t in ("-status", "-curestatus"):
+            m.pop("slp_n", None)  # a new status, or none, starts the count again
+            m.pop("frz_n", None)
+        elif t == "cant" and what in ("slp", "frz"):
+            m[what + "_n"] = m.get(what + "_n", 0) + 1
+        elif t == "-start" and what == "confusion":
+            m["confused"] = 0
+        elif t == "-activate" and what == "confusion" and "confused" in m:
+            m["confused"] += 1
+        elif t == "-end" and what == "confusion":
+            m.pop("confused", None)
+        elif t == "-prepare" and what:
+            m["charging"] = what
+        elif t == "-enditem" and what == "powerherb":
+            m.pop("charging", None)  # it went off at once
+        elif t == "-start" and what == "encore":
+            m["encore"] = m.get("last_move") or ""
+        elif t == "-end" and what == "encore":
+            m.pop("encore", None)
+
     def _acted(self, p: list[str]) -> None:
         """A move line: the Pokemon has moved; Protect in a row is counted."""
         m = self._mon(p[2])
         if m is None or len(p) < 4:
             return
         move = to_id(p[3])
+        if m.get("charging") == move and "[still]" not in p[4:]:
+            m.pop("charging", None)  # the charged move goes off
         called = any(x.startswith("[from]") and "lockedmove" not in x for x in p[4:])
         # the real-data check: Fake Out only before moving, and Choice locks
         self._fakeout = None
@@ -375,6 +424,8 @@ class _Board:
                     m["perish"] = int(n.group(1))
                 else:
                     m.pop("perish", None)
+        if len(p) > 2 and p[1] in _VOLATILE_LINES:
+            self._volatiles(p)
         if len(p) > 2:
             self._reveal(p)
         if len(p) > 2 and p[1] == "move":
@@ -416,6 +467,8 @@ class _Board:
                     sub_up = self.mons[role][old].get("sub_up")
                 self.mons[role][old].pop("perish", None)
                 self.mons[role][old].pop("sub_up", None)
+                for k in LEAVING:
+                    self.mons[role][old].pop(k, None)
                 self.mons[role][old]["active"] = False
                 self.mons[role][old]["boosts"] = {}
                 self.mons[role][old].update(moved=False, last_move="", protect_streak=0)
@@ -458,8 +511,9 @@ class _Board:
                     and not paid
                     and not any(x.startswith("[from]") for x in p[4:])
                 ):
-                    # hit by a move (Rage Fist counts these; they stay on switching);
-                    # not the hit points paid for a substitute
+                    # hit by a move (Rage Fist counts these; in Champions they
+                    # reset when it leaves the field); not the hit points paid
+                    # for a substitute
                     m["hits"] = m.get("hits", 0) + 1
         elif t == "faint":
             idx = self._index(role, ident)
@@ -469,6 +523,8 @@ class _Board:
                 m.update(moved=False, last_move="", protect_streak=0)
                 m.pop("perish", None)
                 m.pop("sub_up", None)
+                for k in (*LEAVING, "slp_n", "frz_n"):
+                    m.pop(k, None)
                 for s, v in self.slots[role].items():
                     if v == idx:
                         self.slots[role][s] = None
@@ -511,6 +567,7 @@ class _Board:
                 **({"perish": m["perish"]} if m.get("perish") else {}),
                 **({"hits": m["hits"]} if m.get("hits") else {}),
                 **({"sub_up": m["sub_up"]} if m.get("sub_up") else {}),
+                **{k: m[k] for k in TRACKED if k in m},
             }
             for sp, m in zip(self.species.get(role, []), self.mons.get(role, []))
         ]

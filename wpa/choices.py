@@ -105,7 +105,8 @@ def options(
         ally = next((k for k in actives if k != i), None)
         mega_ok = not side_megaed and not st.get("mega") and _has_own_stone(mon, dex)
         acts: list[Action] = []
-        for move in _usable_moves(mon, st):
+        moves, can_switch = _locked(mon, st, _usable_moves(mon, st))
+        for move in moves:
             m = dex.moves.get(move) or {}
             if st.get("item") == "assaultvest" and m.get("category") == "Status":
                 continue
@@ -113,9 +114,25 @@ def options(
                 acts.append(Action(i, "move", move=move, target=target))
                 if mega_ok:
                     acts.append(Action(i, "move", move=move, target=target, mega=True))
-        acts += [Action(i, "switch", switch_to=j) for j in bench]
+        if can_switch:
+            acts += [Action(i, "switch", switch_to=j) for j in bench]
         out[i] = acts
     return out
+
+
+def _locked(
+    mon: SheetMon, st: Mapping, usable: Sequence[str]
+) -> tuple[Sequence[str], bool]:
+    """Week 11 Task 3: a charging move's second turn allows only that move and
+    no switch; Encore allows only the encored move (switching is still
+    allowed). Otherwise every usable move, and switching."""
+    charging = st.get("charging")
+    if charging:
+        return (charging,), False
+    encore = st.get("encore")
+    if encore and encore in mon.moves:
+        return (encore,), True
+    return usable, True
 
 
 # moves that switch the user out; which Pokemon comes in is part of the choice
