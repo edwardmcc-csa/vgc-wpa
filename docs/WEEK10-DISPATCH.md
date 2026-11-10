@@ -58,6 +58,14 @@ forced switches so that a game's swings add up from turn 1 to the end.
    measured directly.
 8. **Forced switches this week; team preview and leads in Week 11.**
 
+**On Task 4's stop rule (PO, 9 Nov 2026):**
+
+9. **One spread for now.** Measured on 120 real turns: the 2 likeliest spreads
+   make a turn 14 to 19 times slower, 3 about 96 times, for about 1 point more
+   chance on the board that happened. Task 7 runs with each Pokemon's likeliest
+   spread, as in Week 9. A cheaper spread method is designed and measured in
+   Week 11.
+
 ## Tasks
 
 ### Task 0 — Say "partly modelled" everywhere it applies
@@ -127,10 +135,10 @@ forced switches so that a game's swings add up from turn 1 to the end.
 ### Task 4 — Spreads (decision 3)
 - [x] **Measure first.** On a sample of turns, the time per turn with each
       Pokemon's 2 or 3 likeliest spreads instead of 1.
-- [ ] **Hidden spreads are averaged as hidden information, not luck**
+- [ ] *(Week 11, decision 9)* **Hidden spreads are averaged as hidden information, not luck**
       (`WP_public`, as Week 9's brief asked). Each combination of spreads is
       weighted by its chance, and the board is valued with the spreads it assumes.
-- [ ] Report the share of boards found and the size of the dice beside Week 9's.
+- [x] Report the share of boards found and the size of the dice beside Week 9's.
 - [x] **Stop rule:** if the brief's sample would no longer fit in a night on the
       PO's computer, report the cost and the options before Task 7 runs.
 
