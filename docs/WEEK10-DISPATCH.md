@@ -3,6 +3,8 @@
 **Status:** drafted 7 Nov 2026 from the PO's decisions on the Week 9 report and
 the full-sample run of 7 Nov. The PO widened Task 3 and answered both questions
 on 7 Nov (decisions 6 to 8); started 7 Nov (PO: go ahead).
+**Done 10 Nov:** report in `docs/WEEK10-REPORT.md` (spreads deferred to Week 11,
+decision 9).
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -157,8 +159,8 @@ forced switches so that a game's swings add up from turn 1 to the end.
       must be under 3 points. If not, raise a blocker, not a quiet change.
 - [x] **Gate on validation:** the averaged model passes, per format, and its score
       is reported beside v4's (paired). Averaging can soften predictions.
-- [ ] The test split is not opened this week.
-- [ ] The first model is timed. The report says how many nights the rest took.
+- [x] The test split is not opened this week.
+- [x] The first model is timed. The report says how many nights the rest took.
 
 ### Task 6 — Forced switches (DEFINITIONS §6)
 - [x] **The decision:** after a Pokemon faints, which Pokemon to send in. When both
@@ -177,22 +179,22 @@ forced switches so that a game's swings add up from turn 1 to the end.
 - [x] Tests first.
 
 ### Task 7 — The brief's sample again (the PO's computer)
-- [ ] The same 300 Reg M-A sets and 199 Reg M-B sets, with Tasks 0 to 6, the
+- [x] The same 300 Reg M-A sets and 199 Reg M-B sets, with Tasks 0 to 6, the
       averaged model and sharpness 4.
-- [ ] **Report beside Week 9's:**
+- [x] **Report beside Week 9's:**
       - the three parts and both costs, per format;
       - the share of decision points with a part of 3 points or more (the new
         threshold);
       - the turns over 40 points by cause.
-- [ ] **For the PO to judge:** the 10 biggest swings per format, now with their
+- [x] **For the PO to judge:** the 10 biggest swings per format, now with their
       reasons, and the 10 biggest forced-switch decisions.
-- [ ] **Time:** the slowest 5% of turns took 40% of Week 9's run (the slowest 1%,
+- [x] **Time:** the slowest 5% of turns took 40% of Week 9's run (the slowest 1%,
       18%). Make them faster, or give each turn a time budget that coarsens the
       grid rather than dropping anything. Report the total, and whether the whole
       validation split now fits in a weekend.
 
 ### Task 8 — Runbook and report
-- [ ] Runbook section for this week's commands. A report in prose, with a
+- [x] Runbook section for this week's commands. A report in prose, with a
       surprises section.
 
 ## Out of scope this week
