@@ -201,6 +201,37 @@ def expand_pivots(
     return o2, c2
 
 
+def brought_four(brought: Mapping[str, set[int]]) -> dict[str, set[int] | None]:
+    """Each side's four, where the log shows all four come out; else None (any
+    Pokemon not seen could have been brought)."""
+    from wpa.decisions import BRING
+
+    return {r: (set(b) if len(b) >= BRING else None) for r, b in brought.items()}
+
+
+def only_brought(
+    opts: Mapping[int, Sequence[Action]],
+    chances: Mapping[int, Sequence[float]],
+    allowed: set[int] | None,
+) -> tuple[dict, dict]:
+    """A player's own options: no switch (or switching move) to a Pokemon they
+    did not bring, the chances of the rest scaled back to 1. The opponent model
+    offers such switches, as the opponent cannot tell; the player can."""
+    if allowed is None:
+        return dict(opts), dict(chances)
+    o2, c2 = {}, {}
+    for i, acts in opts.items():
+        keep = [
+            (a, p)
+            for a, p in zip(acts, chances[i])
+            if a.switch_to is None or a.switch_to in allowed
+        ]
+        tot = sum(p for _, p in keep)
+        o2[i] = [a for a, _ in keep]
+        c2[i] = [p / tot if tot > 0 else 1 / len(keep) for _, p in keep]
+    return o2, c2
+
+
 def taken_mixture(
     taken: Mapping[int, Action | str],
     hidden: set[int],
@@ -341,6 +372,63 @@ class TurnValues:
         return lambda ours, theirs: 1.0 - self(theirs, ours)
 
 
+class SwitchIns:
+    """A forced switch in the shape `TurnValues` asks of a resolver: the board
+    after both sides' Pokemon come in (`Resolver.replace`). A side that does not
+    replace passes an empty choice."""
+
+    def __init__(self, resolver) -> None:
+        self.resolver = resolver
+
+    def resolve(self, sides, fld, actions):
+        return self.resolver.replace(sides, fld, actions)
+
+
+def chains(
+    records: Sequence[Mapping], results: Mapping[str, float], tol: float = 1e-3
+) -> list[dict]:
+    """DEFINITIONS §2 on each game (Week 10 Task 6): its decision points in
+    order, from p1's side, chain (each WP(after) is the next WP(before), within
+    `tol`) and add up (the swings sum to the result minus WP at the first point).
+    `results`: p1's result per game (1, 0, or 0.5 for a tie)."""
+    games: dict[str, list[Mapping]] = {}
+    for r in records:
+        if r.get("role") == "p1":
+            games.setdefault(r["tag"], []).append(r)
+    out = []
+    for tag, rs in games.items():
+        rs = sorted(rs, key=lambda r: r.get("point", 0))
+        forfeit = any(r.get("skipped") == "forfeit or timer" for r in rs)
+        scored = [
+            r for r in rs if r.get("before") is not None and r.get("after") is not None
+        ]
+        first_break, link = None, 0.0
+        for i in range(1, len(rs)):
+            a, b = rs[i - 1].get("after"), rs[i].get("before")
+            gap = abs(a - b) if a is not None and b is not None else float("inf")
+            link = max(link, gap)
+            if gap > tol and first_break is None:
+                first_break = i
+        if len(scored) < len(rs) and first_break is None:
+            first_break = next(i for i, r in enumerate(rs) if r not in scored)
+        total = sum(r["after"] - r["before"] for r in scored)
+        start = scored[0]["before"] if scored else float("nan")
+        gap = total - (results.get(tag, float("nan")) - start)
+        out.append(
+            {
+                "tag": tag,
+                "points": len(rs),
+                "chained": first_break is None,
+                "first_break": first_break,
+                "worst_link": link,
+                "gap": gap,
+                "adds_up": first_break is None and abs(gap) <= tol,
+                "forfeit": forfeit,
+            }
+        )
+    return out
+
+
 # --------------------------------------------------------------------------
 # The model's win probability of a board after the turn
 # --------------------------------------------------------------------------
@@ -380,9 +468,19 @@ def wp_model(models: Path, fmt: str, groups: str):
     return predict
 
 
-def _board_key(p1: Sequence[Mapping], p2: Sequence[Mapping], fld) -> str:
+def _board_key(
+    p1: Sequence[Mapping], p2: Sequence[Mapping], fld, grid: float | None = None
+) -> str:
+    """A board's identity; with `grid`, hit points to the nearest cell of it."""
+
     def clean(side):
-        return [{k: v for k, v in m.items() if not k.startswith("_")} for m in side]
+        out = []
+        for m in side:
+            d = {k: v for k, v in m.items() if not k.startswith("_")}
+            if grid:
+                d["hp_fraction"] = round(d["hp_fraction"] / grid)
+            out.append(d)
+        return out
 
     return json.dumps([clean(p1), clean(p2), fld.key()], sort_keys=True, default=str)
 
@@ -391,11 +489,34 @@ class BoardWP:
     """p1's win probability of a board the turn can end on: the decision's
     state with the new board and timers, at the next decision (after the turn
     if a Pokemon fell, else the next turn's start), from what was known at the
-    decision (the turn's own end-of-turn observations left out)."""
+    decision (the turn's own end-of-turn observations left out).
+
+    `same_point`: the board is valued as state `k` itself instead (a forced
+    switch's boards, valued at the next turn's start they lead to).
+
+    `budget` (Week 10 Task 7): at most this many boards valued at once. Over it,
+    boards are grouped by hit points on a coarser grid (0.05, doubling) until
+    the groups fit, and each group takes the value of its first board: nothing
+    is dropped. The coarsest grid needed is kept in `grid`. Time per turn is
+    almost all valuing boards (about 7 ms each in Week 9's run)."""
 
     def __init__(
-        self, predict, states, k, joined, sheets, dex, table, groups, ctx
+        self,
+        predict,
+        states,
+        k,
+        joined,
+        sheets,
+        dex,
+        table,
+        groups,
+        ctx,
+        same_point: bool = False,
+        budget: int | None = None,
     ) -> None:
+        self.same_point = same_point
+        self.budget = budget
+        self.grid = 0.0
         s0 = states[k]
         self.turn = s0["turn"]
         self.prior = [
@@ -418,20 +539,28 @@ class BoardWP:
         from wpa.features import columns, state_features
         from wpa.resolver import timers_for
 
-        fell = sum(m["fainted"] for m in list(ours) + list(theirs)) > self.fell0
-        s = dict(
-            self.s0,
-            our_pokemon=[dict(m) for m in ours],
-            opp_pokemon=[dict(m) for m in theirs],
-            moment="after_turn" if fell else "turn_start",
-            turn=self.turn if fell else self.turn + 1,
-            decision_index=(self.s0["decision_index"] + 1) if fell else 0,
-            observations=[],
-        )
+        board = {
+            "our_pokemon": [dict(m) for m in ours],
+            "opp_pokemon": [dict(m) for m in theirs],
+            "observations": [],
+        }
+        if self.same_point:
+            s = dict(self.s0, **board)
+            rows = [*self.prior[: self.k], s]
+        else:
+            fell = sum(m["fainted"] for m in list(ours) + list(theirs)) > self.fell0
+            s = dict(
+                self.s0,
+                **board,
+                moment="after_turn" if fell else "turn_start",
+                turn=self.turn if fell else self.turn + 1,
+                decision_index=(self.s0["decision_index"] + 1) if fell else 0,
+            )
+            rows = [*self.prior, s]
         j = timers_for(fld, "p1", before=self.joined)
         f = state_features(
-            [*self.prior, s],
-            self.k + 1,
+            rows,
+            len(rows) - 1,
             "p1",
             j,
             self.sheets,
@@ -449,9 +578,22 @@ class BoardWP:
             if key not in self._cache and key not in todo:
                 todo[key] = item
         if todo:
-            X = np.array([self._row(*item) for item in todo.values()], dtype=np.float32)
-            for key, p in zip(todo, self.predict(X)):
-                self._cache[key] = float(p)
+            groups = {key: [key] for key in todo}
+            if self.budget is not None and len(todo) > self.budget:
+                g = 0.05
+                while True:
+                    cells: dict[str, list[str]] = {}
+                    for key, item in todo.items():
+                        cells.setdefault(_board_key(*item, grid=g), []).append(key)
+                    if len(cells) <= self.budget or g >= 0.5:
+                        break
+                    g *= 2
+                groups = {ks[0]: ks for ks in cells.values()}
+                self.grid = max(self.grid, g)
+            X = np.array([self._row(*todo[k]) for k in groups], dtype=np.float32)
+            for rep, p in zip(groups, self.predict(X)):
+                for key in groups[rep]:
+                    self._cache[key] = float(p)
         return np.array([self._cache[k] for k in keys])
 
     def __call__(self, outs) -> np.ndarray:
@@ -506,6 +648,41 @@ def end_of_turn(game, k: int):
     return None
 
 
+POINTS = ("turn_start", "after_turn")  # decision points that are split
+
+
+def next_point(
+    game, k: int, after_replacement: bool = False, role: str = "p1"
+) -> tuple[str, int]:
+    """The decision point after the one at `game.states[role][k]` (DEFINITIONS
+    §2, Week 10 Task 6): the forced switch after a turn if either side must send
+    a Pokemon in, else the next turn's start, else the end of the game (p1's
+    terminal state). `after_replacement`: the forced switches after this turn
+    passed over. As (role, index into `game.states[role]`): p1's state where p1
+    decides, else p2's. A switching move's switch-in ("mid_turn") is part of the
+    turn's choice (Task 3), not a point of its own."""
+    s = game.states[role][k]
+    pt0 = game.points[role][k]
+    best = None
+    for r in ("p1", "p2"):
+        pts = game.points[r]
+        for i, st in enumerate(game.states[r][: len(pts)]):
+            if st["moment"] not in POINTS or pts[i] <= pt0:
+                continue
+            if (
+                after_replacement
+                and st["moment"] == "after_turn"
+                and st["turn"] == s["turn"]
+            ):
+                continue
+            cand = (pts[i], r != "p1", r, i)  # p1's state first at the same point
+            if best is None or cand < best:
+                best = cand
+    if best is None:
+        return "p1", len(game.states["p1"]) - 1
+    return best[2], best[3]
+
+
 def _close(a: Mapping, b: Mapping, tol: float) -> bool:
     for r in ("p1", "p2"):
         for x, y in zip(a[r], b[r]):
@@ -534,12 +711,20 @@ class Tools:
     top: int = 6
     draws: int = 6
     alternatives: int = 10
+    # the forced-switch model (`wpa.replace_model`); without it forced switches
+    # keep their WPs (so a game still chains) but are not split
+    replace: Any = None
+    # most boards valued at once per decision point (`BoardWP`); None: no limit
+    budget: int | None = None
 
 
 @dataclass
 class TurnSetup:
     """One turn of one game, ready to value: the resolver's values, both WPs
-    from p1's side, and each player's options with the opponent model's chances."""
+    from p1's side, and each player's options with the opponent model's chances.
+    `after` is WP at the next decision point (DEFINITIONS §2); `after_board` is
+    the turn's actual board valued as the resolver's boards are (a diagnostic:
+    their difference is the model's, not the game's)."""
 
     base: dict
     turn: int
@@ -552,6 +737,27 @@ class TurnSetup:
     opts: dict  # role -> {Pokemon: options}
     chances: dict  # role -> {Pokemon: chances}
     t0: float
+    after_board: float = float("nan")
+
+
+@dataclass
+class ReplacementSetup:
+    """One forced switch of one game (both sides', when both replace), ready to
+    value: the board after each pair of choices (`Resolver.replace`), valued at
+    the next turn's start it leads to; both WPs from p1's side; each replacing
+    side's options with the forced-switch model's chances."""
+
+    base: dict
+    turn: int
+    tv: TurnValues
+    bw: BoardWP
+    before: float
+    after: float
+    actual: dict  # the board at the next turn's start
+    taken: dict  # role -> {fainted: incoming}
+    opts: dict  # role -> {slot: options}
+    chances: dict  # role -> {slot: chances}
+    t0: float
 
 
 def _error(base: dict, e: Exception) -> list[dict]:
@@ -559,14 +765,24 @@ def _error(base: dict, e: Exception) -> list[dict]:
     return [dict(base, role=r, skipped=why) for r in ("p1", "p2")]
 
 
-def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
-    """Each move-selection turn of one game: a TurnSetup, or a list of records
-    saying why the turn is left out."""
+def _skipped(base: dict, why: str, before: float, after: float) -> list[dict]:
+    """A decision point left out of the split, with its WPs kept (from each
+    player's side) so the game still chains."""
+    return [
+        dict(base, role="p1", skipped=why, before=before, after=after),
+        dict(base, role="p2", skipped=why, before=1 - before, after=1 - after),
+    ]
+
+
+def turn_setups(tag: str, log: str, fmt: str, tools: Tools, forced: bool = False):
+    """Each decision point of one game, in order: a TurnSetup for each turn,
+    and with `forced` a ReplacementSetup for each forced switch; or a list of
+    records saying why the point is left out."""
     from wpa import choices as C
     from wpa import decisions as D
     from wpa import resolver as R
     from wpa.bring import brought_from_log
-    from wpa.features import columns, damage_contexts, state_features
+    from wpa.features import _field, columns, damage_contexts, state_features
     from wpa.policy_data import _timers_by_turn, game_tools, turn_options
     from wpa.state_timing import loser_has_pokemon_left
 
@@ -578,11 +794,13 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
     states, joined = game.states["p1"], game.joined["p1"]
     if not states or states[-1]["outcome"] is None:
         return
-    ctxs = damage_contexts(
+    ctx_all = damage_contexts(
         tag, log, game, sheets, dex, tools.calc, tools.store, tools.bring
-    )["p1"]
+    )
+    ctxs = ctx_all["p1"]
     timers = {r: _timers_by_turn(game, r) for r in ("p1", "p2")}
     brought = brought_from_log(log)
+    four = brought_four({r: brought.get(r, set()) for r in ("p1", "p2")})
     turns: dict[int, dict[str, C.Turn]] = {}
     for t in C.turns(log, dex):
         turns.setdefault(t.turn, {})[t.role] = t
@@ -590,14 +808,65 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
         tools.policy.rates.get(fmt, {}) if isinstance(tools.policy.rates, dict) else {}
     )
     cols = columns(tools.groups)
+    result = float(bool(states[-1]["outcome"]))
+    wps: dict[tuple[str, int], float] = {}
+
+    def wp_at(r: str, i: int) -> float:
+        """p1's WP at a decision point: the model on that player's own row (one
+        minus it for p2's), or the result at the end of the game."""
+        if (r, i) not in wps:
+            s = game.states[r][i]
+            if s["moment"] == "terminal":
+                v = result
+            else:
+                f = state_features(
+                    game.states[r],
+                    i,
+                    r,
+                    game.joined[r][i],
+                    sheets,
+                    dex,
+                    table,
+                    tools.groups,
+                    ctx_all[r][i],
+                )
+                x = np.array([[f[c] for c in cols]], dtype=np.float32)
+                v = float(tools.predict[fmt](x)[0])
+                v = v if r == "p1" else 1.0 - v
+            wps[(r, i)] = v
+        return wps[(r, i)]
+
+    def with_brought(sides: dict) -> dict:
+        for r in ("p1", "p2"):
+            for i in brought.get(r, ()):
+                if i < len(sides[r]):
+                    sides[r][i]["_brought"] = True
+        return sides
+
     for k, s in enumerate(states[:-1]):
-        if s["moment"] != "turn_start" or s["turn"] not in turns:
+        if s["moment"] != "turn_start":
             continue
-        tt = turns[s["turn"]]
+        base = {
+            "tag": tag,
+            "format": fmt,
+            "turn": s["turn"],
+            "kind": "turn",
+            "point": game.points["p1"][k],
+            "result": result,
+        }
+        tt = turns.get(s["turn"], {})
         if set(tt) != {"p1", "p2"}:
+            try:
+                yield _skipped(
+                    base,
+                    "choices not in the log",
+                    wp_at("p1", k),
+                    wp_at(*next_point(game, k)),
+                )
+            except Exception as e:  # pragma: no cover - reported, not hidden
+                yield _error(base, e)
             continue
         end = end_of_turn(game, k)
-        base = {"tag": tag, "format": fmt, "turn": s["turn"]}
         if end is None:
             continue
         if end[3] is not None and loser_has_pokemon_left(end[3]):
@@ -605,14 +874,12 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
             continue
         t0 = time.time()
         try:
-            sides = {
-                "p1": [dict(m) for m in s["our_pokemon"]],
-                "p2": [dict(m) for m in s["opp_pokemon"]],
-            }
-            for r in ("p1", "p2"):
-                for i in brought.get(r, ()):
-                    if i < len(sides[r]):
-                        sides[r][i]["_brought"] = True
+            sides = with_brought(
+                {
+                    "p1": [dict(m) for m in s["our_pokemon"]],
+                    "p2": [dict(m) for m in s["opp_pokemon"]],
+                }
+            )
             fld = R.field_from_timers(joined[k], "p1")
             rv = R.Resolver(
                 dex,
@@ -633,14 +900,14 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
                 table,
                 tools.groups,
                 ctxs[k],
+                budget=tools.budget,
             )
-            f0 = state_features(
-                states, k, "p1", joined[k], sheets, dex, table, tools.groups, ctxs[k]
-            )
-            x0 = np.array([[f0[c] for c in cols]], dtype=np.float32)
-            before = float(tools.predict[fmt](x0)[0])
+            before = wp_at("p1", k)
+            after = wp_at(*next_point(game, k))
             a_p1, a_p2, a_j, _term = end
-            after = float(bw.boards([(a_p1, a_p2, R.field_from_timers(a_j, "p1"))])[0])
+            after_board = float(
+                bw.boards([(a_p1, a_p2, R.field_from_timers(a_j, "p1"))])[0]
+            )
             opts, chances = {}, {}
             for r in ("p1", "p2"):
                 t = tt[r]
@@ -655,9 +922,15 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
                     tools.calc,
                     odds,
                 )
-                opts[r], chances[r] = expand_pivots(
-                    {i: o for i, (o, _X) in feats.items()},
-                    {i: list(tools.policy.chances(X)) for i, (_o, X) in feats.items()},
+                opts[r], chances[r] = only_brought(
+                    *expand_pivots(
+                        {i: o for i, (o, _X) in feats.items()},
+                        {
+                            i: list(tools.policy.chances(X))
+                            for i, (_o, X) in feats.items()
+                        },
+                    ),
+                    four[r],
                 )
         except Exception as e:  # pragma: no cover - reported, not hidden
             yield _error(base, e)
@@ -674,20 +947,142 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools):
             opts,
             chances,
             t0,
+            after_board,
+        )
+    if not forced:
+        return
+    from wpa import replace_model as RM
+
+    reps: dict[tuple[str, int], list] = {}
+    for rep in C.replacements(log):
+        reps.setdefault((rep.role, rep.turn), []).append(rep)
+    at: dict[int, dict[str, int]] = {}  # point -> role -> its after-turn state
+    for r in ("p1", "p2"):
+        for i, st in enumerate(game.states[r][: len(game.points[r])]):
+            if st["moment"] == "after_turn":
+                at.setdefault(game.points[r][i], {})[r] = i
+    nth: dict[tuple[str, int], int] = {}
+    for pt in sorted(at):
+        idx = at[pt]
+        r0 = "p1" if "p1" in idx else "p2"
+        i0 = idx[r0]
+        s = game.states[r0][i0]
+        t = s["turn"]
+        base = {
+            "tag": tag,
+            "format": fmt,
+            "turn": t,
+            "kind": "replacement",
+            "point": pt,
+            "result": result,
+        }
+        mine = {}
+        for r in idx:
+            n = nth.get((r, t), 0)
+            nth[(r, t)] = n + 1
+            got = reps.get((r, t), [])
+            if n < len(got):
+                mine[r] = got[n]
+        try:
+            nr, ni = next_point(game, i0, role=r0)
+            before, after = wp_at(r0, i0), wp_at(nr, ni)
+        except Exception as e:  # pragma: no cover - reported, not hidden
+            yield _error(base, e)
+            continue
+        if tools.replace is None:
+            yield _skipped(base, "no forced-switch model", before, after)
+            continue
+        if not mine:
+            yield _skipped(base, "forced switch not in the log", before, after)
+            continue
+        if nr != "p1" or game.states["p1"][ni]["moment"] != "turn_start":
+            yield _skipped(base, "next point not a turn's start", before, after)
+            continue
+        t0 = time.time()
+        try:
+            ours, theirs = s["our_pokemon"], s["opp_pokemon"]
+            if r0 == "p2":
+                ours, theirs = theirs, ours
+            sides = with_brought(
+                {"p1": [dict(m) for m in ours], "p2": [dict(m) for m in theirs]}
+            )
+            fld = R.field_from_timers(game.joined[r0][i0], r0)
+            rv = R.Resolver(
+                dex,
+                tools.moves[fmt],
+                tools.calc,
+                sheets,
+                ctx_all[r0][i0].spreads,
+                resolution=tools.resolution,
+                cap=tools.cap,
+            )
+            bw = BoardWP(
+                tools.predict[fmt],
+                states,
+                ni,
+                joined[ni],
+                sheets,
+                dex,
+                table,
+                tools.groups,
+                ctxs[ni],
+                same_point=True,
+                budget=tools.budget,
+            )
+            opts, chances, taken = {}, {}, {}
+            for r, rep in mine.items():
+                j = game.joined[r][idx[r]]
+                got = RM.options(
+                    rep,
+                    sheets,
+                    spreads,
+                    dex,
+                    tools.calc,
+                    odds,
+                    _field(j) if j else None,
+                    four[r],
+                )
+                opts[r] = {slot: o for slot, (o, _X) in got.items()}
+                chances[r] = {
+                    slot: list(tools.replace.chances(X))
+                    for slot, (_o, X) in got.items()
+                }
+                taken[r] = dict(rep.taken)
+            nxt = states[ni]
+            actual = {"p1": nxt["our_pokemon"], "p2": nxt["opp_pokemon"]}
+        except Exception as e:  # pragma: no cover - reported, not hidden
+            yield _error(base, e)
+            continue
+        yield ReplacementSetup(
+            base,
+            t,
+            TurnValues(SwitchIns(rv), sides, fld, bw),
+            bw,
+            before,
+            after,
+            actual,
+            taken,
+            opts,
+            chances,
+            t0,
         )
 
 
 def analyse_game(
     tag: str, log: str, fmt: str, tools: Tools, with_alternatives: bool = True
 ) -> list[dict]:
-    """One record per decision point (each turn, each player) of one game."""
+    """One record per decision point (each turn and each forced switch, each
+    player) of one game."""
     out: list[dict] = []
-    for ts in turn_setups(tag, log, fmt, tools):
+    for ts in turn_setups(tag, log, fmt, tools, forced=True):
         if isinstance(ts, list):
             out += ts
             continue
         try:
-            out += _analyse_turn(ts, tools, with_alternatives)
+            if isinstance(ts, ReplacementSetup):
+                out += _analyse_replacement(ts, tools)
+            else:
+                out += _analyse_turn(ts, tools, with_alternatives)
         except Exception as e:  # pragma: no cover - reported, not hidden
             out += _error(ts.base, e)
     return out
@@ -727,7 +1122,10 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         _t, lk, kept, _a, _u = mixes[other]
         b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
         sp = decompose(tv.for_role(r), b, a, taken, mixes[other][0], lk, alts, kept)
-        recs.append(dict(ts.base, role=r, unknown=unknown, **asdict(sp)))
+        board = ts.after_board if r == "p1" else 1 - ts.after_board
+        recs.append(
+            dict(ts.base, role=r, unknown=unknown, after_board=board, **asdict(sp))
+        )
     pairs = [(x, y) for x, _ in t1 for y, _ in t2]
     outs = [o for key in pairs for o in tv.outcomes.get(key, ())]
     tol = max(0.03, tools.resolution + 0.01)
@@ -741,6 +1139,67 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
             seconds=secs,
             resolves=len(tv.outcomes),
             boards=len(ts.bw._cache),
+            valued_grid=ts.bw.grid,
+        )
+    return recs
+
+
+def _analyse_replacement(rs: ReplacementSetup, tools: Tools) -> list[dict]:
+    """A forced switch split as a turn is (DEFINITIONS §3): your decision and
+    theirs (0 when only you replace), the dice whatever is random on entry and
+    the model's own difference between the board and the next turn's row."""
+    tv = rs.tv
+    none: Mix = [((), 1.0)]
+    mixes: dict[str, tuple[Mix, Mix, list[Mix] | None]] = {}
+    for r in ("p1", "p2"):
+        opts = rs.opts.get(r)
+        if not opts:
+            mixes[r] = (none, none, None)
+            continue
+        keys = sorted(opts)
+        ch = rs.chances[r]
+        taken = tuple(
+            Action(i, "switch", switch_to=rs.taken[r][i])
+            for i in keys
+            if i in rs.taken[r]
+        )
+        full = mixture({i: list(zip(opts[i], ch[i])) for i in keys})
+        mixes[r] = ([(taken, 1.0)], full, [[(j, 1.0)] for j, _ in full])
+    one = [x for x, _ in [*mixes["p1"][0], *mixes["p1"][1]]]
+    two = [y for y, _ in [*mixes["p2"][0], *mixes["p2"][1]]]
+    tv.prepare([(x, y) for x in dict.fromkeys(one) for y in dict.fromkeys(two)])
+    t1, t2 = mixes["p1"][0][0][0], mixes["p2"][0][0][0]
+    board = tv(t1, t2)
+    recs = []
+    for r, other in (("p1", "p2"), ("p2", "p1")):
+        taken, _full, alts = mixes[r]
+        b, a = (rs.before, rs.after) if r == "p1" else (1 - rs.before, 1 - rs.after)
+        sp = decompose(
+            tv.for_role(r), b, a, taken, mixes[other][0], mixes[other][1], alts
+        )
+        recs.append(
+            dict(
+                rs.base,
+                role=r,
+                unknown=0,
+                replacing=r in rs.opts,
+                choices=len(mixes[r][1]) if r in rs.opts else 0,
+                after_board=board if r == "p1" else 1 - board,
+                **asdict(sp),
+            )
+        )
+    outs = tv.outcomes.get((t1, t2), [])
+    tol = max(0.03, tools.resolution + 0.01)
+    found = any(_close(o.sides, rs.actual, tol) for o in outs)
+    partial = sorted(set().union(*(o.partial for o in outs))) if outs else []
+    secs = time.time() - rs.t0
+    for rec in recs:
+        rec.update(
+            found=found,
+            partial=partial,
+            seconds=secs,
+            resolves=len(tv.outcomes),
+            boards=len(rs.bw._cache),
         )
     return recs
 
@@ -753,7 +1212,7 @@ def sharp_samples(
     (the likeliest `most`), with each reply's chance at sharpness 1."""
     out: list[SharpSample] = []
     for ts in turn_setups(tag, log, fmt, tools):
-        if isinstance(ts, list):
+        if not isinstance(ts, TurnSetup):
             continue
         try:
             want = {}
@@ -868,6 +1327,11 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
         a.draws,
         a.alternatives,
     )
+    tools.budget = getattr(a, "budget", None) or None
+    if getattr(a, "replace", None) and Path(a.replace).exists():
+        from wpa.replace_model import ReplaceModel
+
+        tools.replace = ReplaceModel.load(a.replace)
     # one thread for the model, set once it is loaded (its thread pool comes
     # with it): on small batches the pool costs seconds per call
     from threadpoolctl import threadpool_limits
@@ -1052,10 +1516,12 @@ def _by_cause(turns: Mapping) -> list[str]:
 
 
 def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
+    games = len({r["tag"] for r in rs})
+    every = rs
+    rs = [r for r in rs if r.get("kind", "turn") == "turn"]
     ok = [r for r in rs if "skipped" not in r]
     if not ok:
         return []
-    games = len({r["tag"] for r in rs})
     skipped: dict[str, int] = {}
     for r in rs:
         if "skipped" in r:
@@ -1117,7 +1583,91 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
             next(iter(d.values()))["after"] - next(iter(d.values()))["before"]
         ),
     )[:top]
-    return lines + [_turn_line(d) for d in big] + [""]
+    lines += [_turn_line(d) for d in big] + [""]
+    return lines + _forced_lines(every, top) + _chain_lines(every)
+
+
+def _forced_lines(rs: Sequence[Mapping], top: int) -> list[str]:
+    """Forced switches (Week 10 Task 6): the split of the player replacing, and
+    the biggest decisions."""
+    reps = [r for r in rs if r.get("kind") == "replacement"]
+    if not reps:
+        return []
+
+    def pt(x: float | None) -> str:
+        return "n/a" if x is None else f"{100 * x:+.0f}"
+
+    skipped: dict[str, int] = {}
+    for r in reps:
+        if "skipped" in r and r["role"] == "p1":
+            key = r["skipped"].split(":")[0]
+            skipped[key] = skipped.get(key, 0) + 1
+    mine = [r for r in reps if "skipped" not in r and r.get("replacing")]
+    head = (
+        f"  forced switches: {len({(r['tag'], r.get('point')) for r in reps})} "
+        f"({len(mine)} decisions by the player replacing)"
+    )
+    if skipped:
+        head += f"; left out: {skipped}"
+    lines = [head]
+    if mine:
+        alt = [r for r in mine if r.get("vs_best") is not None]
+        vb = np.array([r["vs_best"] for r in alt]) if alt else np.zeros(1)
+        lines += [
+            f"    your decision: {_pts([r['yours'] for r in mine])}",
+            f"    their decision (0 unless both replace): "
+            f"{_pts([r['theirs'] for r in mine])}",
+            f"    the dice: {_pts([r['dice'] for r in mine])}",
+            f"    cost vs best: mean {100 * vb.mean():.1f} points; best choice taken "
+            f"{100 * np.mean(vb > -1e-9):.0f}%",
+            "    a part of 3 points or more: "
+            + ", ".join(
+                f"{k} {100 * np.mean([abs(r[k]) >= THRESHOLD for r in mine]):.0f}%"
+                for k in ("yours", "theirs", "dice")
+            ),
+            f"    the {top} biggest forced-switch decisions (points):",
+        ]
+        big = sorted(mine, key=lambda r: -abs(r["yours"]))[:top]
+        lines += [
+            f"      {REPLAY}{r['tag']} after turn {r['turn']}: {r['role']} yours "
+            f"{pt(r['yours'])}, vs best {pt(r.get('vs_best'))}, dice {pt(r['dice'])}"
+            f" ({r.get('choices', 0)} choices)"
+            for r in big
+        ]
+    return lines + [""]
+
+
+def _chain_lines(rs: Sequence[Mapping]) -> list[str]:
+    """DEFINITIONS §2 on every game (Week 10 Task 6), and how far the next
+    point's WP is from the board as the resolver's boards are valued."""
+    if not any("point" in r for r in rs):
+        return []
+    results = {r["tag"]: r["result"] for r in rs if "result" in r}
+    cs = [c for c in chains(rs, results) if not c["forfeit"]]
+    if not cs:
+        return []
+    lines = [
+        f"  games whose decision points chain: {sum(c['chained'] for c in cs)} of "
+        f"{len(cs)}; whose swings add up to the result: "
+        f"{sum(c['adds_up'] for c in cs)} of {len(cs)} (within 0.001; "
+        "games with no forfeit or timer)"
+    ]
+    gaps = [
+        abs(r["after"] - r["after_board"])
+        for r in rs
+        if r.get("role") == "p1"
+        and "skipped" not in r
+        and r.get("after_board") is not None
+        and r.get("kind", "turn") == "turn"
+    ]
+    if gaps:
+        g = np.array(gaps)
+        lines.append(
+            "  WP at the next point vs the turn's board as the resolver's are "
+            f"valued: median {100 * np.median(g):.1f} points, within 0.1 point "
+            f"{100 * np.mean(g <= 0.001):.0f}% (in the dice)"
+        )
+    return lines + [""]
 
 
 def report(path: Path, top: int = 10) -> str:
@@ -1140,6 +1690,12 @@ def main() -> None:  # pragma: no cover
     p.add_argument("--usage", type=Path, default=Path("usage_stats"))
     p.add_argument("--bring", type=Path, default=Path("models_v4/bring.json"))
     p.add_argument("--policy", type=Path, default=Path("models_v4/policy.json"))
+    p.add_argument(
+        "--replace",
+        type=Path,
+        default=Path("models_v4/replace.json"),
+        help="the forced-switch model (Week 10 Task 6); without it, not split",
+    )
     p.add_argument("--models", type=Path, default=Path("models_v4"))
     p.add_argument("--groups", default="ABCDEFGHIJ")
     p.add_argument("--showdown", type=Path, default=Path("pokemon-showdown"))
@@ -1176,6 +1732,13 @@ def main() -> None:  # pragma: no cover
     )
     p.add_argument("--draws", type=int, default=6, help="replies drawn from the rest")
     p.add_argument("--resolution", type=float, default=0.05)
+    p.add_argument(
+        "--budget",
+        type=int,
+        default=4000,
+        help="most boards valued per decision point; over it, a coarser grid "
+        "(0 for no limit)",
+    )
     p.add_argument("--cap", type=int, default=300)
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--out", type=Path, default=Path("reports/attribution.jsonl"))
@@ -1212,11 +1775,15 @@ if __name__ == "__main__":
 
 __all__ = [
     "BoardWP",
+    "ReplacementSetup",
     "SharpSample",
+    "SwitchIns",
     "TurnSetup",
     "Split",
     "TurnValues",
     "analyse_game",
+    "brought_four",
+    "chains",
     "decompose",
     "expand_pivots",
     "expected",
@@ -1224,6 +1791,8 @@ __all__ = [
     "likely",
     "mean_yours",
     "mixture",
+    "next_point",
+    "only_brought",
     "sharp_samples",
     "report",
     "taken_mixture",

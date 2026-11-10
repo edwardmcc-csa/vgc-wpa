@@ -329,6 +329,115 @@ def turns(log: str, dex: Dex | None = None) -> list[Turn]:
     return out
 
 
+@dataclass
+class Replacement:
+    """One player's forced switch after a turn (DEFINITIONS §6, Week 10 Task 6):
+    the board when the choice was made (the turn over, nobody in yet), the
+    Pokemon that fainted in each slot to fill (`slots`, sheet positions), the
+    Pokemon sent in for each (`taken`, fainted -> incoming), and the Pokemon that
+    could have come in (`bench`: every one not out, as the opponent sees it; the
+    log does not say which of the unseen were brought)."""
+
+    turn: int
+    role: str
+    ours: list[dict]
+    theirs: list[dict]
+    slots: list[int]
+    taken: dict[int, int] = field(default_factory=dict)
+    bench: list[int] = field(default_factory=list)
+
+
+def replacements(log: str) -> list[Replacement]:
+    """Every forced switch the log shows: a switch after a turn's end (`|upkeep`)
+    and before the next turn, into a slot whose Pokemon fainted. Both players
+    choose without seeing the other's, so each side's board is the one at the
+    turn's end. A Pokemon that faints on the way in starts a new choice."""
+    board = _Board()
+    out: list[Replacement] = []
+    turn = 0
+    snap: dict[str, tuple[list[dict], list[dict]]] | None = None
+    now: dict[str, Replacement] = {}
+    fell: dict[str, dict[str, int]] = {r: {} for r in ROLES}  # slot -> fainted
+
+    def other(r: str) -> str:
+        return "p2" if r == "p1" else "p1"
+
+    def snapshot() -> dict[str, tuple[list[dict], list[dict]]]:
+        return {r: (board.side(r), board.side(other(r))) for r in ROLES}
+
+    def close() -> None:
+        nonlocal now
+        out.extend(now[r] for r in ROLES if r in now)
+        now = {}
+
+    for raw in log.split("\n"):
+        p = raw.split("|")
+        if len(p) < 2:
+            continue
+        t = p[1]
+        if t == "showteam":
+            board.sheet(raw)
+            continue
+        if t in ("turn", "win", "tie"):
+            close()
+            snap = None
+            if t == "turn" and len(p) > 2:
+                turn = int(p[2])
+        elif t == "upkeep":
+            snap = snapshot()
+        elif t == "faint" and len(p) > 2 and p[2][:2] in ROLES and len(p[2]) > 2:
+            role, slot = p[2][:2], p[2][2:3]
+            idx = board.slots[role].get(slot)
+            if idx is not None:
+                fell[role][slot] = idx
+        elif (
+            t == "switch"
+            and snap is not None
+            and len(p) > 3
+            and p[2][:2] in ROLES
+            and len(p[2]) > 2
+            and p[2][2:3] in fell[p[2][:2]]
+        ):
+            role, slot = p[2][:2], p[2][2:3]
+            new = board._index(role, p[2], p[3])
+            if new is not None:
+                if role not in now:
+                    ours, theirs = snap[role]
+                    now[role] = Replacement(
+                        turn,
+                        role,
+                        ours,
+                        theirs,
+                        sorted(fell[role].values()),
+                        {},
+                        [
+                            j
+                            for j, m in enumerate(ours)
+                            if not m["active"] and not m["fainted"]
+                        ],
+                    )
+                now[role].taken[fell[role].pop(slot)] = new
+        board.handle(p)
+        if t == "faint" and snap is not None:
+            close()  # fainted after the turn's end: the next switch is a new choice
+            snap = snapshot()
+    close()
+    return out
+
+
+def replacement_options(
+    r: Replacement, brought: set[int] | None = None
+) -> dict[int, list[Action]]:
+    """For each slot to fill (by the fainted Pokemon's sheet position), a switch
+    to each Pokemon that could come in. `brought`: the side's four, where known.
+    With fewer Pokemon left than slots, only the slots filled are offered."""
+    pool = [j for j in r.bench if brought is None or j in brought]
+    if not pool:
+        return {}
+    slots = r.slots if len(pool) >= len(r.slots) else sorted(r.taken)
+    return {i: [Action(i, "switch", switch_to=j) for j in pool] for i in slots}
+
+
 def check(log: str, dex: Dex, sheets: Mapping | None = None) -> Counter:
     """How many of the choices the log shows are in `options` ("in", "out"), and
     how many cannot be seen, by reason. Misses are also counted by kind and move

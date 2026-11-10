@@ -288,11 +288,14 @@ class PolicyModel:
         return cls(d["weights"], d.get("rates", {}), float(d.get("sharpness", 1.0)))
 
 
-def fit(groups: Sequence[tuple[np.ndarray, int]], l2: float = 1e-2) -> PolicyModel:
-    """Maximum likelihood (with a small ridge) over (options x features, chosen)."""
+def fit(
+    groups: Sequence[tuple[np.ndarray, int]], l2: float = 1e-2, k: int | None = None
+) -> PolicyModel:
+    """Maximum likelihood (with a small ridge) over (options x features, chosen).
+    `k`: the number of features (this model's, unless another model's)."""
     from scipy.optimize import minimize
 
-    k = len(FEATURES)
+    k = len(FEATURES) if k is None else k
 
     def nll(w):
         total, grad = 0.0, np.zeros(k)

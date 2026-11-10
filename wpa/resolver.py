@@ -548,12 +548,50 @@ class Resolver:
             self._switch(w, role, a.user, a.switch_to)
         return [w]
 
-    def _switch(self, w: _World, role: str, old: int, new: int | None) -> None:
+    def replace(
+        self,
+        sides: Mapping[str, Sequence[Mapping]],
+        fld: Field,
+        actions: Mapping[str, Sequence[Action]],
+    ) -> list[Outcome]:
+        """A forced switch after a turn (Week 10 Task 6): each fainted Pokemon an
+        action names is replaced by the one it brings in, both sides at once;
+        then the newcomers' entry effects (Intimidate, weather, terrain) in Speed
+        order, as Showdown runs them (Trick Room reverses it). Nothing on entry
+        is random yet, so one outcome."""
+        w = _World(
+            1.0,
+            {
+                r: [dict(m, boosts=dict(m.get("boosts") or {})) for m in sides[r]]
+                for r in ROLES
+            },
+            copy.deepcopy(fld),
+            set(),
+        )
+        ins = [
+            (r, a.user, a.switch_to)
+            for r in ROLES
+            for a in actions.get(r, ())
+            if a.kind == "switch" and a.switch_to is not None
+        ]
+        came = []
+        for r, old, new in ins:
+            if self._switch(w, r, old, new, entry=False):
+                came.append((r, new))
+        sign = 1 if w.fld.trickroom else -1
+        came.sort(key=lambda x: sign * self._speed(w, x[0], x[1]))
+        for r, new in came:
+            self._on_entry(w, r, new)
+        return [Outcome(1.0, w.sides, w.fld, frozenset(w.partial), w.winner)]
+
+    def _switch(
+        self, w: _World, role: str, old: int, new: int | None, entry: bool = True
+    ) -> bool:
         if new is None or old is None:
-            return
+            return False
         o, n = w.sides[role][old], w.sides[role][new]
         if n["fainted"] or n["active"]:
-            return
+            return False
         o.update(active=False, boosts={}, moved=False, last_move="", protect_streak=0)
         o.pop("perish", None)  # switching out ends the count
         n.pop("perish", None)
@@ -563,7 +601,9 @@ class Resolver:
             n["hp_fraction"] = 1.0  # first time in
         n.update(active=True, boosts={}, moved=False, last_move="", protect_streak=0)
         w.replaced[(role, old)] = (role, new)
-        self._on_entry(w, role, new)
+        if entry:
+            self._on_entry(w, role, new)
+        return True
 
     def _on_entry(self, w: _World, role: str, idx: int) -> None:
         st = w.sides[role][idx]
