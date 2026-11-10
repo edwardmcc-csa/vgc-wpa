@@ -95,56 +95,58 @@ way the opponent's likely replies are weighted.)
 ## Tasks
 
 ### Task 0 — Your choice and the position (DEFINITIONS revision 10, once approved)
-- [ ] **The typical choice:** the player's own likely choices (the likeliest 6
+- [x] **The typical choice:** the player's own likely choices (the likeliest 6
       exactly, the rest drawn in proportion, as for the opponent's replies) against
       the opponent's likely replies, at every decision point: turns and forced
       switches, both players.
-- [ ] **Records and summary:** your choice, the position, their decision and the
+- [x] **Records and summary:** your choice, the position, their decision and the
       dice, adding up to the swing. "Your decision" (their sum) stays in the
       records for comparison with Weeks 9 and 10. The summary leads with your
       choice and shows the position beside it.
-- [ ] **Cost vs best** stays in every third game; cost vs typical is your choice,
+- [x] **Cost vs best** stays in every third game; cost vs typical is your choice,
       so it is everywhere.
-- [ ] **Measure first:** the time per turn on a sample, before Task 4 runs.
+- [x] **Measure first:** the time per turn on a sample, before Task 4 runs.
       Week 10's estimate is 2 to 3 times longer.
-- [ ] **Tests first,** including: a forced switch with one Pokemon gives your
+- [x] **Tests first,** including: a forced switch with one Pokemon gives your
       choice 0; a turn where every choice is worth the same gives your choice 0;
       the turn where Perish Song ends the game puts the swing in the position.
 
 ### Task 1 — Team preview and leads (DEFINITIONS §6)
-- [ ] **The decision:** which four to bring and which two lead. Showdown takes
+- [x] *(the leads; the back two are not scored: the model cannot see them)*
+      **The decision:** which four to bring and which two lead. Showdown takes
       both in one choice at team preview, so it is one decision point for each
       player, made without seeing the other's (§7).
-- [ ] **A model of the choice,** learned from the training split: the bring model
+- [x] **A model of the choice,** learned from the training split: the bring model
       (Week 8) extended with the leads. **The test per format on validation:** it
       beats a uniform guess on what the log shows (the leads always; the four
       where all four appear).
-- [ ] **The split** as in §3: each pair of choices is valued at turn 1's start,
+- [x] **The split** as in §3: each pair of choices is valued at turn 1's start,
       from what each player knew at team preview. A player knows their own back
       two; the opponent does not (§5). No dice at team preview, except the
       model's own difference between a board and the next row.
-- [ ] **Games 2 and 3 of a set** use what earlier games revealed (§11.3).
-- [ ] **A game's swings add up from team preview to its result** (§2), within
+- [x] **Games 2 and 3 of a set** use what earlier games revealed (§11.3).
+- [x] **A game's swings add up from team preview to its result** (§2), within
       0.001, for every game with no forfeit or timer.
-- [ ] Tests first.
+- [x] Tests first.
 
 ### Task 2 — Speed order from the hidden spreads
-- [ ] **Where two Pokemon's order depends on Speed spreads** that the evidence
+- [x] *(opt-in: `--speed-beliefs`; 2.6 times slower, no change measured)*
+      **Where two Pokemon's order depends on Speed spreads** that the evidence
       does not settle, the resolver branches on the order, with each order's
       chance from the spread beliefs (refined from the game so far), instead of
       taking the likeliest spread's order. Items and abilities on the sheet are
       known and stay as they are.
-- [ ] **Measure:** the time it costs, the share of boards found, and how much of
+- [x] **Measure:** the time it costs, the share of boards found, and how much of
       the dice it explains on Week 10's biggest swings (Reg M-A's first among
       them).
-- [ ] Tests first.
+- [x] Tests first.
 
 ### Task 3 — The causes left among the biggest swings
-- [ ] **Charging moves** (two-turn moves, and Power Herb).
-- [ ] **Confusion:** the chance of hitting itself, and how long it lasts.
-- [ ] **Encore:** the locked move limits the options and their chances.
-- [ ] **Sleep:** the turns until waking up.
-- [ ] Each is modelled in the resolver or, where it is not cheap, stays marked
+- [x] **Charging moves** (two-turn moves, and Power Herb).
+- [x] **Confusion:** the chance of hitting itself, and how long it lasts.
+- [x] **Encore:** the locked move limits the options and their chances.
+- [x] **Sleep:** the turns until waking up.
+- [x] Each is modelled in the resolver or, where it is not cheap, stays marked
       "partly modelled". **Tests first**, one per mechanic at least. Rerun the
       resolver check per format beside Week 10's.
 

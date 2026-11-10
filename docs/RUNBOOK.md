@@ -1169,6 +1169,39 @@ Sections 17 and 18.
    At the end it prints the summary and saves it as
    `reports\attribution_week10.txt`. Send me that file.
 
+
+## 20. Week 11: your choice and the position, team preview, Speed order
+
+This week splits "your decision" into **your choice** (against the typical
+choice) and **the position** (DEFINITIONS §3, revision 10), scores **team
+preview's leads**, branches on **Speed order** where the spreads are not settled,
+and follows the **Champions rules** for paralysis, sleep, freeze, confusion,
+charging moves and Encore. It needs everything from Section 19, including
+`models_v4_avg`.
+
+1. **The lead model** (optional; about 10 minutes). Which two each player leads
+   with, learned from the training games, using the set's previous game. A copy
+   made here is already in `models_v4\leads.json`; this remakes it on your
+   computer:
+   ```
+   python -m wpa.lead_model
+   ```
+   It prints, per format, how it does against a uniform guess over the 15 pairs,
+   and saves `models_v4\leads.json` and `leads.txt`.
+
+2. **Decision versus luck again** (about 1½ to 2 times Week 10's run: one long
+   night, or two; the same 300 Reg M-A and 199 Reg M-B sets):
+   ```
+   python -m wpa.attribution --models models_v4_avg --moves-dir build --workers 6 --alternatives-every 3 --out reports/attribution_week11.jsonl
+   ```
+   - The summary now leads with **your choice** and shows **the position**
+     beside it, and has a section for team preview.
+   - As before, Ctrl+C stops it and the same command carries on where it
+     stopped, so it can run over two nights.
+
+   At the end it prints the summary and saves it as
+   `reports\attribution_week11.txt`. Send me that file.
+
 ---
 
 ## If something goes wrong
