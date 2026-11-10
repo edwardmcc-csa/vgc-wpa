@@ -382,3 +382,16 @@ On your run, in the games with alternatives:
 
    The stronger opponent model and the full spread method would wait for Week 12.
    Agree, or reorder?
+
+---
+
+## Addendum, 10 November: the PO's decisions
+
+1. **Split "your decision": (a).** "Your choice" against the typical choice
+   becomes the decision; "the position" is shown beside it and credited to no
+   one. This changes DEFINITIONS §3: revision 10 is drafted in
+   `docs/WEEK11-DISPATCH.md` for your approval before any code changes.
+2. **Week 11: agreed, in the order proposed.** Team preview and leads, the split
+   from decision 1, Speed order from the hidden spreads, then charging moves,
+   confusion, Encore and sleep. The stronger opponent model and the full spread
+   method wait for Week 12.
