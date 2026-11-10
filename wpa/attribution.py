@@ -59,13 +59,21 @@ class Split:
     vs_best: float | None = None
     vs_average: float | None = None
     kept: float = 1.0
+    # DEFINITIONS revision 10: `yours` (revision 8's "your decision") is your
+    # choice against the typical choice plus the position
+    choice: float | None = None
+    position: float | None = None
 
     @property
     def swing(self) -> float:
         return self.after - self.before
 
     def conserved(self, tol: float = 1e-3) -> bool:
-        return abs(self.yours + self.theirs + self.dice - self.swing) <= tol
+        ok = abs(self.yours + self.theirs + self.dice - self.swing) <= tol
+        if self.choice is not None and self.position is not None:
+            four = self.choice + self.position + self.theirs + self.dice
+            ok = ok and abs(four - self.swing) <= tol
+        return ok
 
 
 def expected(value: Callable[[Joint, Joint], float], ours: Mix, theirs: Mix) -> float:
@@ -89,11 +97,14 @@ def decompose(
     likely: Mix,
     alternatives: Sequence[Mix] | None = None,
     kept: float = 1.0,
+    typical: Mix | None = None,
 ) -> Split:
     """`value(ours, theirs)`: E[WP | both choices], from the analysed side.
     `ours`, `theirs`: the choices taken (a mixture where the log does not show
     one). `likely`: the opponent's likely replies. `alternatives`: our choices
-    to compare with, for cost against the best and the average."""
+    to compare with, for cost against the best and the (unweighted) average.
+    `typical`: what players typically choose here (DEFINITIONS §3, revision
+    10); with it, your decision splits into your choice and the position."""
     e_yours = expected(value, ours, likely)
     e_both = expected(value, ours, theirs)
     vs_best = vs_average = None
@@ -101,6 +112,12 @@ def decompose(
         es = [expected(value, alt, likely) for alt in alternatives]
         vs_best = e_yours - max(max(es), e_yours)
         vs_average = e_yours - float(np.mean(es))
+    choice = position = None
+    if typical:
+        e_typ = expected(value, typical, likely)
+        same = len(typical) == 1 and len(ours) == 1 and typical[0][0] == ours[0][0]
+        choice = 0.0 if same else e_yours - e_typ
+        position = (e_yours - before) - choice
     return Split(
         before,
         after,
@@ -110,6 +127,8 @@ def decompose(
         vs_best,
         vs_average,
         kept,
+        choice,
+        position,
     )
 
 
@@ -382,6 +401,23 @@ class SwitchIns:
 
     def resolve(self, sides, fld, actions):
         return self.resolver.replace(sides, fld, actions)
+
+
+class Leads:
+    """Team preview's leads in the shape `TurnValues` asks of a resolver: the
+    board at turn 1's start after both sides' leads come in (`Resolver.lead`)."""
+
+    def __init__(self, resolver) -> None:
+        self.resolver = resolver
+
+    def resolve(self, sides, fld, actions):
+        return self.resolver.lead(sides, fld, actions)
+
+
+def lead_joint(pair: Sequence[int]) -> Joint:
+    """A pair of leads as a joint choice."""
+    i, j = sorted(pair)
+    return (Action(0, "switch", switch_to=i), Action(1, "switch", switch_to=j))
 
 
 def chains(
@@ -716,6 +752,12 @@ class Tools:
     replace: Any = None
     # most boards valued at once per decision point (`BoardWP`); None: no limit
     budget: int | None = None
+    # each player's typical choice (DEFINITIONS §3, revision 10); off only to
+    # measure what it costs
+    typical: bool = True
+    # the lead model (`wpa.lead_model`); without it team preview keeps its WPs
+    # (so a game still chains) but is not split
+    leads: Any = None
 
 
 @dataclass
@@ -760,6 +802,25 @@ class ReplacementSetup:
     t0: float
 
 
+@dataclass
+class PreviewSetup:
+    """Team preview of one game (Week 11 Task 1), ready to value: the board at
+    turn 1's start after each pair of leads (`Resolver.lead`), valued there;
+    both WPs from p1's side; each side's 15 lead pairs with the lead model's
+    chances. The back two are not scored: the model cannot see them."""
+
+    base: dict
+    tv: TurnValues
+    bw: BoardWP
+    before: float
+    after: float
+    actual: dict  # the board at turn 1's start
+    taken: dict  # role -> joint (the leads)
+    opts: dict  # role -> [joints]
+    chances: dict  # role -> [chances]
+    t0: float
+
+
 def _error(base: dict, e: Exception) -> list[dict]:
     why = f"error: {type(e).__name__}: {str(e)[:80]}"
     return [dict(base, role=r, skipped=why) for r in ("p1", "p2")]
@@ -774,10 +835,18 @@ def _skipped(base: dict, why: str, before: float, after: float) -> list[dict]:
     ]
 
 
-def turn_setups(tag: str, log: str, fmt: str, tools: Tools, forced: bool = False):
-    """Each decision point of one game, in order: a TurnSetup for each turn,
-    and with `forced` a ReplacementSetup for each forced switch; or a list of
-    records saying why the point is left out."""
+def turn_setups(
+    tag: str,
+    log: str,
+    fmt: str,
+    tools: Tools,
+    forced: bool = False,
+    prev_leads: Mapping[str, frozenset[str]] | None = None,
+):
+    """Each decision point of one game: a TurnSetup for each turn, and with
+    `forced` a PreviewSetup for team preview and a ReplacementSetup for each
+    forced switch; or a list of records saying why a point is left out.
+    `prev_leads`: each player's leads in the set's previous game (species)."""
     from wpa import choices as C
     from wpa import decisions as D
     from wpa import resolver as R
@@ -951,6 +1020,9 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools, forced: bool = False
         )
     if not forced:
         return
+    yield from _preview_setup(
+        tag, log, fmt, tools, game, sheets, ctx_all, wp_at, with_brought, prev_leads
+    )
     from wpa import replace_model as RM
 
     reps: dict[tuple[str, int], list] = {}
@@ -1068,18 +1140,167 @@ def turn_setups(tag: str, log: str, fmt: str, tools: Tools, forced: bool = False
         )
 
 
+def _preview_setup(
+    tag, log, fmt, tools, game, sheets, ctx_all, wp_at, with_brought, prev_leads
+):
+    """Team preview's leads (Week 11 Task 1), as one decision point per game."""
+    from wpa import resolver as R
+    from wpa.bring import leads_from_log
+    from wpa.lead_model import pairs
+
+    states, joined = game.states["p1"], game.joined["p1"]
+    k0 = next((k for k, s in enumerate(states) if s["moment"] == "preview"), None)
+    if k0 is None or k0 >= len(game.points["p1"]):
+        return
+    base = {
+        "tag": tag,
+        "format": fmt,
+        "turn": 0,
+        "kind": "preview",
+        "point": game.points["p1"][k0],
+        "result": float(bool(states[-1]["outcome"])),
+    }
+    try:
+        nr, k1 = next_point(game, k0)
+        before, after = wp_at("p1", k0), wp_at(nr, k1)
+    except Exception as e:  # pragma: no cover - reported, not hidden
+        yield _error(base, e)
+        return
+    leads = leads_from_log(log)
+    if tools.leads is None:
+        yield _skipped(base, "no lead model", before, after)
+        return
+    if (
+        nr != "p1"
+        or states[k1]["moment"] != "turn_start"
+        or any(len(sheets[r]) != 6 or len(leads.get(r, ())) != 2 for r in ("p1", "p2"))
+    ):
+        yield _skipped(base, "team preview not in the log", before, after)
+        return
+    t0 = time.time()
+    try:
+        s = states[k0]
+        sides = with_brought(
+            {
+                "p1": [dict(m) for m in s["our_pokemon"]],
+                "p2": [dict(m) for m in s["opp_pokemon"]],
+            }
+        )
+        rv = R.Resolver(
+            tools.dexes[fmt],
+            tools.moves[fmt],
+            tools.calc,
+            sheets,
+            ctx_all["p1"][k0].spreads,
+            resolution=tools.resolution,
+            cap=tools.cap,
+        )
+        bw = BoardWP(
+            tools.predict[fmt],
+            states,
+            k1,
+            joined[k1],
+            sheets,
+            tools.dexes[fmt],
+            tools.tables[fmt],
+            tools.groups,
+            ctx_all["p1"][k1],
+            same_point=True,
+            budget=tools.budget,
+        )
+        opts, chances, taken = {}, {}, {}
+        for r in ("p1", "p2"):
+            prev = (prev_leads or {}).get(r)
+            opts[r] = [lead_joint(p) for p in pairs(6)]
+            chances[r] = list(tools.leads.chances(sheets[r], fmt, prev))
+            taken[r] = lead_joint(sorted(leads[r]))
+        nxt = states[k1]
+        actual = {"p1": nxt["our_pokemon"], "p2": nxt["opp_pokemon"]}
+    except Exception as e:  # pragma: no cover - reported, not hidden
+        yield _error(base, e)
+        return
+    yield PreviewSetup(
+        base,
+        TurnValues(Leads(rv), sides, R.field_from_timers(joined[k0], "p1"), bw),
+        bw,
+        before,
+        after,
+        actual,
+        taken,
+        opts,
+        chances,
+        t0,
+    )
+
+
+def _analyse_preview(ps: PreviewSetup, tools: Tools) -> list[dict]:
+    """Team preview's leads split as a turn is (DEFINITIONS §3): your choice
+    against the typical pair, the position, their decision against their likely
+    pairs, and the dice (nothing is random at team preview: only the model's
+    own difference between a board and the next row)."""
+    tv = ps.tv
+    mixes = {r: list(zip(ps.opts[r], ps.chances[r])) for r in ("p1", "p2")}
+    tv.prepare([(x, y) for x, _ in mixes["p1"] for y, _ in mixes["p2"]])
+    t1, t2 = ps.taken["p1"], ps.taken["p2"]
+    board = tv(t1, t2)
+    recs = []
+    for r, other in (("p1", "p2"), ("p2", "p1")):
+        b, a = (ps.before, ps.after) if r == "p1" else (1 - ps.before, 1 - ps.after)
+        sp = decompose(
+            tv.for_role(r),
+            b,
+            a,
+            [(ps.taken[r], 1.0)],
+            [(ps.taken[other], 1.0)],
+            mixes[other],
+            [[(j, 1.0)] for j, _ in mixes[r]],
+            typical=mixes[r],
+        )
+        recs.append(
+            dict(
+                ps.base,
+                role=r,
+                unknown=0,
+                choices=len(mixes[r]),
+                after_board=board if r == "p1" else 1 - board,
+                **asdict(sp),
+            )
+        )
+    outs = tv.outcomes.get((t1, t2), [])
+    tol = max(0.03, tools.resolution + 0.01)
+    found = any(_close(o.sides, ps.actual, tol) for o in outs)
+    partial = sorted(set().union(*(o.partial for o in outs))) if outs else []
+    secs = time.time() - ps.t0
+    for rec in recs:
+        rec.update(
+            found=found,
+            partial=partial,
+            seconds=secs,
+            resolves=len(tv.outcomes),
+            boards=len(ps.bw._cache),
+        )
+    return recs
+
+
 def analyse_game(
-    tag: str, log: str, fmt: str, tools: Tools, with_alternatives: bool = True
+    tag: str,
+    log: str,
+    fmt: str,
+    tools: Tools,
+    with_alternatives: bool = True,
+    prev_leads: Mapping[str, frozenset[str]] | None = None,
 ) -> list[dict]:
-    """One record per decision point (each turn and each forced switch, each
-    player) of one game."""
+    """One record per decision point (team preview, each turn and each forced
+    switch, each player) of one game."""
     out: list[dict] = []
-    for ts in turn_setups(tag, log, fmt, tools, forced=True):
+    for ts in turn_setups(tag, log, fmt, tools, forced=True, prev_leads=prev_leads):
         if isinstance(ts, list):
             out += ts
             continue
         try:
-            if isinstance(ts, ReplacementSetup):
+            if isinstance(ts, PreviewSetup):
+                out += _analyse_preview(ts, tools)
+            elif isinstance(ts, ReplacementSetup):
                 out += _analyse_replacement(ts, tools)
             else:
                 out += _analyse_turn(ts, tools, with_alternatives)
@@ -1111,6 +1332,10 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     t2, l2, _k2, alts2, _u2 = mixes["p2"]
     pairs = [(x, y) for x, _ in t1 for y, _ in l2 + t2]
     pairs += [(x, y) for x, _ in l1 for y, _ in t2]
+    # each player's typical choice against the other's likely replies
+    # (DEFINITIONS §3, revision 10): one block serves both players
+    if tools.typical:
+        pairs += [(x, y) for x, _ in l1 for y, _ in l2]
     for alt in alts1 or ():
         pairs += [(x, y) for x, _ in alt for y, _ in l2]
     for alt in alts2 or ():
@@ -1121,7 +1346,17 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         taken, _l, _k, alts, unknown = mixes[r]
         _t, lk, kept, _a, _u = mixes[other]
         b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
-        sp = decompose(tv.for_role(r), b, a, taken, mixes[other][0], lk, alts, kept)
+        sp = decompose(
+            tv.for_role(r),
+            b,
+            a,
+            taken,
+            mixes[other][0],
+            lk,
+            alts,
+            kept,
+            typical=mixes[r][1] if tools.typical else None,
+        )
         board = ts.after_board if r == "p1" else 1 - ts.after_board
         recs.append(
             dict(ts.base, role=r, unknown=unknown, after_board=board, **asdict(sp))
@@ -1175,7 +1410,14 @@ def _analyse_replacement(rs: ReplacementSetup, tools: Tools) -> list[dict]:
         taken, _full, alts = mixes[r]
         b, a = (rs.before, rs.after) if r == "p1" else (1 - rs.before, 1 - rs.after)
         sp = decompose(
-            tv.for_role(r), b, a, taken, mixes[other][0], mixes[other][1], alts
+            tv.for_role(r),
+            b,
+            a,
+            taken,
+            mixes[other][0],
+            mixes[other][1],
+            alts,
+            typical=mixes[r][1],
         )
         recs.append(
             dict(
@@ -1328,6 +1570,11 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
         a.alternatives,
     )
     tools.budget = getattr(a, "budget", None) or None
+    tools.typical = not getattr(a, "no_typical", False)
+    if getattr(a, "leads", None) and Path(a.leads).exists():
+        from wpa.lead_model import LeadModel
+
+        tools.leads = LeadModel.load(a.leads)
     if getattr(a, "replace", None) and Path(a.replace).exists():
         from wpa.replace_model import ReplaceModel
 
@@ -1400,12 +1647,38 @@ def fit_run(a) -> None:  # pragma: no cover - runs on the corpus
 
 
 def _one(job) -> list[dict]:  # pragma: no cover
-    tag, log, fmt, alt = job
+    tag, log, fmt, alt, prev = job
     t0 = time.time()
-    recs = analyse_game(tag, log, fmt, _W["tools"], alt)
+    recs = analyse_game(tag, log, fmt, _W["tools"], alt, prev)
     for r in recs:
         r["game_seconds"] = time.time() - t0
     return recs
+
+
+def previous_leads(
+    games: Sequence[tuple[str, str]],
+) -> dict[str, dict[str, frozenset[str]]]:
+    """For each game, each player's leads (species) in the set's previous game,
+    from games in set order (as `sample_sets` gives them)."""
+    from wpa.bring import leads_from_log, players
+    from wpa.features import unit_of
+    from wpa.team_sheets import sheets_from_log, to_id
+
+    memory: dict[tuple[str, str], frozenset[str]] = {}
+    out: dict[str, dict[str, frozenset[str]]] = {}
+    for tag, log in games:
+        unit, _n = unit_of(tag, log)
+        names, sheets, leads = players(log), sheets_from_log(log), leads_from_log(log)
+        here = {}
+        for role, sheet in sheets.items():
+            name = names.get(role, role)
+            if (unit, name) in memory:
+                here[role] = memory[(unit, name)]
+            lead = leads.get(role, frozenset())
+            if len(lead) == 2:
+                memory[(unit, name)] = frozenset(to_id(sheet[i].species) for i in lead)
+        out[tag] = here
+    return out
 
 
 def run(a) -> None:  # pragma: no cover - runs on the corpus
@@ -1420,9 +1693,12 @@ def run(a) -> None:  # pragma: no cover - runs on the corpus
     jobs = []
     for fmt, gs in games.items():
         cap = a.max_games[{"regma": 0, "regmb": 1}[fmt]] if a.max_games else None
+        prev = previous_leads(gs)
         for n, (tag, log) in enumerate(gs[:cap] if cap else gs):
             if tag not in done:
-                jobs.append((tag, log, fmt, n % a.alternatives_every == 0))
+                jobs.append(
+                    (tag, log, fmt, n % a.alternatives_every == 0, prev.get(tag, {}))
+                )
     print(f"{len(jobs)} games to do ({len(done)} done before)", flush=True)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     with open(a.out, "a", encoding="utf-8") as f, Pool(a.workers, _init, (a,)) as pool:
@@ -1455,6 +1731,14 @@ def _turn_line(pair: Mapping[str, Mapping]) -> str:
     for role in ("p1", "p2"):
         r = pair.get(role)
         if r is None:
+            continue
+        if r.get("choice") is not None:
+            text += (
+                f"; {role} choice {pt(r['choice'])}, position {pt(r['position'])}, "
+                f"theirs {pt(r['theirs'])}, dice {pt(r['dice'])}"
+            )
+            if r.get("vs_best") is not None:
+                text += f" (vs best {pt(r['vs_best'])})"
             continue
         text += (
             f"; {role} yours {pt(r['yours'])}, theirs {pt(r['theirs'])}, "
@@ -1527,10 +1811,9 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
         if "skipped" in r:
             key = r["skipped"].split(":")[0]
             skipped[key] = skipped.get(key, 0) + 1
-    err = max(
-        abs(r["yours"] + r["theirs"] + r["dice"] - (r["after"] - r["before"]))
-        for r in ok
-    )
+    split = _has_split(ok)
+    parts = ("choice", "position", "theirs", "dice") if split else PARTS8
+    err = max(abs(sum(r[k] for k in parts) - (r["after"] - r["before"])) for r in ok)
     turns = {(r["tag"], r["turn"]): r["seconds"] for r in ok}
     secs = np.array(list(turns.values()))
     head = f"{name}: {games} games, {len(ok)} decision points ({len(turns)} turns)"
@@ -1539,14 +1822,31 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
     lines = [
         head,
         f"  swing (after - before): {_pts([r['after'] - r['before'] for r in ok])}",
-        f"  your decision: {_pts([r['yours'] for r in ok])}",
+    ]
+    if split:
+        lines += [
+            "  your choice (against the typical choice): "
+            f"{_pts([r['choice'] for r in ok])}",
+            f"  the position (credited to no one): {_pts([r['position'] for r in ok])}",
+        ]
+    else:
+        lines.append(f"  your decision: {_pts([r['yours'] for r in ok])}")
+    lines += [
         f"  their decision: {_pts([r['theirs'] for r in ok])}",
         f"  the dice: {_pts([r['dice'] for r in ok])}",
+    ]
+    if split:
+        lines.append(
+            "  your decision (revision 8: your choice + the position): "
+            f"{_pts([r['yours'] for r in ok])}"
+        )
+    lines += [
         f"  the parts add up: largest error {err:.2e} (allowed 1e-3)",
         "  a part of 3 points or more (the reporting threshold): "
         + ", ".join(
-            f"{name} {100 * np.mean([abs(r[k]) >= THRESHOLD for r in ok]):.0f}%"
-            for k, name in (("yours", "yours"), ("theirs", "theirs"), ("dice", "dice"))
+            f"{PART_NAMES[k]} "
+            f"{100 * np.mean([abs(r[k]) >= THRESHOLD for r in ok]):.0f}%"
+            for k in parts
         ),
     ]
     alt = [r for r in ok if r.get("vs_best") is not None]
@@ -1558,7 +1858,8 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
             f"mean {100 * vb.mean():.1f} points; best choice taken "
             f"{100 * np.mean(vb > -1e-9):.0f}%; cost of 5+ points "
             f"{100 * np.mean(vb < -0.05):.0f}%",
-            f"  cost vs average: mean {100 * va.mean():+.1f} points",
+            f"  cost vs average{' (unweighted, as in Weeks 9 and 10)' if split else ''}"
+            f": mean {100 * va.mean():+.1f} points",
         ]
     kept = np.array([r["kept"] for r in ok])
     found = 100 * np.mean([r["found"] for r in ok])
@@ -1584,7 +1885,94 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
         ),
     )[:top]
     lines += [_turn_line(d) for d in big] + [""]
-    return lines + _forced_lines(every, top) + _chain_lines(every)
+    if split:
+        lines.append(f"  the {top} biggest choices (points; by your choice):")
+        lines += [
+            _choice_line(r) for r in sorted(ok, key=lambda r: -abs(r["choice"]))[:top]
+        ]
+        lines.append("")
+    return (
+        lines
+        + _preview_lines(every, top)
+        + _forced_lines(every, top)
+        + _chain_lines(every)
+    )
+
+
+def _preview_lines(rs: Sequence[Mapping], top: int) -> list[str]:
+    """Team preview's leads (Week 11 Task 1): the split and the biggest choices."""
+    pv = [r for r in rs if r.get("kind") == "preview"]
+    ok = [r for r in pv if "skipped" not in r]
+    if not pv:
+        return []
+    skipped: dict[str, int] = {}
+    for r in pv:
+        if "skipped" in r and r["role"] == "p1":
+            key = r["skipped"].split(":")[0]
+            skipped[key] = skipped.get(key, 0) + 1
+    head = (
+        f"  team preview (the leads): {len({r['tag'] for r in pv})} games, "
+        f"{len(ok)} decisions"
+    )
+    if skipped:
+        head += f"; left out: {skipped}"
+    lines = [head]
+    if ok and _has_split(ok):
+        vb = np.array([r["vs_best"] for r in ok if r.get("vs_best") is not None])
+        lines += [
+            "    your choice (against the typical pair): "
+            f"{_pts([r['choice'] for r in ok])}",
+            "    the position (credited to no one): "
+            f"{_pts([r['position'] for r in ok])}",
+            f"    their decision: {_pts([r['theirs'] for r in ok])}",
+            f"    the dice: {_pts([r['dice'] for r in ok])}",
+        ]
+        if len(vb):
+            lines.append(
+                f"    cost vs best: mean {100 * vb.mean():.1f} points; best pair led "
+                f"{100 * np.mean(vb > -1e-9):.0f}%"
+            )
+        lines.append(f"    the {top} biggest team-preview choices (points):")
+        lines += [
+            _choice_line(r) for r in sorted(ok, key=lambda r: -abs(r["choice"]))[:top]
+        ]
+    return lines + [""]
+
+
+PARTS8 = ("yours", "theirs", "dice")
+PART_NAMES = {
+    "yours": "yours",
+    "choice": "choice",
+    "position": "position",
+    "theirs": "theirs",
+    "dice": "dice",
+}
+
+
+def _has_split(rs: Sequence[Mapping]) -> bool:
+    """Whether the records carry revision 10's split (Week 11 on)."""
+    return bool(rs) and all(r.get("choice") is not None for r in rs)
+
+
+def _choice_line(r: Mapping) -> str:
+    def pt(x: float | None) -> str:
+        return "n/a" if x is None else f"{100 * x:+.0f}"
+
+    kind = r.get("kind", "turn")
+    where = (
+        f"turn {r['turn']}"
+        if kind == "turn"
+        else "team preview"
+        if kind == "preview"
+        else f"after turn {r['turn']}"
+    )
+    text = (
+        f"    {REPLAY}{r['tag']} {where}: {r['role']} choice {pt(r['choice'])}, "
+        f"position {pt(r['position'])}, theirs {pt(r['theirs'])}, dice {pt(r['dice'])}"
+    )
+    if r.get("vs_best") is not None:
+        text += f" (vs best {pt(r['vs_best'])})"
+    return text
 
 
 def _forced_lines(rs: Sequence[Mapping], top: int) -> list[str]:
@@ -1613,8 +2001,18 @@ def _forced_lines(rs: Sequence[Mapping], top: int) -> list[str]:
     if mine:
         alt = [r for r in mine if r.get("vs_best") is not None]
         vb = np.array([r["vs_best"] for r in alt]) if alt else np.zeros(1)
+        split = _has_split(mine)
+        parts = ("choice", "position", "theirs", "dice") if split else PARTS8
+        if split:
+            lines += [
+                "    your choice (against the typical choice): "
+                f"{_pts([r['choice'] for r in mine])}",
+                "    the position (credited to no one): "
+                f"{_pts([r['position'] for r in mine])}",
+            ]
+        else:
+            lines.append(f"    your decision: {_pts([r['yours'] for r in mine])}")
         lines += [
-            f"    your decision: {_pts([r['yours'] for r in mine])}",
             f"    their decision (0 unless both replace): "
             f"{_pts([r['theirs'] for r in mine])}",
             f"    the dice: {_pts([r['dice'] for r in mine])}",
@@ -1622,18 +2020,25 @@ def _forced_lines(rs: Sequence[Mapping], top: int) -> list[str]:
             f"{100 * np.mean(vb > -1e-9):.0f}%",
             "    a part of 3 points or more: "
             + ", ".join(
-                f"{k} {100 * np.mean([abs(r[k]) >= THRESHOLD for r in mine]):.0f}%"
-                for k in ("yours", "theirs", "dice")
+                f"{PART_NAMES[k]} "
+                f"{100 * np.mean([abs(r[k]) >= THRESHOLD for r in mine]):.0f}%"
+                for k in parts
             ),
-            f"    the {top} biggest forced-switch decisions (points):",
+            f"    the {top} biggest forced-switch "
+            f"{'choices' if split else 'decisions'} (points):",
         ]
-        big = sorted(mine, key=lambda r: -abs(r["yours"]))[:top]
-        lines += [
-            f"      {REPLAY}{r['tag']} after turn {r['turn']}: {r['role']} yours "
-            f"{pt(r['yours'])}, vs best {pt(r.get('vs_best'))}, dice {pt(r['dice'])}"
-            f" ({r.get('choices', 0)} choices)"
-            for r in big
-        ]
+        key = "choice" if split else "yours"
+        big = sorted(mine, key=lambda r: -abs(r[key]))[:top]
+        for r in big:
+            head = f"      {REPLAY}{r['tag']} after turn {r['turn']}: {r['role']} "
+            if split:
+                head += f"choice {pt(r['choice'])}, position {pt(r['position'])}"
+            else:
+                head += f"yours {pt(r['yours'])}"
+            lines.append(
+                head + f", vs best {pt(r.get('vs_best'))}, dice {pt(r['dice'])}"
+                f" ({r.get('choices', 0)} choices)"
+            )
     return lines + [""]
 
 
@@ -1732,6 +2137,18 @@ def main() -> None:  # pragma: no cover
     )
     p.add_argument("--draws", type=int, default=6, help="replies drawn from the rest")
     p.add_argument("--resolution", type=float, default=0.05)
+    p.add_argument(
+        "--leads",
+        type=Path,
+        default=Path("models_v4/leads.json"),
+        help="the lead model (Week 11 Task 1); without it, team preview not split",
+    )
+    p.add_argument(
+        "--no-typical",
+        action="store_true",
+        help="leave out each player's typical choice (revision 8's split); "
+        "only to measure what it costs",
+    )
     p.add_argument(
         "--budget",
         type=int,

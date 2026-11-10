@@ -584,6 +584,44 @@ class Resolver:
             self._on_entry(w, r, new)
         return [Outcome(1.0, w.sides, w.fld, frozenset(w.partial), w.winner)]
 
+    def lead(
+        self,
+        sides: Mapping[str, Sequence[Mapping]],
+        fld: Field,
+        actions: Mapping[str, Sequence[Action]],
+    ) -> list[Outcome]:
+        """Team preview's leads (Week 11 Task 1): the Pokemon each side's switch
+        actions name come in, both sides at once, then their entry effects in
+        Speed order, as at the start of a game. One outcome."""
+        w = _World(
+            1.0,
+            {
+                r: [dict(m, boosts=dict(m.get("boosts") or {})) for m in sides[r]]
+                for r in ROLES
+            },
+            copy.deepcopy(fld),
+            set(),
+        )
+        came = []
+        for r in ROLES:
+            for a in actions.get(r, ()):
+                j = a.switch_to
+                if a.kind != "switch" or j is None:
+                    continue
+                m = w.sides[r][j]
+                if m["fainted"] or m["active"]:
+                    continue
+                if m["hp_fraction"] <= 0:
+                    m["hp_fraction"] = 1.0  # first time in
+                m.update(active=True, boosts={}, moved=False, last_move="")
+                m["protect_streak"] = 0
+                came.append((r, j))
+        sign = 1 if w.fld.trickroom else -1
+        came.sort(key=lambda x: sign * self._speed(w, x[0], x[1]))
+        for r, j in came:
+            self._on_entry(w, r, j)
+        return [Outcome(1.0, w.sides, w.fld, frozenset(w.partial), w.winner)]
+
     def _switch(
         self, w: _World, role: str, old: int, new: int | None, entry: bool = True
     ) -> bool:
