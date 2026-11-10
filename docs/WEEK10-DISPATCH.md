@@ -61,45 +61,45 @@ forced switches so that a game's swings add up from turn 1 to the end.
 ## Tasks
 
 ### Task 0 — Say "partly modelled" everywhere it applies
-- [ ] **A Perish Song count** on any active Pokemon at the start of a turn marks
+- [x] **A Perish Song count** on any active Pokemon at the start of a turn marks
       the turn "partly modelled" until Task 1 models it.
-- [ ] **The summary shows each big swing's reasons** next to it, such as "partly
+- [x] **The summary shows each big swing's reasons** next to it, such as "partly
       modelled: Perish Song", so a reader can tell a modelling gap from luck.
-- [ ] **The summary reports the Week 9 table** of turns with a swing over 40
+- [x] **The summary reports the Week 9 table** of turns with a swing over 40
       points, by cause, per format, so each week's progress can be compared.
-- [ ] Tests first.
+- [x] Tests first.
 
 ### Task 1 — Perish Song
-- [ ] The resolver reads each Pokemon's Perish Song count from the turn's timers.
+- [x] The resolver reads each Pokemon's Perish Song count from the turn's timers.
       At the end of the turn it counts down, and a Pokemon reaching 0 faints.
-- [ ] **Perish Song used this turn** starts the count on every active Pokemon it
+- [x] **Perish Song used this turn** starts the count on every active Pokemon it
       affects. Soundproof is immune.
-- [ ] **Switching out clears the count.** So does fainting first.
-- [ ] **Order at the end of the turn:** Perish Song comes after weather and other
+- [x] **Switching out clears the count.** So does fainting first.
+- [x] **Order at the end of the turn:** Perish Song comes after weather and other
       residual damage. If both sides lose their last Pokemon in the same turn,
       the result follows Showdown's rule, and a test shows which.
-- [ ] **Tests first,** including both of a side's Pokemon fainting at 0, and the
+- [x] **Tests first,** including both of a side's Pokemon fainting at 0, and the
       win that follows. Check them against Week 9's three top Reg M-A turns:
       those boards must now be among the resolver's.
 
 ### Task 2 — Damage that depends on the game so far
-- [ ] **Last Respects:** the calculator is told how many of the user's side have
+- [x] **Last Respects:** the calculator is told how many of the user's side have
       fainted so far.
-- [ ] **Rage Fist:** the calculator is told how many times the user has been hit.
-- [ ] **Supreme Overlord** (Kingambit's ability) also counts fainted allies.
+- [x] **Rage Fist:** the calculator is told how many times the user has been hit.
+- [x] **Supreme Overlord** (Kingambit's ability) also counts fainted allies.
       Check whether the feature table and the resolver already pass it. If not,
       pass it in both, and say what it changes in the feature table.
-- [ ] Counts come from the log up to the decision point only. Cutting a game after
+- [x] Counts come from the log up to the decision point only. Cutting a game after
       a decision changes nothing.
-- [ ] **Tests first,** checked against the calculator run on its own. Once a move
+- [x] **Tests first,** checked against the calculator run on its own. Once a move
       is handled, its "partly modelled" mark from Week 9 goes.
 
 ### Task 3 — Moves that switch the user out (decision 6)
-- [ ] **The moves:** U-turn, Volt Switch, Flip Turn, Parting Shot, Baton Pass,
+- [x] **The moves:** U-turn, Volt Switch, Flip Turn, Parting Shot, Baton Pass,
       Chilly Reception and Shed Tail. The resolver plays each through: the move's
       own effect, the Pokemon that comes in, then the rest of the turn with it on
       the field (Intimidate and weather on entry included).
-- [ ] **What each one adds to the switch:**
+- [x] **What each one adds to the switch:**
       - **U-turn, Volt Switch, Flip Turn:** damage first; no switch if the user
         faints first or the target was protected from the hit.
       - **Parting Shot:** lowers the target's Attack and Special Attack, then
@@ -114,59 +114,59 @@ forced switches so that a game's swings add up from turn 1 to the end.
       - **Substitute itself:** Shed Tail and Baton Pass hand one over, so the
         resolver models it. It absorbs damage until broken and blocks most
         status moves. Sound moves and Infiltrator get past it.
-- [ ] **Which Pokemon comes in is part of the switching player's choice.** For the
+- [x] **Which Pokemon comes in is part of the switching player's choice.** For the
       choice taken it is the one the log shows. For likely replies and for
       alternatives it is weighted by the opponent model's chances for switching
       to each Pokemon.
-- [ ] Eject Button and Eject Pack, if cheap to add the same way. If not, they stay
+- [x] Eject Button and Eject Pack, if cheap to add the same way. If not, they stay
       "partly modelled".
-- [ ] **Tests first,** one per move at least. Rerun the Week 9 resolver check per
+- [x] **Tests first,** one per move at least. Rerun the Week 9 resolver check per
       format and report the share of turns fully modelled and the share where the
       board is found, beside Week 9's.
 
 ### Task 4 — Spreads (decision 3)
-- [ ] **Measure first.** On a sample of turns, the time per turn with each
+- [x] **Measure first.** On a sample of turns, the time per turn with each
       Pokemon's 2 or 3 likeliest spreads instead of 1.
 - [ ] **Hidden spreads are averaged as hidden information, not luck**
       (`WP_public`, as Week 9's brief asked). Each combination of spreads is
       weighted by its chance, and the board is valued with the spreads it assumes.
 - [ ] Report the share of boards found and the size of the dice beside Week 9's.
-- [ ] **Stop rule:** if the brief's sample would no longer fit in a night on the
+- [x] **Stop rule:** if the brief's sample would no longer fit in a night on the
       PO's computer, report the cost and the options before Task 7 runs.
 
 ### Task 5 — The averaged model (decision 1, DEFINITIONS §10.2 revision 9)
-- [ ] **10 models per format** (Reg M-A, and the pooled model for Reg M-B), each
+- [x] **10 models per format** (Reg M-A, and the pooled model for Reg M-B), each
       trained on the full table with v4's settings, on a resample of the training
       sets: whole sets drawn with replacement, as many as there are. They run on
       the PO's computer.
-- [ ] **WP is the average of the 10.**
-- [ ] **The Reg M-B correction for the average** is fitted on out-of-bag
+- [x] **WP is the average of the 10.**
+- [x] **The Reg M-B correction for the average** is fitted on out-of-bag
       predictions. Each training set is predicted only by the models whose
       resample left it out. No extra training is needed.
-- [ ] **The averaged model's own noise is measured directly,** as revision 9
+- [x] **The averaged model's own noise is measured directly,** as revision 9
       requires. Compare the average of models 1 to 5 with the average of 6 to 10
       on the same validation positions, then scale to the average of all 10. It
       must be under 3 points. If not, raise a blocker, not a quiet change.
-- [ ] **Gate on validation:** the averaged model passes, per format, and its score
+- [x] **Gate on validation:** the averaged model passes, per format, and its score
       is reported beside v4's (paired). Averaging can soften predictions.
 - [ ] The test split is not opened this week.
 - [ ] The first model is timed. The report says how many nights the rest took.
 
 ### Task 6 — Forced switches (DEFINITIONS §6)
-- [ ] **The decision:** after a Pokemon faints, which Pokemon to send in. When both
+- [x] **The decision:** after a Pokemon faints, which Pokemon to send in. When both
       sides replace at once, each side's choice is made without seeing the
       other's, so it is split the same way as a turn.
-- [ ] **A model of which Pokemon is sent in,** learned from the training split.
+- [x] **A model of which Pokemon is sent in,** learned from the training split.
       **The test per format on validation:** it beats a uniform guess over the
       Pokemon that could come in.
-- [ ] **The split:** your decision and their decision as in §3. The dice are
+- [x] **The split:** your decision and their decision as in §3. The dice are
       whatever is random on entry. Their decision is 0 when only one side
       replaces.
-- [ ] **A game's swings chain:** each decision point's WP(after) is the next one's
+- [x] **A game's swings chain:** each decision point's WP(after) is the next one's
       WP(before), within 0.001.
-- [ ] **A game's swings add up** to its result minus WP at turn 1's start (§2),
+- [x] **A game's swings add up** to its result minus WP at turn 1's start (§2),
       within 0.001, for every game with no forfeit or timer.
-- [ ] Tests first.
+- [x] Tests first.
 
 ### Task 7 — The brief's sample again (the PO's computer)
 - [ ] The same 300 Reg M-A sets and 199 Reg M-B sets, with Tasks 0 to 6, the

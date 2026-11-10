@@ -1144,6 +1144,31 @@ Sections 17 and 18.
    failed, and saves it all in `models_v4_avg\report.txt`. A line starting
    `BLOCKER` means the noise is over the threshold: stop there and send it to me.
 
+4. **The forced-switch model** (optional; about an hour). Which Pokemon a
+   player sends in after a faint, learned from the training games. A copy made
+   here is already in `models_v4\replace.json`; this remakes it on your
+   computer:
+   ```
+   python -m wpa.replace_model
+   ```
+   It prints, per format, how it does against a uniform guess over the Pokemon
+   that could come in, and saves `models_v4\replace.json` and `replace.txt`.
+
+5. **Decision versus luck again, with everything** (overnight; the same 300
+   Reg M-A and 199 Reg M-B sets as Week 9). Needs step 3's `Gate: passed`:
+   ```
+   python -m wpa.attribution --models models_v4_avg --moves-dir build --workers 6 --alternatives-every 3 --out reports/attribution_week10.jsonl
+   ```
+   - It now splits forced switches too, and checks that each game's swings
+     add up to its result.
+   - Each decision point values at most 4,000 boards; over that, boards are
+     grouped on a coarser hit-point grid (nothing is dropped). `--budget 0`
+     turns this off.
+   - As in Section 18, Ctrl+C stops it and the same command carries on.
+
+   At the end it prints the summary and saves it as
+   `reports\attribution_week10.txt`. Send me that file.
+
 ---
 
 ## If something goes wrong
