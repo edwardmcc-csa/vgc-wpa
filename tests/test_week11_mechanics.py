@@ -221,3 +221,80 @@ def test_a_pokemon_underground_is_not_hit(tools):
     outs = R.Resolver(dex, moves, calc, SHEETS, SPREADS).resolve(b, R.Field(), acts)
     assert all(o.sides["p1"][0]["hp_fraction"] == 1.0 for o in outs)
     assert all(o.sides["p1"][0]["charging"] == "dig" for o in outs)
+
+
+# --- the game ends when a side has no Pokemon left -----------------------------
+# Found in Week 11's run: only Perish Song ended a game in the resolver, so a
+# board where a knock-out left a side with nothing was valued by the model (in
+# one game it gave the winner 5%). Showdown's checkWin: the game ends as soon as
+# one side has none left; if both run out together, the side of the last
+# Pokemon to faint wins.
+
+
+def _last_pair(target_hp, attacker_hp=1.0, move="stoneedge"):
+    b = board(target_hp)
+    b["p2"][1].update(fainted=True, active=False, hp_fraction=0.0)  # Whimsicott is gone
+    b["p1"][0]["hp_fraction"] = attacker_hp
+    acts = {
+        "p1": (
+            Action(0, "move", move=move, target=("foe", 0)),
+            Action(1, "move", move="protect"),
+        ),
+        "p2": (Action(0, "move", move="swordsdance"),),
+    }
+    return b, acts
+
+
+@needs_showdown
+def test_knocking_out_the_last_pokemon_ends_the_game(tools):
+    dex, moves, calc = tools
+    b, acts = _last_pair(0.05)
+    outs = R.Resolver(dex, moves, calc, SHEETS, SPREADS).resolve(b, R.Field(), acts)
+    ko = [o for o in outs if o.sides["p2"][0]["fainted"]]
+    assert ko and all(o.winner == "p1" for o in ko)
+    assert all(o.winner is None for o in outs if not o.sides["p2"][0]["fainted"])
+    from wpa import attribution as A
+
+    tv = A.TurnValues(
+        R.Resolver(dex, moves, calc, SHEETS, SPREADS),
+        b,
+        R.Field(),
+        lambda outs: [0.5] * len(outs),
+    )
+    p_ko = p_of(outs, lambda o: o.sides["p2"][0]["fainted"])
+    assert tv(acts["p1"], acts["p2"]) == pytest.approx(p_ko * 1.0 + (1 - p_ko) * 0.5)
+
+
+@needs_showdown
+def test_a_pokemon_brought_but_not_yet_seen_keeps_the_game_going(tools):
+    dex, moves, calc = tools
+    b, acts = _last_pair(0.05)
+    b["p2"].append(
+        dict(
+            b["p2"][1],
+            species="amoonguss",
+            fainted=False,
+            active=False,
+            hp_fraction=0.0,
+            _brought=True,
+        )
+    )
+    sheets = dict(SHEETS, p2=(*SHEETS["p2"], SHEETS["p2"][1]))
+    spreads = {**SPREADS, ("p2", 2): SPREADS[("p2", 1)]}
+    outs = R.Resolver(dex, moves, calc, sheets, spreads).resolve(b, R.Field(), acts)
+    assert all(o.winner is None for o in outs)
+
+
+@needs_showdown
+def test_when_both_last_pokemon_fall_together_the_last_to_faint_wins(tools):
+    dex, moves, calc = tools
+    # p1's last Pokemon knocks out p2's last with Flare Blitz and faints to its
+    # recoil: it fainted last, so p1 wins (Showdown, generation 5 on)
+    b, acts = _last_pair(0.05, attacker_hp=0.01, move="flareblitz")
+    b["p1"][1].update(fainted=True, active=False, hp_fraction=0.0)
+    acts["p1"] = acts["p1"][:1]
+    outs = R.Resolver(dex, moves, calc, SHEETS, SPREADS).resolve(b, R.Field(), acts)
+    both = [
+        o for o in outs if o.sides["p2"][0]["fainted"] and o.sides["p1"][0]["fainted"]
+    ]
+    assert both and all(o.winner == "p1" for o in both)

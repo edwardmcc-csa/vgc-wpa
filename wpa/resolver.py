@@ -1836,9 +1836,15 @@ class Resolver:
         return [w]
 
     def _faint(self, w: _World, who) -> None:
+        """A Pokemon faints. If its side has none left, the game is over (Week 11;
+        Showdown's checkWin): the other side wins. If both run out together, the
+        last to faint wins its side the game, which is the side the first win
+        went to, so that one stands."""
         st = w.sides[who[0]][who[1]]
         st.update(hp_fraction=0.0, fainted=True, active=False, boosts={}, status="")
         st.pop("perish", None)
+        if w.winner is None and not _left(w, who[0]):
+            w.winner = _other(who[0])
 
     def _after_attack(self, w: _World, role: str, a: Action, m: Mapping) -> None:
         st = w.sides[role][a.user]
