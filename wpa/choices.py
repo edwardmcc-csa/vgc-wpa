@@ -106,10 +106,18 @@ def options(
         mega_ok = not side_megaed and not st.get("mega") and _has_own_stone(mon, dex)
         acts: list[Action] = []
         moves, can_switch = _locked(mon, st, _usable_moves(mon, st))
+        # no status moves with an Assault Vest, or while taunted (unless that
+        # is all it has: Struggle is not modelled)
+        no_status = st.get("item") == "assaultvest" or bool(
+            st.get("taunt")
+            and any((dex.moves.get(x) or {}).get("category") != "Status" for x in moves)
+        )
         for move in moves:
             m = dex.moves.get(move) or {}
-            if st.get("item") == "assaultvest" and m.get("category") == "Status":
+            if no_status and m.get("category") == "Status":
                 continue
+            if move == st.get("disabled") and len(moves) > 1:
+                continue  # disabled (Disable, Cursed Body)
             for target in _targets(move, dex, foes, ally):
                 acts.append(Action(i, "move", move=move, target=target))
                 if mega_ok:

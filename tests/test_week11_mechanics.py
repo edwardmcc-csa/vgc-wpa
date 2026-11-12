@@ -298,3 +298,22 @@ def test_when_both_last_pokemon_fall_together_the_last_to_faint_wins(tools):
         o for o in outs if o.sides["p2"][0]["fainted"] and o.sides["p1"][0]["fainted"]
     ]
     assert both and all(o.winner == "p1" for o in both)
+
+
+@needs_showdown
+def test_a_side_that_has_shown_fewer_than_four_still_has_pokemon(tools):
+    # Found in Week 11's second run: every player brings four, so a Pokemon not
+    # yet seen cannot have fainted. With two seen and both gone, the game goes
+    # on. Before, a KO there ended the game in the resolver (24 Reg M-A and 17
+    # Reg M-B decision points moved, some by over 50 points).
+    dex, moves, calc = tools
+    b, acts = _last_pair(0.05)
+    unseen = dict(
+        b["p2"][1], species="amoonguss", fainted=False, active=False, hp_fraction=0.0
+    )
+    b["p2"] += [dict(unseen), dict(unseen)]  # on the sheet, never seen
+    sheets = dict(SHEETS, p2=(*SHEETS["p2"], SHEETS["p2"][1], SHEETS["p2"][1]))
+    spreads = {**SPREADS, ("p2", 2): SPREADS[("p2", 1)], ("p2", 3): SPREADS[("p2", 1)]}
+    outs = R.Resolver(dex, moves, calc, sheets, spreads).resolve(b, R.Field(), acts)
+    assert any(o.sides["p2"][0]["fainted"] for o in outs)
+    assert all(o.winner is None for o in outs)

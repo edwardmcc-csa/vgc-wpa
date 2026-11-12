@@ -97,7 +97,28 @@ CRIT_IMMUNE = {"battlearmor", "shellarmor"}
 PARALYSED = 1 / 8  # the chance a paralysed Pokemon cannot move
 SLEEP_WAKE = {1: 0.0, 2: 1 / 3}  # waking on the n-th try (third and later: sure)
 CONFUSED_HIT = 0.33  # Showdown's randomChance(33, 100)
-LEAVING = ("confused", "charging", "encore", "hits")
+LEAVING = (
+    "confused",
+    "charging",
+    "encore",
+    "hits",
+    "tox_n",
+    "seeded",
+    "taunt",
+    "drowsy",
+    "disabled",
+)
+# what each status-move effect after Week 11 checks on its target
+TAUNT_BLOCK = {"oblivious", "aromaveil"}
+SLEEPLESS = {"insomnia", "vitalspirit", "sweetveil", "comatose", "purifyingsalt"}
+# abilities that act by chance when hit with contact (not modelled: marked)
+CONTACT_CHANCE = {"flamebody", "static", "poisonpoint", "effectspore", "cutecharm"}
+# healing by the weather (Moonlight and the like; Shore Up in sand)
+WEATHER_HEAL = {"moonlight", "morningsun", "synthesis"}
+# status moves with a target, done in `_use`'s loop (after Week 11)
+ON_TARGET = {"healpulse", "floralhealing", "psychup", "strengthsap"}
+# targets a single foe: an overridden move (Encore) picks one at random
+ONE_FOE = {"normal", "any", "adjacentFoe", "randomNormal"}
 OUT_OF_REACH = {"fly", "bounce", "dig", "dive", "phantomforce", "shadowforce"}
 REACHES = {  # moves that still hit it there (not modelled: marked)
     "fly": {"gust", "twister", "thunder", "hurricane", "skyuppercut", "smackdown"},
@@ -219,6 +240,9 @@ class _World:
     dealt: int = 0
     subbed: set = field(default_factory=set)  # targets whose substitute took it
     winner: str | None = None  # the game ended this turn (Perish Song's order)
+    # this action only: a Pokemon Encore just changed the move of, before it
+    # moved (its place in the order is then found again: `_requeued`)
+    requeue: tuple[str, int] | None = None
 
     def clone(self, p: float | None = None) -> _World:
         f = self.fld
@@ -248,6 +272,7 @@ class _World:
             self.dealt,
             set(self.subbed),
             self.winner,
+            self.requeue,
         )
 
     def key(self, resolution: float | None, coarsen: int = 0) -> tuple:
@@ -280,6 +305,11 @@ class _World:
                 m.get("encore", ""),
                 m.get("slp_n", 0),
                 m.get("frz_n", 0),
+                m.get("tox_n", 0),
+                m.get("seeded", -2),
+                m.get("taunt", 0),
+                m.get("drowsy", -1),
+                m.get("disabled", ""),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -507,18 +537,35 @@ class Resolver:
         self.held = 0
         for w in worlds:
             for order, p in self._orders(w, actions):
-                branch = [w.clone(w.p * p)]
-                for role, act in order:
-                    # merged, and capped, as they arrive: a step never holds
-                    # every board it makes at once
-                    pool = _Pool(self.resolution, self.prune, self.cap)
-                    for b in branch:
-                        pool.add(self._act(b, role, act))
-                    branch = pool.worlds()
-                    self.coarsest = max(self.coarsest, pool.coarsest)
-                    self.held = max(self.held, pool.peak)
-                for b in branch:
-                    end.add(self._end_of_turn(b))
+                # the boards so far, by the moves still to come (Encore can
+                # change those on some boards: `_requeued`)
+                groups = {tuple(order): [w.clone(w.p * p)]}
+                while groups:
+                    pools: dict[tuple, _Pool] = {}
+                    for rest, branch in groups.items():
+                        if not rest:
+                            for b in branch:
+                                end.add(self._end_of_turn(b))
+                            continue
+                        (role, act), tail = rest[0], rest[1:]
+                        for b in branch:
+                            for x in self._act(b, role, act):
+                                t = tail
+                                if x.requeue is not None:
+                                    t = self._requeued(x, tail)
+                                    x.requeue = None
+                                # merged, and capped, as they arrive: a step
+                                # never holds every board it makes at once
+                                if t not in pools:
+                                    pools[t] = _Pool(
+                                        self.resolution, self.prune, self.cap
+                                    )
+                                pools[t].add([x])
+                    groups = {}
+                    for t, pool in pools.items():
+                        groups[t] = pool.worlds()
+                        self.coarsest = max(self.coarsest, pool.coarsest)
+                        self.held = max(self.held, pool.peak)
         out = end.worlds()
         total = sum(w.p for w in out)
         self.dropped = max(0.0, 1.0 - total)
@@ -833,6 +880,16 @@ class Resolver:
         st = w.sides[role][a.user]
         if st["fainted"] or not st["active"]:
             return [w]
+        enc = st.get("encore")
+        if enc and a.kind == "move" and a.move != enc:
+            # Encore landed before it moved: the encored move instead, at a
+            # random foe (Champions' Encore changes the queued action with no
+            # target: Showdown draws one), in its new place (`_requeued`)
+            return [
+                x
+                for b, a2 in self._encored(w, role, a, enc)
+                for x in self._act(b, role, a2)
+            ]
         # can it move at all? In Showdown's order: sleep and freeze, flinch,
         # confusion, paralysis; with the Champions rules (`data/mods/champions`)
         if st["status"] in ("slp", "frz"):
@@ -841,6 +898,58 @@ class Resolver:
             w.acted.add((role, a.user))
             return [w]
         return self._confused_then(w, role, a)
+
+    def _requeued(self, w: _World, tail: tuple) -> tuple:
+        """Encore in Champions (`data/mods/champions/moves.ts`) changes the
+        target's queued action to the encored move, with that move's priority,
+        and the queue is sorted again: its place among the moves still to come
+        is by the new move's priority, then Speed (Trick Room reversed). Its
+        target is drawn when it moves (`_encored`)."""
+        assert w.requeue is not None
+        role, idx = w.requeue
+        i = next(
+            (k for k, (r, a) in enumerate(tail) if r == role and a.user == idx), None
+        )
+        enc = w.sides[role][idx].get("encore")
+        if i is None or not enc:
+            return tail
+        mine = tail[i]
+        rest = tail[:i] + tail[i + 1 :]
+        pri = self._priority(w, role, Action(idx, "move", move=enc))
+        spe = self._speed(w, role, idx)
+        slow_first = bool(w.fld.trickroom)
+
+        def goes_first(other) -> bool:
+            r2, a2 = other
+            p2 = self._priority(w, r2, a2)
+            if pri != p2:
+                return pri > p2
+            s2 = self._speed(w, r2, a2.user)
+            return spe < s2 if slow_first else spe > s2
+
+        k = next((n for n, o in enumerate(rest) if goes_first(o)), len(rest))
+        return rest[:k] + (mine,) + rest[k:]
+
+    def _encored(
+        self, w: _World, role: str, a: Action, enc: str
+    ) -> list[tuple[_World, Action]]:
+        kind = self.move(enc).get("target", "normal")
+        new = Action(a.user, "move", move=enc)
+        if kind not in ONE_FOE:
+            return [(w, new)]
+        foes = [
+            j
+            for j, x in enumerate(w.sides[_other(role)])
+            if x["active"] and not x["fainted"]
+        ]
+        if not foes:
+            return [(w, new)]
+        out = []
+        for n, j in enumerate(foes):
+            b = w if n == len(foes) - 1 else w.clone(w.p / len(foes))
+            out.append((b, Action(a.user, "move", move=enc, target=("foe", j))))
+        w.p /= len(foes)
+        return out
 
     def _asleep_or_frozen(self, w: _World, role: str, a: Action) -> list[_World]:
         """Champions: sleep ends on the second try with chance 1/3, on the third
@@ -980,6 +1089,10 @@ class Resolver:
         if not m:
             w.partial.add(f"move:{mv}")
             return [w]
+        if st.get("taunt") and m.get("category") == "Status":
+            return [w]  # taunted: it cannot use a status move
+        if st.get("disabled") == mv:
+            return [w]  # disabled
         if protect_used:
             return self._protect(w, role, a)
         if "charge" in (m.get("flags") or []):
@@ -1239,6 +1352,31 @@ class Resolver:
         if m.get("pseudoWeather") == "trickroom":
             w.fld.trickroom = 0 if w.fld.trickroom else 5
             return [w]
+        if mv == "haze":
+            for r in ROLES:
+                for x in w.sides[r]:
+                    if x["active"]:
+                        x["boosts"] = {}
+            return [w]
+        if mv == "bellydrum":
+            max_hp = self.max_hp(role, a.user)
+            hp = round(st["hp_fraction"] * max_hp)
+            if hp > max_hp // 2 and st["boosts"].get("atk", 0) < 6:
+                st["hp_fraction"] = (hp - max_hp // 2) / max_hp
+                self._boost(st, {"atk": 12})
+            return [w]
+        if mv in WEATHER_HEAL or mv == "shoreup":
+            weather = w.fld.weather
+            if mv == "shoreup":
+                gain = 2 / 3 if weather == "sandstorm" else 1 / 2
+            elif weather == "sunnyday":
+                gain = 2 / 3
+            elif weather in ("raindance", "sandstorm", "hail", "snowscape"):
+                gain = 1 / 4
+            else:
+                gain = 1 / 2
+            self._heal(w, role, a.user, gain)
+            return [w]
         targets = self._targets(w, role, a, m)
         if m.get("heal") and m.get("target") in ("self", "allies", "allySide"):
             n, d = m["heal"]
@@ -1257,7 +1395,8 @@ class Resolver:
             or m.get("boosts")
             or m.get("selfSwitch")
             or m.get("forceSwitch")
-            or vol in ("confusion", "encore")
+            or vol in ("confusion", "encore", "leechseed", "taunt", "yawn", "disable")
+            or mv in ON_TARGET
         )
         if not handled:
             w.partial.add(f"move:{mv}")
@@ -1297,6 +1436,16 @@ class Resolver:
                     self._confuse(hit, tgt)
                 elif vol == "encore":
                     self._encore(hit, tgt)
+                elif vol == "leechseed":
+                    self._seed(hit, tgt, a.user)
+                elif vol == "taunt":
+                    self._taunt(hit, tgt)
+                elif vol == "yawn":
+                    self._yawn(hit, tgt)
+                elif vol == "disable":
+                    self._disable(hit, tgt)
+                if mv in ON_TARGET:
+                    self._on_target(hit, role, a, tgt)
                 if drops and not self._drop(hit, tgt, drops):
                     if tgt[0] != role:
                         failed.add(id(hit))  # Parting Shot: no drop, no switch
@@ -1336,14 +1485,92 @@ class Resolver:
 
     def _encore(self, w: _World, tgt: tuple[str, int]) -> None:
         """Encore locks the target into the move it used last. If it has not
-        moved yet this turn, Champions changes its move to that one: not
-        modelled, so marked."""
+        moved yet this turn, it uses that move instead (`_act`), in the place
+        that move's priority gives it (`_requeued`). A Mental Herb ends it at
+        once, and is used up."""
         x = w.sides[tgt[0]][tgt[1]]
         if x["fainted"] or x.get("encore") or not x.get("last_move"):
             return
+        if "failencore" in (self.move(x["last_move"]).get("flags") or []):
+            return
+        if self._mental_herb(x):
+            return
         x["encore"] = x["last_move"]
         if tgt not in w.acted:
-            w.partial.add("encore changes this turn's move")
+            w.requeue = tgt
+
+    @staticmethod
+    def _mental_herb(x: dict) -> bool:
+        """A Mental Herb ends Taunt, Encore and Disable as they start."""
+        if x.get("item") != "mentalherb":
+            return False
+        x["item"], x["rev_item"] = "", "mentalherb"
+        return True
+
+    def _taunt(self, w: _World, tgt: tuple[str, int]) -> None:
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"] or x.get("taunt"):
+            return
+        if self.ability(tgt[0], tgt[1], x) in TAUNT_BLOCK or self._mental_herb(x):
+            return
+        x["taunt"] = 1
+
+    def _on_target(self, w: _World, role: str, a: Action, tgt) -> None:
+        """Heal Pulse and Floral Healing (half, Mega Launcher three quarters,
+        Floral Healing two thirds on Grassy Terrain), Psych Up (the target's
+        stat changes copied) and Strength Sap (heals by the target's Attack, as
+        changed so far, then lowers it; nothing if it is at -6)."""
+        x = w.sides[tgt[0]][tgt[1]]
+        st = w.sides[role][a.user]
+        if x["fainted"]:
+            return
+        if a.move == "healpulse":
+            mega = self.ability(role, a.user, st) == "megalauncher"
+            self._heal(w, tgt[0], tgt[1], 3 / 4 if mega else 1 / 2)
+        elif a.move == "floralhealing":
+            grassy = w.fld.terrain == "grassyterrain"
+            self._heal(w, tgt[0], tgt[1], 2 / 3 if grassy else 1 / 2)
+        elif a.move == "psychup":
+            st["boosts"] = dict(x["boosts"])
+        elif a.move == "strengthsap":
+            stage = x["boosts"].get("atk", 0)
+            if stage <= -6:
+                return
+            atk = self._stats(tgt[0], tgt[1], ("atk",))[0]
+            atk *= (2 + stage) / 2 if stage >= 0 else 2 / (2 - stage)
+            self._drop(w, tgt, {"atk": -1})
+            self._heal(w, role, a.user, int(atk) / self.max_hp(role, a.user))
+
+    def _disable(self, w: _World, tgt: tuple[str, int]) -> None:
+        """Disable: the target's last move, until it leaves the field (the log
+        shows when it ends)."""
+        x = w.sides[tgt[0]][tgt[1]]
+        last = x.get("last_move")
+        if x["fainted"] or x.get("disabled") or not last or last == "struggle":
+            return
+        if self._mental_herb(x):
+            return
+        x["disabled"] = last
+
+    def _seed(self, w: _World, tgt: tuple[str, int], user: int) -> None:
+        """Leech Seed: not on a Grass type, nor twice; `seeded` is the sheet
+        position of the Pokemon that seeded it, on the other side."""
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"] or "seeded" in x:
+            return
+        if "Grass" in self.types(tgt[0], tgt[1], x):
+            return
+        x["seeded"] = user
+
+    def _yawn(self, w: _World, tgt: tuple[str, int]) -> None:
+        """Yawn: asleep at the end of the next turn (`_end_of_turn`), if it can
+        fall asleep then. It fails on a Pokemon with a status."""
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"] or x["status"] or "drowsy" in x:
+            return
+        if self.ability(tgt[0], tgt[1], x) in SLEEPLESS:
+            return
+        x["drowsy"] = 0
 
     def _accuracy(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> float:
         acc = m.get("accuracy", True)
@@ -1395,6 +1622,8 @@ class Resolver:
         if "safeguard" in w.fld.sides[tgt[0]]:
             return
         t["status"] = status
+        for k in ("slp_n", "frz_n", "tox_n", "drowsy"):
+            t.pop(k, None)  # a new status: its counts start, and Yawn ends
 
     def _drop(self, w: _World, tgt, boosts: Mapping[str, int]) -> bool:
         """Stat changes from another Pokemon's move; False if none took."""
@@ -1760,6 +1989,53 @@ class Resolver:
                 )
                 if frac:
                     self._lose(w, (role, a.user), frac)
+        # what an ability does on a damaging hit (after Week 11): Spicy Spray
+        # burns the attacker every time; the ones that act by chance are not
+        # modelled, and say so
+        if dealt > 0 and tgt != (role, a.user):
+            st = w.sides[role][a.user]
+            ab = self.ability(tgt[0], tgt[1], t)
+            contact = (
+                "contact" in (m.get("flags") or [])
+                and st.get("item") != "protectivepads"
+                and self.ability(role, a.user, st) != "longreach"
+            )
+            if ab == "spicyspray":
+                self._inflict(w, (role, a.user), "brn", a.move)
+            elif ab == "cursedbody" or (contact and ab in CONTACT_CHANCE):
+                w.partial.add(f"ability:{ab}")
+            if contact and self.ability(role, a.user, st) == "poisontouch":
+                w.partial.add("ability:poisontouch")
+
+    def _leech(self, w: _World, r: str, j: int) -> None:
+        """Leech Seed at the end of the turn: an eighth of the seeded Pokemon's
+        hit points, to the Pokemon that seeded it if it is still in. (Showdown
+        heals whoever is in the seeder's place; when it has left, that is not
+        modelled, so marked.)"""
+        st = w.sides[r][j]
+        o, k = _other(r), st["seeded"]
+        before = st["hp_fraction"]
+        self._lose(w, (r, j), 1 / 8)
+        lost = (before - st["hp_fraction"]) * self.max_hp(r, j)
+        seeder = w.sides[o][k] if 0 <= k < len(w.sides[o]) else None
+        if seeder is not None and seeder["active"] and not seeder["fainted"]:
+            self._heal(w, o, k, lost / self.max_hp(o, k))
+        elif any(x["active"] and not x["fainted"] for x in w.sides[o]):
+            w.partial.add("leech seed heals the Pokemon in its place")
+
+    def _drowsy(self, w: _World) -> None:
+        """Yawn: asleep at the end of the turn after it landed."""
+        for r in ROLES:
+            for j, st in enumerate(w.sides[r]):
+                if "drowsy" not in st:
+                    continue
+                if st["fainted"] or not st["active"]:
+                    st.pop("drowsy")
+                elif st["drowsy"] >= 1:
+                    st.pop("drowsy")
+                    self._inflict(w, (r, j), "slp", "yawn")
+                else:
+                    st["drowsy"] = 1
 
     def _lose(self, w: _World, who, frac: float) -> None:
         st = w.sides[who[0]][who[1]]
@@ -1972,18 +2248,25 @@ class Resolver:
                         self._lose(w, (r, j), 1 / 8)
                 if st["fainted"]:
                     continue
+                if "seeded" in st and ab != "magicguard":
+                    self._leech(w, r, j)
+                if st["fainted"]:
+                    continue
                 if ab != "magicguard":
                     if st["status"] == "brn":
                         self._lose(w, (r, j), 1 / 16)
                     elif st["status"] == "psn" and ab != "poisonheal":
                         self._lose(w, (r, j), 1 / 8)
                     elif st["status"] == "tox" and ab != "poisonheal":
-                        w.partial.add("toxic counter")
-                        self._lose(w, (r, j), 1 / 8)
+                        # n/16 at the n-th end of turn, most 15/16 (`tox`)
+                        n = min(15, st.get("tox_n", 0) + 1)
+                        st["tox_n"] = n
+                        self._lose(w, (r, j), n / 16)
                 if not st["fainted"] and ab == "speedboost":
                     self._boost(st, {"spe": 1})
                 if not st["fainted"] and ab == "moody":
                     w.partial.add("moody")
+        self._drowsy(w)
         self._perish(w)
         # every timer counts down one
         if fld.weather:
@@ -2006,10 +2289,22 @@ class Resolver:
 
 def _left(w: _World, role: str) -> bool:
     """Whether `role` still has a Pokemon: on the field, seen on the bench, or
-    brought and not yet seen."""
+    brought and not yet seen. Every player brings four (or the whole sheet, if
+    shorter), so while fewer have been seen, one not yet seen is still to come:
+    it cannot have fainted."""
+    from wpa.decisions import BRING
+
+    side = w.sides[role]
+    known = sum(
+        1
+        for x in side
+        if x["fainted"] or x["active"] or x["hp_fraction"] > 0 or x.get("_brought")
+    )
+    if known < min(BRING, len(side)):
+        return True
     return any(
         not x["fainted"] and (x["active"] or x["hp_fraction"] > 0 or x.get("_brought"))
-        for x in w.sides[role]
+        for x in side
     )
 
 

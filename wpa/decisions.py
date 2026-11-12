@@ -105,12 +105,35 @@ _VOLATILE_LINES = frozenset(
         "-activate",
         "-prepare",
         "-enditem",
+        "-damage",
     }
 )
-# what leaving the field ends (Rage Fist's hits too, in Champions)
-LEAVING = ("confused", "charging", "encore", "hits")
+# what leaving the field ends (Rage Fist's hits too, in Champions; the Toxic
+# count starts again; Leech Seed, Taunt, Yawn and Disable end)
+LEAVING = (
+    "confused",
+    "charging",
+    "encore",
+    "hits",
+    "tox_n",
+    "seeded",
+    "taunt",
+    "drowsy",
+    "disabled",
+)
 # what `side` passes on when present
-TRACKED = ("slp_n", "frz_n", "confused", "charging", "encore")
+TRACKED = (
+    "slp_n",
+    "frz_n",
+    "confused",
+    "charging",
+    "encore",
+    "tox_n",
+    "seeded",
+    "taunt",
+    "drowsy",
+    "disabled",
+)
 
 _EFFECT_LINES = {
     "-boost",
@@ -149,6 +172,7 @@ class _Board:
         self._protecting: dict | None = None  # the Pokemon whose Protect is pending
         self._fakeout: tuple | None = None  # a Fake Out just used, for the check
         self._last: list[str] | None = None  # the line before (a substitute paid for)
+        self._mover: int | None = None  # sheet position of the last Pokemon to move
 
     def sheet(self, line: str) -> None:
         role, mons = parse_showteam_message(line)
@@ -340,15 +364,25 @@ class _Board:
     def _volatiles(self, p: list[str]) -> None:
         """Week 11 Task 3: the tries spent asleep or frozen (the Champions rules
         end both by the third), confusion and its tries, a charging move, and
-        Encore with the move it locks."""
+        Encore with the move it locks. After Week 11: the turns badly poisoned
+        (the Toxic count), Leech Seed and who seeded it (their sheet position),
+        Taunt, Yawn (it falls asleep at the end of the next turn), and the move
+        Disable stops."""
         m = self._mon(p[2])
         if m is None:
             return
         t = p[1]
         what = to_id(p[3].removeprefix("move: ")) if len(p) > 3 else ""
+        if t == "-damage":
+            # badly poisoned: each end of turn's damage counts one more
+            if len(p) > 4 and "[from] psn" in p[4:] and p[3].endswith("tox"):
+                m["tox_n"] = m.get("tox_n", 0) + 1
+            return
         if t in ("-status", "-curestatus"):
             m.pop("slp_n", None)  # a new status, or none, starts the count again
             m.pop("frz_n", None)
+            m.pop("tox_n", None)
+            m.pop("drowsy", None)
         elif t == "cant" and what in ("slp", "frz"):
             m[what + "_n"] = m.get(what + "_n", 0) + 1
         elif t == "-start" and what == "confusion":
@@ -365,6 +399,18 @@ class _Board:
             m["encore"] = m.get("last_move") or ""
         elif t == "-end" and what == "encore":
             m.pop("encore", None)
+        elif t == "-start" and what == "leechseed":
+            m["seeded"] = self._mover if self._mover is not None else -1
+        elif t == "-start" and what in ("taunt", "yawn"):
+            m["taunt" if what == "taunt" else "drowsy"] = 1
+        elif t == "-start" and what == "disable" and len(p) > 4:
+            m["disabled"] = to_id(p[4].removeprefix("move: "))
+        elif t == "-end" and what == "disable":
+            m.pop("disabled", None)
+        elif t == "-end" and what in ("leechseed", "taunt", "yawn"):
+            m.pop(
+                {"leechseed": "seeded", "taunt": "taunt", "yawn": "drowsy"}[what], None
+            )
 
     def _acted(self, p: list[str]) -> None:
         """A move line: the Pokemon has moved; Protect in a row is counted."""
@@ -372,6 +418,7 @@ class _Board:
         if m is None or len(p) < 4:
             return
         move = to_id(p[3])
+        self._mover = self._index(p[2][:2], p[2])
         if m.get("charging") == move and "[still]" not in p[4:]:
             m.pop("charging", None)  # the charged move goes off
         called = any(x.startswith("[from]") and "lockedmove" not in x for x in p[4:])
@@ -523,7 +570,7 @@ class _Board:
                 m.update(moved=False, last_move="", protect_streak=0)
                 m.pop("perish", None)
                 m.pop("sub_up", None)
-                for k in (*LEAVING, "slp_n", "frz_n"):
+                for k in (*LEAVING, *TRACKED):
                     m.pop(k, None)
                 for s, v in self.slots[role].items():
                     if v == idx:
