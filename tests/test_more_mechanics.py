@@ -502,3 +502,60 @@ def test_strength_sap_heals_by_the_targets_attack_and_lowers_it(tools):
         want = min(1.0, 0.2 + atk / rv.max_hp("p1", 1))
         assert o.sides["p1"][1]["hp_fraction"] == pytest.approx(want, abs=0.01)
         assert "move:strengthsap" not in o.partial
+
+
+# --- found by the resolver check (Week 12 Task 1) ----------------------------
+
+
+def test_the_board_keeps_whose_place_drains_leech_seed():
+    """Showdown drains Leech Seed into the Pokemon in the seeder's place
+    (`getAtSlot`): nothing while the place is empty, and the one that came in
+    after the seeder left. So `seeded` is the Pokemon in that place at each
+    turn's start, or -1 while it is empty. Found by the resolver check: in game
+    2635937395 the seeder fainted, and Sylveon lost nothing more."""
+    fainted = _turns(
+        "|t:|1\n|move|p2a: Inci|Leech Seed|p1a: Whim\n|-start|p1a: Whim|move: Leech Seed",
+        "|t:|2\n|move|p1b: Rock|Rock Slide|p2a: Inci\n|-damage|p2a: Inci|0 fnt\n|faint|p2a: Inci",
+        "|t:|3\n|switch|p2a: Rime|Rime, L50|100/100",
+    )
+    assert _mon(at_turn_start(fainted, 2), 0)["seeded"] == 0  # Inci, in place a
+    assert _mon(at_turn_start(fainted, 3), 0)["seeded"] == -1  # place a is empty
+    assert _mon(at_turn_start(fainted, 4), 0)["seeded"] == 2  # Rime came in there
+    left = _turns(
+        "|t:|1\n|move|p2b: Fini|Leech Seed|p1a: Whim\n|-start|p1a: Whim|move: Leech Seed",
+        "|t:|2\n|switch|p2b: Last|Last, L50|100/100",
+    )
+    assert _mon(at_turn_start(left, 2), 0)["seeded"] == 1  # Fini, in place b
+    assert _mon(at_turn_start(left, 3), 0)["seeded"] == 3  # Last took its place
+
+
+@needs_showdown
+def test_leech_seed_drains_nothing_while_the_seeders_place_is_empty(tools):
+    b = board()
+    b["p1"][0]["seeded"] = -1
+    _rv, outs = _run(tools, b, QUIET1, QUIET2)
+    for o in outs:
+        assert o.sides["p1"][0]["hp_fraction"] == 1.0
+        assert "seeded" in o.sides["p1"][0]  # still seeded, for when one comes in
+        assert not o.partial
+
+
+@needs_showdown
+def test_leech_seed_drains_nothing_once_the_seeder_has_fainted(tools):
+    p1 = (
+        Action(0, "move", move="dragonclaw", target=("foe", 0)),
+        Action(1, "move", move="protect"),
+    )
+    plain = board()
+    plain["p2"][0]["hp_fraction"] = 0.01
+    seeded = board()
+    seeded["p2"][0]["hp_fraction"] = 0.01
+    seeded["p1"][0]["seeded"] = 0  # Incineroar seeded Garchomp
+    _rv, before = _run(tools, plain, p1, QUIET2)
+    _rv, outs = _run(tools, seeded, p1, QUIET2)
+    assert all(o.sides["p2"][0]["fainted"] for o in outs)
+    hp = sorted(o.sides["p1"][0]["hp_fraction"] for o in before)
+    assert sorted(o.sides["p1"][0]["hp_fraction"] for o in outs) == hp
+    assert all(
+        "leech seed heals the Pokemon in its place" not in o.partial for o in outs
+    )

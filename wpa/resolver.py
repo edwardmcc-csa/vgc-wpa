@@ -1554,7 +1554,8 @@ class Resolver:
 
     def _seed(self, w: _World, tgt: tuple[str, int], user: int) -> None:
         """Leech Seed: not on a Grass type, nor twice; `seeded` is the sheet
-        position of the Pokemon that seeded it, on the other side."""
+        position of the Pokemon in the seeder's place, on the other side (-1
+        while it is empty)."""
         x = w.sides[tgt[0]][tgt[1]]
         if x["fainted"] or "seeded" in x:
             return
@@ -2009,18 +2010,21 @@ class Resolver:
 
     def _leech(self, w: _World, r: str, j: int) -> None:
         """Leech Seed at the end of the turn: an eighth of the seeded Pokemon's
-        hit points, to the Pokemon that seeded it if it is still in. (Showdown
-        heals whoever is in the seeder's place; when it has left, that is not
-        modelled, so marked.)"""
+        hit points, to the Pokemon in the seeder's place (Showdown's
+        `getAtSlot`). Nothing while that place is empty: it fainted, this turn
+        or before (-1). When it switched out this turn, the Pokemon that came
+        in is healed; which one is not followed here, so marked."""
         st = w.sides[r][j]
         o, k = _other(r), st["seeded"]
+        seeder = w.sides[o][k] if 0 <= k < len(w.sides[o]) else None
+        if seeder is None or seeder["fainted"]:
+            return
         before = st["hp_fraction"]
         self._lose(w, (r, j), 1 / 8)
         lost = (before - st["hp_fraction"]) * self.max_hp(r, j)
-        seeder = w.sides[o][k] if 0 <= k < len(w.sides[o]) else None
-        if seeder is not None and seeder["active"] and not seeder["fainted"]:
+        if seeder["active"]:
             self._heal(w, o, k, lost / self.max_hp(o, k))
-        elif any(x["active"] and not x["fainted"] for x in w.sides[o]):
+        else:
             w.partial.add("leech seed heals the Pokemon in its place")
 
     def _drowsy(self, w: _World) -> None:

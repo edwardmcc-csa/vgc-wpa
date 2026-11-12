@@ -173,6 +173,7 @@ class _Board:
         self._fakeout: tuple | None = None  # a Fake Out just used, for the check
         self._last: list[str] | None = None  # the line before (a substitute paid for)
         self._mover: int | None = None  # sheet position of the last Pokemon to move
+        self._mover_at: tuple[str, str] | None = None  # its side and place (a, b)
 
     def sheet(self, line: str) -> None:
         role, mons = parse_showteam_message(line)
@@ -365,7 +366,8 @@ class _Board:
         """Week 11 Task 3: the tries spent asleep or frozen (the Champions rules
         end both by the third), confusion and its tries, a charging move, and
         Encore with the move it locks. After Week 11: the turns badly poisoned
-        (the Toxic count), Leech Seed and who seeded it (their sheet position),
+        (the Toxic count), Leech Seed and the seeder's place (`side` gives the
+        Pokemon there),
         Taunt, Yawn (it falls asleep at the end of the next turn), and the move
         Disable stops."""
         m = self._mon(p[2])
@@ -400,7 +402,9 @@ class _Board:
         elif t == "-end" and what == "encore":
             m.pop("encore", None)
         elif t == "-start" and what == "leechseed":
-            m["seeded"] = self._mover if self._mover is not None else -1
+            # the seeder's place: Showdown drains into whoever is there
+            at = self._mover_at
+            m["seeded"] = at[1] if at and at[0] != p[2][:2] else ""
         elif t == "-start" and what in ("taunt", "yawn"):
             m["taunt" if what == "taunt" else "drowsy"] = 1
         elif t == "-start" and what == "disable" and len(p) > 4:
@@ -419,6 +423,7 @@ class _Board:
             return
         move = to_id(p[3])
         self._mover = self._index(p[2][:2], p[2])
+        self._mover_at = (p[2][:2], p[2][2:3])
         if m.get("charging") == move and "[still]" not in p[4:]:
             m.pop("charging", None)  # the charged move goes off
         called = any(x.startswith("[from]") and "lockedmove" not in x for x in p[4:])
@@ -614,10 +619,21 @@ class _Board:
                 **({"perish": m["perish"]} if m.get("perish") else {}),
                 **({"hits": m["hits"]} if m.get("hits") else {}),
                 **({"sub_up": m["sub_up"]} if m.get("sub_up") else {}),
-                **{k: m[k] for k in TRACKED if k in m},
+                **{k: m[k] for k in TRACKED if k in m and k != "seeded"},
+                **({"seeded": self._seeded(role, m)} if "seeded" in m else {}),
             }
             for sp, m in zip(self.species.get(role, []), self.mons.get(role, []))
         ]
+
+    def _seeded(self, role: str, m: dict) -> int:
+        """Leech Seed: the sheet position of the Pokemon now in the seeder's
+        place on the other side, or -1 while the place is empty (Showdown
+        drains into whoever is there, `getAtSlot`; nothing when no one is)."""
+        other = "p2" if role == "p1" else "p1"
+        idx = self.slots.get(other, {}).get(m["seeded"]) if m["seeded"] else None
+        if idx is None or self.mons[other][idx]["fainted"]:
+            return -1
+        return idx
 
     def needs_replacement(self, role: str) -> bool:
         mons = self.mons.get(role, [])
