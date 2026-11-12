@@ -840,8 +840,10 @@ class Resolver:
             for a in actions.get(r, ()):
                 if a.kind == "move" and a.mega and not w.sides[r][a.user]["mega"]:
                     w.sides[r][a.user]["mega"] = True
-                    w.sides[r][a.user].pop("types", None)  # its new form's
-                    w.sides[r][a.user].pop("typeadd", None)
+                    # its new form's types, and its ability afresh (Protean
+                    # can act again)
+                    for k in ("types", "typeadd", "protean"):
+                        w.sides[r][a.user].pop(k, None)
                     self._on_entry(w, r, a.user)
         return [w]
 

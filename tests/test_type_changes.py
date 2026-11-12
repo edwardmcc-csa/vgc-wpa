@@ -252,3 +252,37 @@ def test_roost_loses_the_flying_type_until_the_end_of_the_turn(tools):
         assert c["hp_fraction"] < 1.0  # healed to full, then hit
         assert "roost" not in c  # Flying again after the turn
     assert rv.types("p2", 1, outs[0].sides["p2"][1]) == ["Flying", "Steel"]
+
+
+def test_mega_evolution_lets_protean_act_again_on_the_board():
+    """Mega Evolution gives the Pokemon its ability afresh (Showdown's forme
+    change), so Protean can act again: in game 2620833313 Greninja became Normal
+    (Protect), Mega Evolved, then became Dark (Dark Pulse)."""
+    log = _turns(
+        "|t:|1\n|move|p1a: Whim|Protect|p1a: Whim\n"
+        "|-start|p1a: Whim|typechange|Normal|[from] ability: Protean",
+        "|t:|2\n|-mega|p1a: Whim|Whim|Whimite",
+    )
+    assert _mon(at_turn_start(log, 2), 0)["protean"] == 1
+    assert "protean" not in _mon(at_turn_start(log, 3), 0)
+
+
+@needs_showdown
+def test_protean_acts_again_after_mega_evolution(tools):
+    dex, moves, calc = tools
+    gren = SheetMon(
+        1, "greninja", "greninjite", "protean", ("darkpulse", "protect", "lowkick"), ""
+    )
+    rv = R.Resolver(
+        dex, moves, calc, {"p1": (gren, SHEETS["p1"][1]), "p2": SHEETS["p2"]}, SPREADS
+    )
+    b = board()
+    b["p1"][0] = mon("greninja")
+    b["p1"][0].update(item="greninjite", types=["Normal"], protean=1)
+    p1 = (
+        Action(0, "move", move="darkpulse", target=("foe", 1), mega=True),
+        Action(1, "move", move="protect"),
+    )
+    for o in rv.resolve(b, R.Field(), {"p1": p1, "p2": QUIET2}):
+        g = o.sides["p1"][0]
+        assert g["mega"] and g["types"] == ["Dark"] and g["protean"] == 1

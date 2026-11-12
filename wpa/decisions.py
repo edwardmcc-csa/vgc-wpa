@@ -606,9 +606,10 @@ class _Board:
             idx = self._index(role, ident)
             if idx is not None:
                 self.mons[role][idx]["mega"] = True
-                # its new form's types replace any change (Showdown's setSpecies)
-                self.mons[role][idx].pop("types", None)
-                self.mons[role][idx].pop("typeadd", None)
+                # its new form's types replace any change, and its ability is
+                # given afresh, so Protean can act again (Showdown's forme change)
+                for k in ("types", "typeadd", "protean"):
+                    self.mons[role][idx].pop(k, None)
         elif t == "swap":
             a, b = self.slots[role]["a"], self.slots[role]["b"]
             self.slots[role]["a"], self.slots[role]["b"] = b, a
