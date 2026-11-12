@@ -1204,6 +1204,68 @@ charging moves and Encore. It needs everything from Section 19, including
 
 ---
 
+## 21. Your own games: the replay report
+
+Paste a Showdown replay link and get **your biggest win-probability swings in
+that game**, each split as DEFINITIONS §3 says (your choice, the position,
+their decision, the dice), with what happened and, where your choice was not
+the best of your likely choices, the best one named. It uses the same models
+and settings as Section 20's run, so it needs everything from Sections 19
+and 20.
+
+1. **One game** (about two minutes; a long game, a few):
+   ```
+   python -m wpa.replay https://replay.pokemonshowdown.com/gen9championsvgc2026regma-2605147085 --player "your Showdown name"
+   ```
+   It prints the report and saves it in `reports\replays\`.
+
+2. **A best-of-three:** give the games' links in order, game 1 first:
+   ```
+   python -m wpa.replay LINK1 LINK2 LINK3 --player "your Showdown name"
+   ```
+   Games 2 and 3 then use what game 1 showed (DEFINITIONS §11.3). The report
+   starts with one line per game. The games are analysed side by side (three
+   at once; add `--workers 1` for one at a time).
+
+3. **The same game again** shows at once: the analysis is saved.
+   - `--top 10` shows ten swings instead of five.
+   - `--player` with the other player's name shows their side.
+   - `--fresh` analyses the game again (after a change to the models or the
+     code).
+
+4. **A private replay, or no internet:** open the replay in your browser, save
+   the page (Ctrl+S), and give the saved file instead of the link:
+   ```
+   python -m wpa.replay "C:\Users\you\Downloads\replay.html" --player "your Showdown name"
+   ```
+
+**What the report shows**
+- Your win probability at team preview and at the start of each turn.
+- **Over the game:** how your choices, their decisions, the dice and the
+  positions add up to the game's result.
+- **Team preview:** the two you led, against the typical leads and the best
+  leads (named when yours were not the best).
+- **Your biggest swings**, biggest first. For each: the moves both sides made,
+  what fainted, the luck the log shows (critical hits, misses, full paralysis,
+  a burn from a move's added effect, and the like), your choice against the
+  typical choice and against the best, and the best choice when yours was not.
+- **Your costliest choices:** where the best of your likely choices was worth
+  the most more than yours.
+
+**Limits**
+- Champions VGC 2026 Reg M-A and Reg M-B only; for another format it says so
+  and stops.
+- The game must show open team sheets (Champions games do).
+- "The best" is the best of your 10 likeliest choices against the opponent's
+  likely replies, by the model. It is a coaching number, not a solver's answer.
+
+**The end-to-end check** (M7's test; about ten minutes, so only when asked):
+```
+$env:WPA_SLOW=1; python -m pytest tests/test_replay_e2e.py; Remove-Item Env:WPA_SLOW
+```
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**

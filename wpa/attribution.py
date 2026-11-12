@@ -132,6 +132,39 @@ def decompose(
     )
 
 
+def best_choice(
+    value: Callable[[Joint, Joint], float],
+    alternatives: Sequence[Mix],
+    likely: Mix,
+    e_yours: float,
+    tol: float = 1e-9,
+) -> Joint | None:
+    """The best of `alternatives` against `likely` (the best of DEFINITIONS §4),
+    when it is worth more than your choice (`e_yours`, E[WP | your choice]);
+    None when yours is the best, or when the best is not one joint choice."""
+    if not alternatives:
+        return None
+    es = [expected(value, alt, likely) for alt in alternatives]
+    i = int(np.argmax(es))
+    if es[i] <= e_yours + tol or len(alternatives[i]) != 1:
+        return None
+    return alternatives[i][0][0]
+
+
+def joint_json(j: Joint) -> list[dict]:
+    """A joint choice as the records keep it."""
+    return [asdict(a) for a in j]
+
+
+def joint_from_json(data: Sequence[Mapping]) -> Joint:
+    """A joint choice back from the records."""
+    out = []
+    for d in data:
+        t = d.get("target")
+        out.append(Action(**{**d, "target": tuple(t) if t is not None else None}))
+    return tuple(out)
+
+
 # --------------------------------------------------------------------------
 # Choices and their chances
 # --------------------------------------------------------------------------
@@ -1265,6 +1298,7 @@ def _analyse_preview(ps: PreviewSetup, tools: Tools) -> list[dict]:
     recs = []
     for r, other in (("p1", "p2"), ("p2", "p1")):
         b, a = (ps.before, ps.after) if r == "p1" else (1 - ps.before, 1 - ps.after)
+        alts = [[(j, 1.0)] for j, _ in mixes[r]]
         sp = decompose(
             tv.for_role(r),
             b,
@@ -1272,9 +1306,10 @@ def _analyse_preview(ps: PreviewSetup, tools: Tools) -> list[dict]:
             [(ps.taken[r], 1.0)],
             [(ps.taken[other], 1.0)],
             mixes[other],
-            [[(j, 1.0)] for j, _ in mixes[r]],
+            alts,
             typical=mixes[r],
         )
+        best = best_choice(tv.for_role(r), alts, mixes[other], b + sp.yours)
         recs.append(
             dict(
                 ps.base,
@@ -1283,6 +1318,7 @@ def _analyse_preview(ps: PreviewSetup, tools: Tools) -> list[dict]:
                 choices=len(mixes[r]),
                 after_board=board if r == "p1" else 1 - board,
                 **asdict(sp),
+                best=joint_json(best) if best else None,
             )
         )
     outs = tv.outcomes.get((t1, t2), [])
@@ -1394,6 +1430,9 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         recs.append(
             dict(ts.base, role=r, unknown=unknown, after_board=board, **asdict(sp))
         )
+        if alts:
+            best = best_choice(tv.for_role(r), alts, lk, b + sp.yours)
+            recs[-1]["best"] = joint_json(best) if best else None
     pairs = [(x, y) for x, _ in t1 for y, _ in t2]
     outs = [o for key in pairs for o in tv.outcomes.get(key, ())]
     tol = max(0.03, tools.resolution + 0.01)
@@ -1463,6 +1502,9 @@ def _analyse_replacement(rs: ReplacementSetup, tools: Tools) -> list[dict]:
                 **asdict(sp),
             )
         )
+        if alts:
+            best = best_choice(tv.for_role(r), alts, mixes[other][1], b + sp.yours)
+            recs[-1]["best"] = joint_json(best) if best else None
     outs = tv.outcomes.get((t1, t2), [])
     tol = max(0.03, tools.resolution + 0.01)
     found = any(_close(o.sides, rs.actual, tol) for o in outs)
@@ -2239,12 +2281,15 @@ __all__ = [
     "Split",
     "TurnValues",
     "analyse_game",
+    "best_choice",
     "brought_four",
     "chains",
     "decompose",
     "expand_pivots",
     "expected",
     "fit_sharpness",
+    "joint_from_json",
+    "joint_json",
     "likely",
     "mean_yours",
     "mixture",
