@@ -110,6 +110,7 @@ LEAVING = (
     "types",
     "typeadd",
     "protean",
+    "roost",
 )
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
@@ -324,6 +325,7 @@ class _World:
                 tuple(m.get("types") or ()),
                 m.get("typeadd", ""),
                 m.get("protean", 0),
+                m.get("roost", 0),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -435,6 +437,7 @@ def _mon_key(st: Mapping) -> tuple:
         st.get("last_move", ""),
         tuple(st.get("types") or ()),
         st.get("typeadd", ""),
+        st.get("roost", 0),
     )
 
 
@@ -494,13 +497,17 @@ class Resolver:
     def types(self, role: str, idx: int, st: Mapping) -> list[str]:
         """Its types now: a change the board or this turn made (Protean,
         Soak, Burn Up ...), else its form's, with a type added by
-        Trick-or-Treat or Forest's Curse."""
+        Trick-or-Treat or Forest's Curse; after Roost this turn, without
+        Flying (Normal if nothing is left, as in Showdown)."""
         if st.get("types"):
-            return list(st["types"])
-        out = list(self.entry(role, idx, st).get("types") or [])
-        add = st.get("typeadd")
-        if add and add not in out:
-            out.append(add)
+            out = list(st["types"])
+        else:
+            out = list(self.entry(role, idx, st).get("types") or [])
+            add = st.get("typeadd")
+            if add and add not in out:
+                out.append(add)
+        if st.get("roost") and "Flying" in out:
+            out = [t for t in out if t != "Flying"] or ["Normal"]
         return out
 
     def max_hp(self, role: str, idx: int) -> int:
@@ -556,6 +563,9 @@ class Resolver:
                     x["sub"] = self.max_hp(r, j) // 4
                     if up == "hit":
                         start.partial.add("substitute hit points")
+                # a type copied by Reflect Type: the log does not say it
+                if x["active"] and "types" in x and not x["types"]:
+                    start.partial.add("type copied by Reflect Type")
         worlds = self._switches(start, actions)
         worlds = [w2 for w in worlds for w2 in self._megas(w, actions)]
         end = _Pool(self.resolution, self.prune)
@@ -1397,6 +1407,8 @@ class Resolver:
     def _status(self, w: _World, role: str, a: Action, m: Mapping) -> list[_World]:
         mv = a.move
         st = w.sides[role][a.user]
+        if mv == "roost":
+            st["roost"] = 1  # no Flying type until the end of the turn
         if mv == "perishsong":
             # every Pokemon on the field not already counting; through Protect,
             # not through Soundproof. 4 now, so 3 shows after this turn
@@ -1906,6 +1918,7 @@ class Resolver:
             if (
                 s.get("types")
                 or s.get("typeadd")
+                or s.get("roost")
                 or (side == "attacker" and self.ability(who[0], who[1], s) in PROTEAN)
             ):
                 req[side]["types"] = self.types(who[0], who[1], s)
@@ -2403,6 +2416,9 @@ class Resolver:
         w.protected, w.guards, w.flinched, w.acted = set(), set(), set(), set()
         w.redirect, w.helped, w.replaced = {}, set(), {}
         w.hit, w.dealt, w.subbed = set(), 0, set()
+        for r in ROLES:
+            for x in w.sides[r]:
+                x.pop("roost", None)
         return [w]
 
 

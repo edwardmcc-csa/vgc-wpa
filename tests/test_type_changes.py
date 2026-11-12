@@ -214,3 +214,41 @@ def test_reflect_type_and_burn_up(tools):
         assert o.sides["p2"][1]["types"] == ["Dragon", "Ground"]  # Garchomp's
         assert o.sides["p2"][0]["types"] == ["???", "Dark"]  # Fire burnt up
         assert not {"move:reflecttype", "move:burnup"} & o.partial
+
+
+# --- what is not followed is marked; Roost ---------------------------------------
+
+
+@needs_showdown
+def test_a_type_copied_before_the_turn_is_marked_partly_modelled(tools):
+    """Reflect Type's line does not say the types: the board keeps [] and the
+    resolver marks the turn instead of passing it in silence."""
+    dex, moves, calc = tools
+    rv = R.Resolver(dex, moves, calc, SHEETS, SPREADS)
+    b = board()
+    b["p2"][1]["types"] = []
+    p1 = (Action(0, "move", move="swordsdance"), Action(1, "move", move="protect"))
+    for o in rv.resolve(b, R.Field(), {"p1": p1, "p2": QUIET2}):
+        assert "type copied by Reflect Type" in o.partial
+
+
+@needs_showdown
+def test_roost_loses_the_flying_type_until_the_end_of_the_turn(tools):
+    """Roost: no Flying type for the rest of the turn (Showdown's roost
+    condition), so a Ground move after it lands."""
+    dex, moves, calc = tools
+    corv = SheetMon(2, "corviknight", "", "pressure", ("roost", "bravebird"), "")
+    rv = R.Resolver(
+        dex, moves, calc, {"p1": SHEETS["p1"], "p2": (SHEETS["p2"][0], corv)}, SPREADS
+    )
+    b = board()
+    b["p1"][0]["boosts"] = {"spe": -6}  # Garchomp moves after the Roost
+    b["p2"][1] = mon("corviknight", 0.5)
+    p1 = (Action(0, "move", move="earthquake"), Action(1, "move", move="protect"))
+    p2 = (Action(0, "move", move="protect"), Action(1, "move", move="roost"))
+    outs = rv.resolve(b, R.Field(), {"p1": p1, "p2": p2})
+    for o in outs:
+        c = o.sides["p2"][1]
+        assert c["hp_fraction"] < 1.0  # healed to full, then hit
+        assert "roost" not in c  # Flying again after the turn
+    assert rv.types("p2", 1, outs[0].sides["p2"][1]) == ["Flying", "Steel"]
