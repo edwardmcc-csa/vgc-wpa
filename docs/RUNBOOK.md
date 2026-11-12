@@ -1266,6 +1266,59 @@ $env:WPA_SLOW=1; python -m pytest tests/test_replay_e2e.py; Remove-Item Env:WPA_
 
 ---
 
+## 22. Week 12: the resolver check
+
+The resolver plays out each turn from the choices both players made. This check
+measures how often it does that **in full** (no rule it models only in part) and
+how often **the board that happened is among its boards**. It uses the same 892
+validation games every time: every game of the brief's 300 Reg M-A and 199
+Reg M-B sets, listed in `data\resolver_check_games.json`. It needs no model
+and never reads the test split.
+
+1. **Today's code** (13 minutes on 2 workers; quicker with the 6 it uses by
+   default):
+   ```
+   python -m wpa.resolver_check
+   ```
+   The run is named after the current commit, plus "-modified" if the code has
+   changes not yet committed.
+
+2. **An earlier commit's code, on the same games** (about the same time):
+   ```
+   python -m wpa.resolver_check --code 9e9ef90
+   ```
+   It copies that commit's code into `build\code-9e9ef90` and runs it there.
+   Your working copy is not touched.
+
+3. **The table only:**
+   ```
+   python -m wpa.resolver_check --report
+   ```
+   Each run is a column, oldest first. The table is saved as
+   `reports\resolver_check\summary.txt`.
+
+- Ctrl+C stops a run; the same command carries on where it stopped.
+- `--max-games 20` is a quick trial on 20 games.
+- `--fresh` starts a run over.
+
+**What the table shows, per format**
+- **Fully modelled:** the share of turns where nothing happened that the
+  resolver models only in part.
+- **Board found:** the share where one of its boards matches what happened:
+  the same Pokemon knocked out, and every HP within 6 points.
+- **Both:** the share of turns with both.
+- **Turns with a knock-out:** the same three shares for these turns alone.
+- **Not found:** the misses, split in two:
+  - a knock-out differs on every board;
+  - only HP differs, with the median gap. Most of these are spreads the
+    resolver does not branch on (Task 4).
+- **Left out:** turns it does not check, such as a game lost on the timer.
+- **Boards per turn** and **resolver time per turn:** what it costs.
+- **Partly modelled, turns by reason:** what is left to model, with each run's
+  count.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**

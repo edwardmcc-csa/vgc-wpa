@@ -43,7 +43,7 @@ only.
 ## Tasks
 
 ### Task 1 — Measure the fixes since Week 11's run (the resolver check)
-- [ ] **A command for the resolver check**, so it can be run again any week:
+- [x] **A command for the resolver check**, so it can be run again any week:
       `python -m wpa.resolver_check`. On a fixed sample of validation games per
       format (the list saved, so the same games every time), it gives:
       - the share of turns fully modelled;
@@ -51,10 +51,12 @@ only.
       - the share with both;
       - the reasons left;
       - the time.
-- [ ] **Before and after, on the PO's computer:** the code of Week 11's run
+- [x] **Before and after, on the PO's computer:** the code of Week 11's run
       (`9e9ef90`) and today's, on the same sample. It should take about an
       hour.
-- [ ] Tests first.
+      Done 12 Nov in the Linux workspace on the PO's computer, 13 minutes
+      per run on 2 workers (Runbook Section 22).
+- [x] Tests first.
 
 ### Task 2 — Protean, Libero and other type changes
 - [ ] **The board keeps a changed type** from the log, until the Pokemon leaves
