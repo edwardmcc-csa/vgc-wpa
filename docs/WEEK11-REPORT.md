@@ -499,3 +499,17 @@ than a turn's. The worst ones cost 18 to 25 points against the best pair.
 2. **Try the replay report** on a Showdown game of yours, or any in Reg M-A or
    M-B (Section 21), and record its end-to-end check once (about ten minutes).
    Tell me what reads well and what doesn't.
+
+---
+
+## Addendum, 11 November: the PO's decision on Week 12
+
+**Agreed, in the order proposed:**
+1. Measure the fixes since this run (the resolver check).
+2. Protean and Libero.
+3. The stronger opponent model.
+4. A cheaper spread method.
+5. Hidden opponent sets.
+6. The brief's sample again.
+
+The brief is `docs/WEEK12-DISPATCH.md`.
