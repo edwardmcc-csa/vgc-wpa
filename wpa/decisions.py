@@ -120,6 +120,9 @@ LEAVING = (
     "taunt",
     "drowsy",
     "disabled",
+    "types",
+    "typeadd",
+    "protean",
 )
 # what `side` passes on when present
 TRACKED = (
@@ -133,6 +136,9 @@ TRACKED = (
     "taunt",
     "drowsy",
     "disabled",
+    "types",
+    "typeadd",
+    "protean",
 )
 
 _EFFECT_LINES = {
@@ -411,6 +417,22 @@ class _Board:
             m["disabled"] = to_id(p[4].removeprefix("move: "))
         elif t == "-end" and what == "disable":
             m.pop("disabled", None)
+        elif t == "-start" and what == "typechange":
+            # Week 12: Protean, Libero, Soak, Burn Up and the like: the types it
+            # has now, until it leaves the field; copied from another (Reflect
+            # Type: no types in the line), not followed: []
+            new = p[4] if len(p) > 4 and not p[4].startswith("[") else ""
+            m["types"] = new.split("/") if new else []
+            m.pop("typeadd", None)
+            if any(
+                x in ("[from] ability: Protean", "[from] ability: Libero")
+                for x in p[4:]
+            ):
+                m["protean"] = 1  # once each time it comes in
+        elif t == "-start" and what == "typeadd" and len(p) > 4:
+            m["typeadd"] = p[4]  # Trick-or-Treat, Forest's Curse
+        elif t == "-end" and what == "typechange":
+            m.pop("types", None)
         elif t == "-end" and what in ("leechseed", "taunt", "yawn"):
             m.pop(
                 {"leechseed": "seeded", "taunt": "taunt", "yawn": "drowsy"}[what], None
@@ -584,6 +606,9 @@ class _Board:
             idx = self._index(role, ident)
             if idx is not None:
                 self.mons[role][idx]["mega"] = True
+                # its new form's types replace any change (Showdown's setSpecies)
+                self.mons[role][idx].pop("types", None)
+                self.mons[role][idx].pop("typeadd", None)
         elif t == "swap":
             a, b = self.slots[role]["a"], self.slots[role]["b"]
             self.slots[role]["a"], self.slots[role]["b"] = b, a

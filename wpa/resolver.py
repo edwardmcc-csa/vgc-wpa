@@ -107,6 +107,9 @@ LEAVING = (
     "taunt",
     "drowsy",
     "disabled",
+    "types",
+    "typeadd",
+    "protean",
 )
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
@@ -117,6 +120,12 @@ CONTACT_CHANCE = {"flamebody", "static", "poisonpoint", "effectspore", "cutechar
 WEATHER_HEAL = {"moonlight", "morningsun", "synthesis"}
 # status moves with a target, done in `_use`'s loop (after Week 11)
 ON_TARGET = {"healpulse", "floralhealing", "psychup", "strengthsap"}
+# Week 12 Task 2: type changes. Protean and Libero (once per switch-in);
+# the status moves that change a target's types; the moves that cost their
+# user a type (it fails without it)
+PROTEAN = {"protean", "libero"}
+RETYPE = {"soak", "trickortreat", "forestscurse", "reflecttype"}
+LOSES_TYPE = {"burnup": "Fire", "doubleshock": "Electric"}
 # abilities that ignore the target's ability (here: Good as Gold)
 MOLD = {"moldbreaker", "teravolt", "turboblaze"}
 # targets a single foe: an overridden move (Encore) picks one at random
@@ -312,6 +321,9 @@ class _World:
                 m.get("taunt", 0),
                 m.get("drowsy", -1),
                 m.get("disabled", ""),
+                tuple(m.get("types") or ()),
+                m.get("typeadd", ""),
+                m.get("protean", 0),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -421,6 +433,8 @@ def _mon_key(st: Mapping) -> tuple:
         st["item"],
         st["mega"],
         st.get("last_move", ""),
+        tuple(st.get("types") or ()),
+        st.get("typeadd", ""),
     )
 
 
@@ -478,7 +492,16 @@ class Resolver:
         return mon.ability
 
     def types(self, role: str, idx: int, st: Mapping) -> list[str]:
-        return list(self.entry(role, idx, st).get("types") or [])
+        """Its types now: a change the board or this turn made (Protean,
+        Soak, Burn Up ...), else its form's, with a type added by
+        Trick-or-Treat or Forest's Curse."""
+        if st.get("types"):
+            return list(st["types"])
+        out = list(self.entry(role, idx, st).get("types") or [])
+        add = st.get("typeadd")
+        if add and add not in out:
+            out.append(add)
+        return out
 
     def max_hp(self, role: str, idx: int) -> int:
         key = (role, idx)
@@ -807,6 +830,8 @@ class Resolver:
             for a in actions.get(r, ()):
                 if a.kind == "move" and a.mega and not w.sides[r][a.user]["mega"]:
                     w.sides[r][a.user]["mega"] = True
+                    w.sides[r][a.user].pop("types", None)  # its new form's
+                    w.sides[r][a.user].pop("typeadd", None)
                     self._on_entry(w, r, a.user)
         return [w]
 
@@ -1127,6 +1152,9 @@ class Resolver:
             return [w]  # it works only on the Pokemon's first turn in
         if self._queenly(w, role, a, m):
             return [w]  # Armor Tail, Dazzling, Queenly Majesty: the move fails
+        if mv in LOSES_TYPE and LOSES_TYPE[mv] not in self.types(role, a.user, st):
+            return [w]  # Burn Up without Fire, Double Shock without Electric
+        self._protean(w, role, a.user, m)
         if m.get("category") == "Status":
             return self._status(w, role, a, m)
         return self._attack(w, role, a, m)
@@ -1140,6 +1168,8 @@ class Resolver:
             ok = w.clone(w.p * p_ok) if p_ok < 1 else w
             s2 = ok.sides[role][a.user]
             s2["protect_streak"] = streak + 1
+            # Protean: only when it works (Protect's own check comes first)
+            self._protean(ok, role, a.user, self.move(a.move))
             if a.move == "wideguard":
                 ok.guards.add((role, "wideguard"))
             elif a.move == "quickguard":
@@ -1263,6 +1293,49 @@ class Resolver:
         ):
             return True
         return False
+
+    def _protean(self, w: _World, role: str, idx: int, m: Mapping) -> None:
+        """Protean and Libero (Showdown's onPrepareHit): once each time it
+        comes in, the user becomes the type of the move it uses, unless that
+        is its type already (then it is not used up)."""
+        st = w.sides[role][idx]
+        if st.get("protean") or self.ability(role, idx, st) not in PROTEAN:
+            return
+        t = m.get("type") or ""
+        if not t or t == "???" or self.types(role, idx, st) == [t]:
+            return
+        st["types"] = [t]
+        st.pop("typeadd", None)
+        st["protean"] = 1
+
+    def _retype(self, w: _World, role: str, a: Action, tgt) -> None:
+        """Soak (pure Water), Trick-or-Treat and Forest's Curse (a type
+        added), Reflect Type (the user takes the target's types), as in
+        Showdown; each fails where it would change nothing."""
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"]:
+            return
+        now = self.types(tgt[0], tgt[1], x)
+        if a.move == "soak":
+            if now != ["Water"]:
+                x["types"] = ["Water"]
+                x.pop("typeadd", None)
+        elif a.move in ("trickortreat", "forestscurse"):
+            add = "Ghost" if a.move == "trickortreat" else "Grass"
+            if add not in now:
+                x["typeadd"] = add
+        elif a.move == "reflecttype":
+            here = self.entry(tgt[0], tgt[1], x).get("types")
+            base = list(x.get("types") or here or [])
+            base = [t for t in base if t != "???"]
+            if not base and x.get("typeadd"):
+                base = ["Normal"]
+            if base:
+                me = w.sides[role][a.user]
+                me["types"] = base
+                me.pop("typeadd", None)
+                if x.get("typeadd"):
+                    me["typeadd"] = x["typeadd"]
 
     def _good_as_gold(
         self, w: _World, role: str, a: Action, m: Mapping, tgt: tuple[str, int]
@@ -1419,6 +1492,7 @@ class Resolver:
             or m.get("forceSwitch")
             or vol in ("confusion", "encore", "leechseed", "taunt", "yawn", "disable")
             or mv in ON_TARGET
+            or mv in RETYPE
         )
         if not handled:
             w.partial.add(f"move:{mv}")
@@ -1470,6 +1544,8 @@ class Resolver:
                     self._disable(hit, tgt)
                 if mv in ON_TARGET:
                     self._on_target(hit, role, a, tgt)
+                if mv in RETYPE:
+                    self._retype(hit, role, a, tgt)
                 if drops and not self._drop(hit, tgt, drops):
                     if tgt[0] != role:
                         failed.add(id(hit))  # Parting Shot: no drop, no switch
@@ -1824,6 +1900,15 @@ class Resolver:
             crit=crit,
             field=f,
         )
+        # Week 12: the types each has now, when changed (and always for a
+        # Protean or Libero user: the calculator gives those STAB on any move)
+        for side, s, who in (("attacker", st, (role, a.user)), ("defender", t, tgt)):
+            if (
+                s.get("types")
+                or s.get("typeadd")
+                or (side == "attacker" and self.ability(who[0], who[1], s) in PROTEAN)
+            ):
+                req[side]["types"] = self.types(who[0], who[1], s)
         self._dmg[key] = self.calc.run([req])[0]
         return self._dmg[key]
 
@@ -2171,6 +2256,12 @@ class Resolver:
                 st["hp_fraction"] = min(1.0, st["hp_fraction"] + (dealt // 8) / max_hp)
         if m.get("self") and m["self"].get("boosts") and w.hit and not st["fainted"]:
             self._boost(st, m["self"]["boosts"])
+        if a.move in LOSES_TYPE and w.hit and not st["fainted"]:
+            # Burn Up, Double Shock: the type is lost ("???" in its place)
+            lose = LOSES_TYPE[a.move]
+            base = st.get("types") or self.entry(role, a.user, st).get("types")
+            st["types"] = ["???" if t == lose else t for t in base or []]
+            st.pop("typeadd", None)
         if m.get("selfdestruct"):
             self._faint(w, (role, a.user))
 

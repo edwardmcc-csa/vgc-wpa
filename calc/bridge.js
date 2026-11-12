@@ -8,11 +8,37 @@
 //   {"op": "stats", "mon": MON} -> {"stats": {"hp": n, "atk": n, ...}}
 //
 // MON = {"species", "nature", "sps": {hp, atk, ...}, "item", "ability",
-//        "boosts": {atk: 1, ...}, "status": "brn", "hp": 0.5 (fraction)}
+//        "boosts": {atk: 1, ...}, "status": "brn", "hp": 0.5 (fraction),
+//        "types": ["Dark"] (optional: its types now, when changed)}
 'use strict';
 const readline = require('readline');
 const {calculate, Generations, Pokemon, Move, Field, Side} = require('@smogon/calc');
 const {getFinalSpeed} = require('@smogon/calc/dist/mechanics/util');
+const mechanics = require('@smogon/calc/dist/mechanics/util');
+
+// Week 12: a Pokemon's types now, when the game changed them (Protean, Libero,
+// Soak, Burn Up ...), as "types" in MON. The calculator copies each Pokemon
+// before using it, so the copy keeps them; and STAB comes from them, as in
+// Showdown (the calculator otherwise gives Protean and Libero STAB on any move).
+const clone0 = Pokemon.prototype.clone;
+Pokemon.prototype.clone = function () {
+  const c = clone0.call(this);
+  if (this.typesNow) {
+    c.typesNow = this.typesNow.slice();
+    c.types = this.typesNow.slice();
+  }
+  return c;
+};
+const stab0 = mechanics.getStabMod;
+mechanics.getStabMod = function (pokemon, move, desc) {
+  if (!pokemon.typesNow) return stab0(pokemon, move, desc);
+  let mod = 4096;
+  if (pokemon.typesNow.includes(move.type)) {
+    mod += 2048;
+    if (pokemon.hasAbility('Adaptability')) mod += 2048;
+  }
+  return mod;
+};
 
 const gen = Generations.get(0); // Champions: level 50, stat points
 const SPREAD = new Set(['allAdjacent', 'allAdjacentFoes']);
@@ -55,6 +81,10 @@ function mon(m, attacking) {
   if (m.hp !== undefined && m.hp !== null) {
     const cur = Math.max(1, Math.round(p.maxHP() * m.hp));
     p = new Pokemon(gen, name, {...options, curHP: cur});
+  }
+  if (Array.isArray(m.types) && m.types.length) {
+    p.typesNow = m.types.slice();
+    p.types = m.types.slice();
   }
   return p;
 }
