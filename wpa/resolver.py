@@ -117,6 +117,8 @@ CONTACT_CHANCE = {"flamebody", "static", "poisonpoint", "effectspore", "cutechar
 WEATHER_HEAL = {"moonlight", "morningsun", "synthesis"}
 # status moves with a target, done in `_use`'s loop (after Week 11)
 ON_TARGET = {"healpulse", "floralhealing", "psychup", "strengthsap"}
+# abilities that ignore the target's ability (here: Good as Gold)
+MOLD = {"moldbreaker", "teravolt", "turboblaze"}
 # targets a single foe: an overridden move (Encore) picks one at random
 ONE_FOE = {"normal", "any", "adjacentFoe", "randomNormal"}
 OUT_OF_REACH = {"fly", "bounce", "dig", "dive", "phantomforce", "shadowforce"}
@@ -545,11 +547,18 @@ class Resolver:
                     for rest, branch in groups.items():
                         if not rest:
                             for b in branch:
-                                end.add(self._end_of_turn(b))
+                                end.add([b] if b.winner else self._end_of_turn(b))
                             continue
                         (role, act), tail = rest[0], rest[1:]
                         for b in branch:
                             for x in self._act(b, role, act):
+                                if x.winner is not None:
+                                    # the game is over: Showdown ends the
+                                    # battle at the faint, so neither the
+                                    # moves still to come nor the end of
+                                    # the turn happen
+                                    end.add([x])
+                                    continue
                                 t = tail
                                 if x.requeue is not None:
                                     t = self._requeued(x, tail)
@@ -1255,6 +1264,19 @@ class Resolver:
             return True
         return False
 
+    def _good_as_gold(
+        self, w: _World, role: str, a: Action, m: Mapping, tgt: tuple[str, int]
+    ) -> bool:
+        """Good as Gold: a status move a foe aims at it fails (Showdown's
+        onTryHit), unless the user's ability ignores it (Mold Breaker and the
+        like)."""
+        if tgt[0] == role or m.get("category") != "Status":
+            return False
+        x = w.sides[tgt[0]][tgt[1]]
+        if self.ability(tgt[0], tgt[1], x) != "goodasgold":
+            return False
+        return self.ability(role, a.user, w.sides[role][a.user]) not in MOLD
+
     def _grounded(self, who: tuple[str, int], st: Mapping) -> bool:
         return (
             "Flying" not in self.types(who[0], who[1], st)
@@ -1411,8 +1433,10 @@ class Resolver:
         for tgt in targets:
             nxt = []
             for b in out:
-                if self._blocked(b, role, a, m, tgt, len(targets) > 1) or (
-                    self._behind_sub(b, role, a, m, tgt)
+                if (
+                    self._blocked(b, role, a, m, tgt, len(targets) > 1)
+                    or self._behind_sub(b, role, a, m, tgt)
+                    or self._good_as_gold(b, role, a, m, tgt)
                 ):
                     failed.add(id(b))
                     nxt.append(b)

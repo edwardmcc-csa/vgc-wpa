@@ -559,3 +559,55 @@ def test_leech_seed_drains_nothing_once_the_seeder_has_fainted(tools):
     assert all(
         "leech seed heals the Pokemon in its place" not in o.partial for o in outs
     )
+
+
+@needs_showdown
+def test_good_as_gold_stops_encore_and_taunt_from_a_foe(tools):
+    """Good as Gold: a status move another Pokemon aims at it fails (Showdown's
+    onTryHit). Found by the resolver check: Encore into Gholdengo in games
+    2635208130 and 2635825475 changed its move."""
+    from tests.test_resolver import mon
+    from wpa.team_sheets import SheetMon
+
+    dex, moves, calc = tools
+    gholdengo = SheetMon(
+        2, "gholdengo", "", "goodasgold", ("nastyplot", "shadowball", "protect"), ""
+    )
+    sheets = {"p1": (SHEETS["p1"][0], gholdengo), "p2": SHEETS["p2"]}
+    rv = R.Resolver(dex, moves, calc, sheets, SPREADS)
+    for status in ("encore", "taunt"):
+        b = board()
+        b["p1"][1] = mon("gholdengo")
+        b["p1"][1]["last_move"] = "protect"
+        p1 = (Action(0, "move", move="protect"), Action(1, "move", move="nastyplot"))
+        p2 = (
+            Action(0, "move", move="swordsdance"),
+            Action(1, "move", move=status, target=("foe", 1)),  # Whimsicott, faster
+        )
+        outs = rv.resolve(b, R.Field(), {"p1": p1, "p2": p2})
+        for o in outs:
+            g = o.sides["p1"][1]
+            assert "encore" not in g and "taunt" not in g
+            assert g["boosts"].get("spa") == 2, status  # Nasty Plot went ahead
+
+
+@needs_showdown
+def test_nothing_happens_after_the_knock_out_that_ends_the_game(tools):
+    """Showdown ends the battle at the faint that leaves a side with nothing:
+    the moves still to come and the end of the turn do not happen. Found by the
+    resolver check: game 2627094152 ended on turn 7 with Basculegion burned by
+    Spicy Spray, and no burn damage after."""
+    b = board()
+    b["p2"][0]["hp_fraction"] = 0.01
+    b["p2"][1].update(hp_fraction=0.0, fainted=True, active=False)
+    b["p1"][0]["status"] = "brn"
+    p1 = (
+        Action(0, "move", move="dragonclaw", target=("foe", 0)),
+        Action(1, "move", move="swordsdance"),  # Kingambit, slower: never moves
+    )
+    p2 = (Action(0, "move", move="swordsdance"),)
+    _rv, outs = _run(tools, b, p1, p2)
+    for o in outs:
+        assert o.winner == "p1"
+        assert o.sides["p1"][0]["hp_fraction"] == 1.0  # no burn at the end
+        assert not o.sides["p1"][1]["boosts"].get("atk")
