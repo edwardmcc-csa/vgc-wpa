@@ -1,7 +1,7 @@
 # Week 11 report: your choice and the position, team preview, Speed order, the Champions rules (M5 part 3)
 
 11 November 2026. Brief: `docs/WEEK11-DISPATCH.md`. Commits `c1e1e12` to `9e9ef90`, plus this
-report. All numbers are per format and on the **validation split** unless a line
+report; the work done ahead is in `fee8912` and `9bca83a`. All numbers are per format and on the **validation split** unless a line
 says training. The test split was not opened this week (it has been opened 5
 times, all logged).
 
