@@ -151,20 +151,20 @@ way the opponent's likely replies are weighted.)
       resolver check per format beside Week 10's.
 
 ### Task 4 — The brief's sample again (the PO's computer)
-- [ ] The same 300 Reg M-A sets and 199 Reg M-B sets, with Tasks 0 to 3, the
-      averaged model and sharpness 4.
-- [ ] **Report beside Week 10's:** the four parts per format, the share of
+- [x] The same 300 Reg M-A sets and 199 Reg M-B sets, with Tasks 0 to 3, the
+      averaged model and sharpness 4. *(run of 11 Nov, code at `9e9ef90`)*
+- [x] **Report beside Week 10's:** the four parts per format, the share of
       decision points with a part of 3 points or more, and the turns over 40
       points by cause.
-- [ ] **For the PO to judge:** the 10 biggest swings per format with your choice
+- [x] **For the PO to judge:** the 10 biggest swings per format with your choice
       and the position, the 10 biggest choices (by your choice), and the 10
       biggest team-preview decisions.
-- [ ] **Time:** expected to need a weekend. Task 0's measurement says how long
+- [x] *(a long day: 53 core-hours, 7 of them a stall)* **Time:** expected to need a weekend. Task 0's measurement says how long
       before it starts.
 
 ### Task 5 — Runbook and report
-- [ ] Runbook section for this week's commands. A report in prose, with a
-      surprises section.
+- [x] Runbook section for this week's commands. A report in prose, with a
+      surprises section. *(Section 20; `docs/WEEK11-REPORT.md`)*
 
 ## Out of scope this week
 - **The stronger opponent model** (Week 10 decision 2's second step): Week 12.
