@@ -276,3 +276,89 @@ def test_their_species_as_you_type_them():
         AD.species_name("Pikachuu", DEX, known)
     with pytest.raises(RP.ReplayError, match="did you mean Rillaboom"):
         AD.species_name("Rilaboom", DEX, known)
+
+
+# --------------------------------------------------------------------------
+# A forced switch: which Pokemon to send in after a knock-out
+# --------------------------------------------------------------------------
+
+
+def test_a_game_so_far_ends_at_a_forced_switch():
+    log = AD.up_to_switch(LOG, 1)  # Kingambit fell in turn 1
+    assert log.endswith("|upkeep\n|\n")
+    assert "|switch|p1a: Gholdengo" not in log  # the choice not yet made
+    with pytest.raises(RP.ReplayError, match="turn 2"):
+        AD.up_to_switch(LOG, 2)  # nothing fell at the end of turn 2
+
+
+def test_switch_advice_reads_in_words():
+    sw = (Action(0, "switch", switch_to=2),)
+    alt = (Action(0, "switch", switch_to=4),)
+    adv = AD.Advice(
+        tag=TAG,
+        turn=1,
+        role="p1",
+        wp=0.4,
+        choices=[(sw, 0.45, 0.7), (alt, 0.38, 0.3)],
+        replies=[((), 1.0)],
+        kept=1.0,
+        hidden=False,
+        typical=0.43,
+        kind="replacement",
+    )
+    text = AD.advice_text(adv, LOG)
+    assert "After turn 1: a forced switch. Your win chance now: 40%" in text
+    first = next(x for x in text.splitlines() if x.strip().startswith("1."))
+    assert "send in Gholdengo: 45% (+2 against a typical choice)" in first
+    assert "They have no forced switch." in text
+
+
+@pytest.mark.skipif(
+    not all(p.exists() for p in NEEDS) or not os.environ.get("WPA_SLOW"),
+    reason="about a minute (set WPA_SLOW=1)",
+)
+@pytest.mark.parametrize("hidden", [False, True])
+def test_switch_advice_after_a_knock_out(monkeypatch, hidden):
+    import argparse
+    import json
+
+    from wpa import attribution as A
+
+    def model(models, fmt, groups):
+        return lambda X: 1 / (1 + np.exp(-np.asarray(X, float).mean(axis=1) / 50))
+
+    monkeypatch.setattr(A, "wp_model", model)
+    moves = ROOT / "build"
+    a = argparse.Namespace(
+        dex_tables=None,
+        showdown=ROOT / "pokemon-showdown",
+        moves_dir=moves if (moves / "moves_regma.json").exists() else None,
+        usage=ROOT / "usage_stats",
+        bring=ROOT / "models_v4" / "bring.json",
+        policy=ROOT / "models_v4" / "policy.json",
+        models=None,
+        groups="ABCDEFGHIJ",
+        resolution=0.05,
+        cap=300,
+        top=6,
+        draws=6,
+        alternatives=10,
+        hidden_sets=hidden,
+        public_models=None,
+        replace=ROOT / "models_v4" / "replace.json",
+    )
+    tools = A._tools(a)
+    tag = "gen9championsvgc2026regma-2599935271"
+    path = ROOT / "tests" / "fixtures" / "replays" / f"{tag}.json"
+    # p1's Skarmory fell in turn 4; the bench: Liepard, Dragapult, Incineroar,
+    # Milotic (p1 sent in Milotic)
+    log = AD.up_to_switch(json.loads(path.read_text(encoding="utf-8"))["log"], 4)
+    adv = AD.advise_replacement(tag, log, "regma", tools, "p1")
+    assert adv.kind == "replacement" and adv.turn == 4
+    ins = sorted(j[0].switch_to or 0 for j, _v, _p in adv.choices)
+    assert ins == [1, 2, 3, 4]
+    assert all(j[0].user == 5 for j, _v, _p in adv.choices)
+    vals = [v for _j, v, _p in adv.choices]
+    assert vals == sorted(vals, reverse=True)
+    assert adv.replies == [((), 1.0)]  # p2 had no forced switch
+    assert "send in" in AD.advice_text(adv, log)

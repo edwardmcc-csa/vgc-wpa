@@ -79,6 +79,7 @@ class Advice:
     # the player's chance after a typical choice (their likely choices, as §3's
     # typical choice): what playing the turn out gives, whatever they choose
     typical: float = float("nan")
+    kind: str = "turn"  # "turn", "preview" or "replacement" (a forced switch)
 
 
 @dataclass
@@ -97,16 +98,18 @@ class _Point:
     bw: object
     wp: float
     pol_spreads: dict
-    odds: object
+    odds: Any
     brought: dict
-    idx: dict  # each side's state for the board
+    idx: int  # the player's own state for the board
     hidden: bool
 
 
-def _point(tag: str, log: str, fmt: str, tools, role: str, preview: bool) -> _Point:
-    """The last turn's start the log reaches; with `preview`, team preview (the
-    log then reaches turn 1's start, whose board is the template the leads are
-    put on)."""
+def _point(tag: str, log: str, fmt: str, tools, role: str, at: str) -> _Point:
+    """The decision point the log ends at, from `role`'s side: `at` "turn" (the
+    last turn's start), "preview" (team preview; the log reaches turn 1's
+    start, whose board is the template the leads are put on) or "replacement"
+    (a forced switch after the last turn). The boards are valued from the
+    player's own row, and given back as p1's chances."""
     from wpa import attribution as A
     from wpa import decisions as D
     from wpa import resolver as R
@@ -128,18 +131,22 @@ def _point(tag: str, log: str, fmt: str, tools, role: str, preview: bool) -> _Po
     if set(sheets) != {"p1", "p2"}:
         raise ReplayError("the log shows no team sheets")
     game = D.build_game(log, table)
+    states, joined = game.states[role], game.joined[role]
 
-    def last(r: str, moment: str) -> int:
-        got = [i for i, s in enumerate(game.states[r]) if s["moment"] == moment]
+    def last(moment: str) -> int:
+        got = [i for i, s in enumerate(states) if s["moment"] == moment]
         if not got:
-            raise ReplayError("the log has no turn's start to advise on")
+            what = {"after_turn": "a forced switch of yours"}.get(
+                moment, "a turn's start"
+            )
+            raise ReplayError(f"the log has no {what} to advise on")
         return got[-1]
 
-    kb = {r: last(r, "preview" if preview else "turn_start") for r in ("p1", "p2")}
-    kv = {r: last(r, "turn_start") for r in ("p1", "p2")}  # the boards valued
-    kr = kb[role]
-    mine = game.states[role][kr]
-    fld = R.field_from_timers(game.joined["p1"][kb["p1"]], "p1")
+    moment = {"turn": "turn_start", "preview": "preview", "replacement": "after_turn"}
+    kb = last(moment[at])
+    kv = last("turn_start") if at == "preview" else kb  # the boards valued
+    mine = states[kb]
+    fld = R.field_from_timers(joined[kb], role)
     cols = columns(tools.groups)
     hidden = tools.hidden is not None
     theirs = None
@@ -148,29 +155,15 @@ def _point(tag: str, log: str, fmt: str, tools, role: str, preview: bool) -> _Po
             tag, log, game, sheets, dex, tools.calc, tools.store, tools.bring
         )
         view = dict(sheets)
-        s1 = game.states["p1"][kb["p1"]]
         sides = {
-            "p1": [dict(m) for m in s1["our_pokemon"]],
-            "p2": [dict(m) for m in s1["opp_pokemon"]],
+            role: [dict(m) for m in mine["our_pokemon"]],
+            other: [dict(m) for m in mine["opp_pokemon"]],
         }
-        ctx = ctx_all["p1"][kb["p1"]]
+        ctx = ctx_all[role][kb]
         rv_spreads, rv_dists = ctx.spreads, ctx.dists
         pol_spreads = spreads
         predict = tools.predict[fmt]
-        bw = A.BoardWP(
-            predict,
-            game.states["p1"],
-            kv["p1"],
-            game.joined["p1"][kv["p1"]],
-            sheets,
-            dex,
-            table,
-            tools.groups,
-            ctx_all["p1"][kv["p1"]],
-            same_point=preview,
-            budget=tools.budget,
-        )
-        rows, pub, ctx_r = game.states[role], sheets, ctx_all[role][kr]
+        pub, ctx_v, rows = sheets, ctx_all[role][kv], states
     else:
         usage = tools.store.for_game(tag, log)
         sets = tools.hidden.for_game(tag, log)
@@ -179,7 +172,6 @@ def _point(tag: str, log: str, fmt: str, tools, role: str, preview: bool) -> _Po
             role: [dict(m) for m in mine["our_pokemon"]],
             other: [dict(m) for m in theirs],
         }
-        sides = {"p1": sides["p1"], "p2": sides["p2"]}
         pri = priors_for(view, usage, dex)
         rv_spreads = {key: Belief(v).best() for key, v in pri.items() if v}
         rv_dists = {key: [(c, c.weight) for c in v] for key, v in pri.items() if v}
@@ -192,33 +184,32 @@ def _point(tag: str, log: str, fmt: str, tools, role: str, preview: bool) -> _Po
             other: public_sheet(sheets[other], mine["opp_pokemon"]),
         }
         predict = tools.predict_public[fmt]
-        k = kv[role]
-        bw = A.BoardWP(
-            predict,
-            game.states[role],
-            k,
-            game.joined[role][k],
-            pub,
-            dex,
-            table,
-            tools.groups,
-            context_for(k, pub),
-            same_point=preview,
-            budget=tools.budget,
-            role=role,
-            public=True,
-        )
-        rows = [*game.states[role][:kr], blank_state(mine)]
-        ctx_r = context_for(kr, pub)
-    f = state_features(
-        rows, kr, role, game.joined[role][kr], pub, dex, table, tools.groups, ctx_r
+        ctx, ctx_v = context_for(kb, pub), context_for(kv, pub)
+        rows = [*states[:kb], blank_state(mine)]
+    sides = {"p1": sides["p1"], "p2": sides["p2"]}
+    bw = A.BoardWP(
+        predict,
+        states,
+        kv,
+        joined[kv],
+        pub,
+        dex,
+        table,
+        tools.groups,
+        ctx_v,
+        same_point=at == "preview",
+        budget=tools.budget,
+        role=role,
+        public=hidden,
     )
+    f = state_features(rows, kb, role, joined[kb], pub, dex, table, tools.groups, ctx)
     wp = float(predict(np.array([[f[c] for c in cols]], np.float32))[0])
     brought = brought_from_log(log)
-    for r in ("p1", "p2"):
-        for i in brought.get(r, ()):
-            if i < len(sides[r]) and not preview:
-                sides[r][i]["_brought"] = True
+    if at != "preview":
+        for r in ("p1", "p2"):
+            for i in brought.get(r, ()):
+                if i < len(sides[r]):
+                    sides[r][i]["_brought"] = True
     rv = R.Resolver(
         dex,
         tools.moves[fmt],
@@ -261,9 +252,9 @@ def advise(
 
     other = "p2" if role == "p1" else "p1"
     dex = tools.dexes[fmt]
-    pt = _point(tag, log, fmt, tools, role, preview=False)
+    pt = _point(tag, log, fmt, tools, role, "turn")
     game = pt.game
-    turn = game.states[role][pt.idx[role]]["turn"]
+    turn = game.states[role][pt.idx]["turn"]
     tt = {t.role: t for t in C.turns(log, dex) if t.turn == turn}
     if set(tt) != {"p1", "p2"}:
         raise ReplayError(f"turn {turn}: no choices to make")
@@ -336,7 +327,7 @@ def advise_preview(
             "Section 20, step 1)"
         )
     other = "p2" if role == "p1" else "p1"
-    pt = _point(tag, log, fmt, tools, role, preview=True)
+    pt = _point(tag, log, fmt, tools, role, "preview")
     if any(len(pt.view[q]) != 6 for q in ("p1", "p2")):
         raise ReplayError("team preview needs six Pokemon on each side")
     tv = A.TurnValues(A.Leads(pt.rv), pt.sides, pt.fld, pt.bw)
@@ -346,10 +337,121 @@ def advise_preview(
         for q in ("p1", "p2")
     }
     mixes = {q: [(j, float(p)) for j, p in m] for q, m in mixes.items()}
-    return _advice(tag, 0, role, pt, tv, mixes[role], mixes[role], mixes[other], 1.0)
+    return _advice(
+        tag, 0, role, pt, tv, mixes[role], mixes[role], mixes[other], 1.0, "preview"
+    )
 
 
-def _advice(tag, turn, role, pt, tv, choices, mine, replies, kept) -> Advice:
+def up_to_switch(log: str, turn: int | None) -> str:
+    """The log up to the forced switch after `turn` (or after the last turn the
+    log reaches, when None): its end of turn (`|upkeep`), with an empty block
+    after it so the forced switch is a decision point. A turn in which nothing
+    fell is refused."""
+    lines = log.rstrip("\n").split("\n")
+    while lines and lines[-1] == "|":
+        lines.pop()
+    starts = [i for i, x in enumerate(lines) if x.startswith("|turn|")]
+    if turn is None:
+        if not starts:
+            raise ReplayError("the log has not reached turn 1 yet")
+        turn = int(lines[starts[-1]].split("|")[2])
+    i = next((k for k in starts if lines[k] == f"|turn|{turn}"), -1)
+    if i < 0:
+        raise ReplayError(f"this game never reached turn {turn}")
+    end = next((k for k in starts if k > i), len(lines))
+    up = next((k for k in range(i, end) if lines[k] == "|upkeep"), -1)
+    if up < 0 or not any(x.startswith("|faint|") for x in lines[i:up]):
+        raise ReplayError(f"nothing fell at the end of turn {turn}: no forced switch")
+    return "\n".join(lines[: up + 1]) + "\n|\n"
+
+
+def advise_replacement(
+    tag: str, log: str, fmt: str, tools, role: str, own_four: set[int] | None = None
+) -> Advice:
+    """A forced switch after a turn (Week 10's model of who is sent in): each
+    Pokemon the player could send in, valued at the next turn's start after
+    both sides' newcomers come in (`Resolver.replace`), against the other's
+    likely ones when they replace too. The log ends at the forced switch
+    (`up_to_switch`)."""
+    from wpa import attribution as A
+    from wpa import choices as C
+    from wpa import replace_model as RM
+    from wpa.features import _field
+
+    if tools.replace is None:
+        raise ReplayError(
+            "switch advice needs the forced-switch model (models_v4/replace.json, "
+            "Runbook Section 19)"
+        )
+    other = "p2" if role == "p1" else "p1"
+    pt = _point(tag, log, fmt, tools, role, "replacement")
+    game = pt.game
+    turn = game.states[role][pt.idx]["turn"]
+    four = A.brought_four({r: pt.brought.get(r, set()) for r in ("p1", "p2")})
+    if own_four:
+        four[role] = set(own_four)
+    full: dict[str, list] = {}
+    for q in ("p1", "p2"):
+        after = [
+            i
+            for i, s in enumerate(game.states[q])
+            if s["moment"] == "after_turn" and s["turn"] == turn
+        ]
+        start = [
+            i
+            for i, s in enumerate(game.states[q])
+            if s["moment"] == "turn_start" and s["turn"] == turn
+        ]
+        if not after:
+            full[q] = [((), 1.0)]  # no forced switch on this side
+            continue
+        s = game.states[q][after[-1]]
+        ours, theirs = s["our_pokemon"], s["opp_pokemon"]
+        if pt.theirs is not None:  # the other's items as the player saw them
+            if q == other:
+                ours = pt.theirs
+            else:
+                theirs = pt.theirs
+        before = game.states[q][start[-1]]["our_pokemon"] if start else ours
+        slots = [
+            j
+            for j, (m, b) in enumerate(zip(ours, before))
+            if m["fainted"] and not b["fainted"]
+        ]
+        bench = [j for j, m in enumerate(ours) if not m["active"] and not m["fainted"]]
+        rep = C.Replacement(turn, q, ours, theirs, slots, {}, bench)
+        j = game.joined[q][after[-1]]
+        got = RM.options(
+            rep,
+            pt.view,
+            pt.pol_spreads,
+            tools.dexes[fmt],
+            tools.calc,
+            pt.odds,
+            _field(j) if j else None,
+            four[q],
+        )
+        if not got:
+            full[q] = [((), 1.0)]
+            continue
+        full[q] = A.mixture(
+            {
+                slot: list(zip(o, tools.replace.chances(X)))
+                for slot, (o, X) in got.items()
+            }
+        )
+        full[q] = [(jn, float(p)) for jn, p in full[q]]
+    if full[role] == [((), 1.0)]:
+        raise ReplayError(f"you had no Pokemon to send in after turn {turn}")
+    tv = A.TurnValues(A.SwitchIns(pt.rv), pt.sides, pt.fld, pt.bw)
+    return _advice(
+        tag, turn, role, pt, tv, full[role], full[role], full[other], 1.0, "replacement"
+    )
+
+
+def _advice(
+    tag, turn, role, pt, tv, choices, mine, replies, kept, kind="turn"
+) -> Advice:
     """The choices ranked against the replies, and a typical choice (`mine`)."""
     from wpa.attribution import expected
 
@@ -371,6 +473,7 @@ def _advice(tag, turn, role, pt, tv, choices, mine, replies, kept) -> Advice:
         kept,
         pt.hidden,
         expected(value, mine, replies),
+        kind,
     )
 
 
@@ -470,26 +573,38 @@ def advice_text(
     names = move_names(log, dex_moves)
     who = players(log)
     other = "p2" if adv.role == "p1" else "p1"
-    pre = adv.turn == 0
-    kind = "preview" if pre else "turn"
+    kind = "preview" if adv.kind == "preview" or adv.turn == 0 else adv.kind
+    pre = kind == "preview"
     typical = "typical leads" if pre else "a typical choice"
+    head = {
+        "preview": "Team preview.",
+        "turn": f"Turn {adv.turn}.",
+        "replacement": f"After turn {adv.turn}: a forced switch.",
+    }[kind]
+    intro = {
+        "preview": "Your leads, best first: your win chance at turn 1's start, on "
+        "average over their likely leads, and against typical leads.",
+        "turn": "Your likely choices, best first: your win chance after this turn, "
+        "on average over their likely replies, and against a typical choice.",
+        "replacement": "Who to send in, best first: your win chance at the next "
+        "turn's start, on average over their likely switch-ins, and against a "
+        "typical choice.",
+    }[kind]
+    theirs = {
+        "preview": "Their likeliest leads (the model's chances):",
+        "turn": "Their likeliest replies (the model's chances):",
+        "replacement": "Their likeliest switch-ins (the model's chances):",
+    }[kind]
     me = who.get(adv.role, adv.role)
     lines = [
         ("You" if me == "You" else f"{me} (you)") + f" vs {who.get(other, other)}.",
-        ("Team preview." if pre else f"Turn {adv.turn}.")
-        + f" Your win chance now: {pct(adv.wp)}; after {typical}: "
+        f"{head} Your win chance now: {pct(adv.wp)}; after {typical}: "
         f"{pct(adv.typical)}.",
         "",
     ]
     if adv.hidden:
         lines[-1:] = [HIDDEN_NOTE.split(" Team preview")[0], ""]
-    lines.append(
-        "Your leads, best first: your win chance at turn 1's start, on average "
-        "over their likely leads, and against typical leads."
-        if pre
-        else "Your likely choices, best first: your win chance after this turn, on "
-        "average over their likely replies, and against a typical choice."
-    )
+    lines.append(intro)
     for n, (j, v, p) in enumerate(adv.choices[:top], 1):
         words = say_choice(joint_json(j), kind, adv.role, sheets, names)
         often = f"players lead them {pct(p)}" if pre else f"players choose it {pct(p)}"
@@ -497,15 +612,13 @@ def advice_text(
             f"  {n}. {words}: {pct(v)} ({shown(adv.typical, v)} against {typical}); "
             + often
         )
-    lines += [
-        "",
-        "Their likeliest leads (the model's chances):"
-        if pre
-        else "Their likeliest replies (the model's chances):",
-    ]
-    for j, q in adv.replies[:top]:
-        words = say_choice(joint_json(j), kind, other, sheets, names)
-        lines.append(f"  {words}: {pct(q)}")
+    if kind == "replacement" and adv.replies == [((), 1.0)]:
+        lines += ["", "They have no forced switch."]
+    else:
+        lines += ["", theirs]
+        for j, q in adv.replies[:top]:
+            words = say_choice(joint_json(j), kind, other, sheets, names)
+            lines.append(f"  {words}: {pct(q)}")
     lines += [
         "",
         "The best here is the model's, against the replies it expects: a coaching "
@@ -527,6 +640,11 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     p.add_argument("--player", help="your name in the game")
     p.add_argument("--turn", type=int, default=None, help="the turn to advise on")
     p.add_argument("--preview", action="store_true", help="the leads, at team preview")
+    p.add_argument(
+        "--switch",
+        action="store_true",
+        help="the forced switch after the turn (--turn), or after the last turn",
+    )
     p.add_argument(
         "--vs",
         help="team preview from the app: their six species, separated by commas "
@@ -564,7 +682,10 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
                 [(tag, full_log, fmt)], a.player, team, a.hidden
             )
             full_log = games[0][1]  # with the sheets put in, for a game showing none
-            log = up_to_turn(full_log, 1 if a.preview else a.turn)
+            if a.switch:
+                log = up_to_switch(full_log, a.turn)
+            else:
+                log = up_to_turn(full_log, 1 if a.preview else a.turn)
             # the four you brought, when the whole game shows them (you know them)
             seen = brought_from_log(full_log).get(role, set())
             if a.turn is not None and len(seen) >= 4:
@@ -587,6 +708,8 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
             tag, log = preview_log(team or "", theirs, fmt)
         if a.preview:
             adv = advise_preview(tag, log, fmt, tools, role)
+        elif a.switch:
+            adv = advise_replacement(tag, log, fmt, tools, role, own_four=own)
         else:
             adv = advise(tag, log, fmt, tools, role, own_four=own)
     except ReplayError as e:

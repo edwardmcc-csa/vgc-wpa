@@ -1439,6 +1439,15 @@ python -m wpa.advise --vs "Incineroar, Sneasler, Floette, Garchomp, Kingambit, B
   valued.
 - For a game already played: the replay link with `--preview` (and `--player`).
 
+**A forced switch: who to send in after a knock-out.** Add `--switch`: the
+switch after the turn `--turn` names (or, for a game so far, after the last
+turn it reaches):
+```
+python -m wpa.advise LINK --player "your Showdown name" --switch --turn 4
+```
+Each Pokemon you could send in is valued at the next turn's start, after both
+sides' newcomers come in, against theirs when they have a forced switch too.
+
 **What it shows**
 - Your win chance now, and after a typical choice: what players typically
   choose here. Playing the turn out moves everyone's chance, whatever you choose
@@ -1448,8 +1457,8 @@ python -m wpa.advise --vs "Incineroar, Sneasler, Floette, Garchomp, Kingambit, B
 - Their likeliest replies, with the model's chances.
 
 **Limits**
-- A turn's start and team preview's leads: not a forced switch yet, and not
-  which four to bring.
+- A turn's start, team preview's leads and a forced switch; not which four to
+  bring.
 - It does not read the board off your phone yet.
 - "The best" is the best of your 10 likeliest choices against the replies the
   model expects: a coaching number, not a solver's answer.
