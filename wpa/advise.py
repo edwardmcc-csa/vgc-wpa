@@ -21,6 +21,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -80,14 +81,33 @@ class Advice:
     typical: float = float("nan")
 
 
-def advise(
-    tag: str, log: str, fmt: str, tools, role: str, own_four: set[int] | None = None
-) -> Advice:
-    """The advice at the start of the last turn the log reaches (`up_to_turn`).
-    `own_four`: the four the player brought, when known (the log shows only
-    those that have come out)."""
+@dataclass
+class _Point:
+    """What a decision point gives the advice: the sheets as the player sees
+    them (`view`), the board and its field, the resolver, the board values from
+    the player's side as p1's chances (`bw`), and the player's chance now."""
+
+    game: Any
+    sheets: dict
+    view: dict
+    sides: dict
+    theirs: list | None  # the other's side with believed items (sheet hidden)
+    fld: object
+    rv: object
+    bw: object
+    wp: float
+    pol_spreads: dict
+    odds: object
+    brought: dict
+    idx: dict  # each side's state for the board
+    hidden: bool
+
+
+def _point(tag: str, log: str, fmt: str, tools, role: str, preview: bool) -> _Point:
+    """The last turn's start the log reaches; with `preview`, team preview (the
+    log then reaches turn 1's start, whose board is the template the leads are
+    put on)."""
     from wpa import attribution as A
-    from wpa import choices as C
     from wpa import decisions as D
     from wpa import resolver as R
     from wpa.bring import brought_from_log
@@ -99,7 +119,7 @@ def advise(
         public_sheet,
         state_features,
     )
-    from wpa.policy_data import _timers_by_turn, game_tools, turn_options
+    from wpa.policy_data import game_tools
     from wpa.spreads import Belief, priors_for
 
     other = "p2" if role == "p1" else "p1"
@@ -108,68 +128,49 @@ def advise(
     if set(sheets) != {"p1", "p2"}:
         raise ReplayError("the log shows no team sheets")
     game = D.build_game(log, table)
-    idx = {}
-    for r in ("p1", "p2"):
-        starts = [
-            i for i, s in enumerate(game.states[r]) if s["moment"] == "turn_start"
-        ]
-        if not starts:
+
+    def last(r: str, moment: str) -> int:
+        got = [i for i, s in enumerate(game.states[r]) if s["moment"] == moment]
+        if not got:
             raise ReplayError("the log has no turn's start to advise on")
-        idx[r] = starts[-1]
-    turn = game.states[role][idx[role]]["turn"]
-    tt = {t.role: t for t in C.turns(log, dex) if t.turn == turn}
-    if set(tt) != {"p1", "p2"}:
-        raise ReplayError(f"turn {turn}: no choices to make")
-    brought = brought_from_log(log)
-    four = A.brought_four({r: brought.get(r, set()) for r in ("p1", "p2")})
-    if own_four:
-        four[role] = set(own_four)
-    timers = {r: _timers_by_turn(game, r) for r in ("p1", "p2")}
-    rates = (
-        tools.policy.rates.get(fmt, {}) if isinstance(tools.policy.rates, dict) else {}
-    )
-    cols = columns(tools.groups)
-    k1, kr = idx["p1"], idx[role]
+        return got[-1]
+
+    kb = {r: last(r, "preview" if preview else "turn_start") for r in ("p1", "p2")}
+    kv = {r: last(r, "turn_start") for r in ("p1", "p2")}  # the boards valued
+    kr = kb[role]
     mine = game.states[role][kr]
-    fld = R.field_from_timers(game.joined["p1"][k1], "p1")
+    fld = R.field_from_timers(game.joined["p1"][kb["p1"]], "p1")
+    cols = columns(tools.groups)
     hidden = tools.hidden is not None
+    theirs = None
     if not hidden:
         ctx_all = damage_contexts(
             tag, log, game, sheets, dex, tools.calc, tools.store, tools.bring
         )
         view = dict(sheets)
-        s1 = game.states["p1"][k1]
+        s1 = game.states["p1"][kb["p1"]]
         sides = {
             "p1": [dict(m) for m in s1["our_pokemon"]],
             "p2": [dict(m) for m in s1["opp_pokemon"]],
         }
-        rv_spreads, rv_dists = ctx_all["p1"][k1].spreads, ctx_all["p1"][k1].dists
+        ctx = ctx_all["p1"][kb["p1"]]
+        rv_spreads, rv_dists = ctx.spreads, ctx.dists
         pol_spreads = spreads
+        predict = tools.predict[fmt]
         bw = A.BoardWP(
-            tools.predict[fmt],
+            predict,
             game.states["p1"],
-            k1,
-            game.joined["p1"][k1],
+            kv["p1"],
+            game.joined["p1"][kv["p1"]],
             sheets,
             dex,
             table,
             tools.groups,
-            ctx_all["p1"][k1],
+            ctx_all["p1"][kv["p1"]],
+            same_point=preview,
             budget=tools.budget,
         )
-        f = state_features(
-            game.states[role],
-            kr,
-            role,
-            game.joined[role][kr],
-            sheets,
-            dex,
-            table,
-            tools.groups,
-            ctx_all[role][kr],
-        )
-        wp = float(tools.predict[fmt](np.array([[f[c] for c in cols]], np.float32))[0])
-        theirs = None
+        rows, pub, ctx_r = game.states[role], sheets, ctx_all[role][kr]
     else:
         usage = tools.store.for_game(tag, log)
         sets = tools.hidden.for_game(tag, log)
@@ -191,35 +192,32 @@ def advise(
             other: public_sheet(sheets[other], mine["opp_pokemon"]),
         }
         predict = tools.predict_public[fmt]
+        k = kv[role]
         bw = A.BoardWP(
             predict,
             game.states[role],
-            kr,
-            game.joined[role][kr],
+            k,
+            game.joined[role][k],
             pub,
             dex,
             table,
             tools.groups,
-            context_for(kr, pub),
+            context_for(k, pub),
+            same_point=preview,
             budget=tools.budget,
             role=role,
             public=True,
         )
-        f = state_features(
-            [*game.states[role][:kr], blank_state(mine)],
-            kr,
-            role,
-            game.joined[role][kr],
-            pub,
-            dex,
-            table,
-            tools.groups,
-            context_for(kr, pub),
-        )
-        wp = float(predict(np.array([[f[c] for c in cols]], np.float32))[0])
+        rows = [*game.states[role][:kr], blank_state(mine)]
+        ctx_r = context_for(kr, pub)
+    f = state_features(
+        rows, kr, role, game.joined[role][kr], pub, dex, table, tools.groups, ctx_r
+    )
+    wp = float(predict(np.array([[f[c] for c in cols]], np.float32))[0])
+    brought = brought_from_log(log)
     for r in ("p1", "p2"):
         for i in brought.get(r, ()):
-            if i < len(sides[r]):
+            if i < len(sides[r]) and not preview:
                 sides[r][i]["_brought"] = True
     rv = R.Resolver(
         dex,
@@ -233,26 +231,69 @@ def advise(
         spread_hits=tools.spread_hits,
         speed_beliefs=tools.speed_beliefs,
     )
-    tv = A.TurnValues(rv, sides, fld, bw)
+    return _Point(
+        game,
+        sheets,
+        view,
+        sides,
+        theirs,
+        fld,
+        rv,
+        bw,
+        wp,
+        pol_spreads,
+        odds,
+        brought,
+        kb,
+        hidden,
+    )
+
+
+def advise(
+    tag: str, log: str, fmt: str, tools, role: str, own_four: set[int] | None = None
+) -> Advice:
+    """The advice at the start of the last turn the log reaches (`up_to_turn`).
+    `own_four`: the four the player brought, when known (the log shows only
+    those that have come out)."""
+    from wpa import attribution as A
+    from wpa import choices as C
+    from wpa.policy_data import _timers_by_turn, turn_options
+
+    other = "p2" if role == "p1" else "p1"
+    dex = tools.dexes[fmt]
+    pt = _point(tag, log, fmt, tools, role, preview=False)
+    game = pt.game
+    turn = game.states[role][pt.idx[role]]["turn"]
+    tt = {t.role: t for t in C.turns(log, dex) if t.turn == turn}
+    if set(tt) != {"p1", "p2"}:
+        raise ReplayError(f"turn {turn}: no choices to make")
+    four = A.brought_four({r: pt.brought.get(r, set()) for r in ("p1", "p2")})
+    if own_four:
+        four[role] = set(own_four)
+    timers = {r: _timers_by_turn(game, r) for r in ("p1", "p2")}
+    rates = (
+        tools.policy.rates.get(fmt, {}) if isinstance(tools.policy.rates, dict) else {}
+    )
+    tv = A.TurnValues(pt.rv, pt.sides, pt.fld, pt.bw)
     full = {}
     for q in ("p1", "p2"):
         t = tt[q]
-        if theirs is not None:  # the other's items as the player saw them
+        if pt.theirs is not None:  # the other's items as the player saw them
             t = (
-                replace(t, ours=[dict(m) for m in theirs])
+                replace(t, ours=[dict(m) for m in pt.theirs])
                 if q == other
-                else replace(t, theirs=[dict(m) for m in theirs])
+                else replace(t, theirs=[dict(m) for m in pt.theirs])
             )
         feats = turn_options(
             t,
             timers[q].get(turn),
-            view,
-            pol_spreads,
+            pt.view,
+            pt.pol_spreads,
             dex,
             tools.moves[fmt],
             rates,
             tools.calc,
-            odds,
+            pt.odds,
         )
         opts, chances = A.only_brought(
             *A.expand_pivots(
@@ -267,9 +308,51 @@ def advise(
         plain[q], k = A.likely(full[q], tools.top, tools.draws, f"{tag} {turn} {q}")
         if q == other:
             kept = k
-    replies = A.strong_mixes(tv, plain, tools.strength)[other]
+    strong = A.strong_mixes(tv, plain, tools.strength)
+    replies, mine = strong[other], strong[role]
     choices, _ = A.trim(full[role], 1.0, tools.alternatives or 10)
-    mine = A.strong_mixes(tv, plain, tools.strength)[role]
+    return _advice(tag, turn, role, pt, tv, choices, mine, replies, kept)
+
+
+def advise_preview(
+    tag: str,
+    log: str,
+    fmt: str,
+    tools,
+    role: str,
+    prev: Mapping[str, frozenset[str]] | None = None,
+) -> Advice:
+    """Team preview: each pair of leads, valued at turn 1's start after both
+    sides' leads come in (`Resolver.lead`), against their likely leads (the
+    lead model, Week 11). The log reaches turn 1's start (`preview_log`, or a
+    game cut there). The back two are not valued. `prev`: each player's leads
+    in the set's previous game (species)."""
+    from wpa import attribution as A
+    from wpa.lead_model import pairs
+
+    if tools.leads is None:
+        raise ReplayError(
+            "lead advice needs the lead model (models_v4/leads.json, Runbook "
+            "Section 20, step 1)"
+        )
+    other = "p2" if role == "p1" else "p1"
+    pt = _point(tag, log, fmt, tools, role, preview=True)
+    if any(len(pt.view[q]) != 6 for q in ("p1", "p2")):
+        raise ReplayError("team preview needs six Pokemon on each side")
+    tv = A.TurnValues(A.Leads(pt.rv), pt.sides, pt.fld, pt.bw)
+    opts = [A.lead_joint(p) for p in pairs(6)]
+    mixes = {
+        q: list(zip(opts, tools.leads.chances(pt.view[q], fmt, (prev or {}).get(q))))
+        for q in ("p1", "p2")
+    }
+    mixes = {q: [(j, float(p)) for j, p in m] for q, m in mixes.items()}
+    return _advice(tag, 0, role, pt, tv, mixes[role], mixes[role], mixes[other], 1.0)
+
+
+def _advice(tag, turn, role, pt, tv, choices, mine, replies, kept) -> Advice:
+    """The choices ranked against the replies, and a typical choice (`mine`)."""
+    from wpa.attribution import expected
+
     tv.prepare(
         [
             (j, y) if role == "p1" else (y, j)
@@ -282,13 +365,90 @@ def advise(
         tag,
         turn,
         role,
-        wp,
+        pt.wp,
         rank(value, choices, replies),
         sorted(replies, key=lambda x: -x[1]),
         kept,
-        hidden,
-        A.expected(value, mine, replies),
+        pt.hidden,
+        expected(value, mine, replies),
     )
+
+
+def species_name(name: str, dex, known: set[str]) -> str:
+    """A species as typed (any case and spacing), as the format's data names it.
+    A name that is the start of only one species the format's statistics list
+    (not a Mega form) is that species: "Floette" is Floette-Eternal."""
+    from wpa.team_sheets import to_id
+
+    sp = to_id(name)
+    if sp in dex.species and (not known or sp in known):
+        return dex.species[sp].get("name", name.strip())
+    hits = sorted(
+        k
+        for k in known
+        if k.startswith(sp) and k in dex.species and not dex.species[k].get("isMega")
+    )
+    if len(hits) == 1:
+        return dex.species[hits[0]].get("name", hits[0])
+    if not hits:  # a typo: the nearest names
+        import difflib
+
+        hits = difflib.get_close_matches(sp, sorted(known), n=3, cutoff=0.75)
+    names = " or ".join(dex.species.get(k, {}).get("name", k) for k in hits)
+    raise ReplayError(
+        f"{name.strip()!r} is not a species this format's statistics know"
+        + (f" (did you mean {names}?)" if hits else "")
+    )
+
+
+TIERS = {
+    "regma": "[Gen 9 Champions] VGC 2026 Reg M-A",
+    "regmb": "[Gen 9 Champions] VGC 2026 Reg M-B",
+}
+
+
+def preview_log(
+    team: str, theirs: Sequence[str], fmt: str, now: float | None = None
+) -> tuple[str, str]:
+    """A game at team preview, as the app shows it: your team paste and the six
+    species of theirs. It reaches turn 1's start, with the first two of each
+    side in as a template (the advice puts each pair of leads on it); their
+    sheet shows only the species (`replay.with_sheets`)."""
+    import time
+
+    from wpa.replay import parse_team, with_sheets
+
+    if len(theirs) != 6:
+        raise ReplayError("give their six species, as team preview shows them")
+    mine = parse_team(team)
+    if len(mine) != 6:
+        raise ReplayError("your team paste needs six Pokemon")
+    theirs = [s.strip() for s in theirs]
+
+    def details(species: str, level: int = 50, gender: str = "") -> str:
+        return f"{species}, L{level}" + (f", {gender}" if gender else "")
+
+    head = [
+        "|player|p1|You|",
+        "|player|p2|Opponent|",
+        "|gametype|doubles",
+        "|gen|9",
+        f"|tier|{TIERS[fmt]}",
+        "|clearpoke",
+        *(f"|poke|p1|{details(m['species'], m['level'], m['gender'])}|" for m in mine),
+        *(f"|poke|p2|{details(s)}|" for s in theirs),
+        "|teampreview|4",
+    ]
+    log = with_sheets("\n".join(head), "p1", team)
+    start = ["|", f"|t:|{int(now if now is not None else time.time())}", "|start"]
+    for r, mons in (
+        ("p1", [(m["name"], details(m["species"], m["level"])) for m in mine]),
+        ("p2", [(s, details(s)) for s in theirs]),
+    ):
+        for slot, (name, det) in zip("ab", mons[:2]):
+            start.append(f"|switch|{r}{slot}: {name}|{det}|100/100")
+    start += ["|turn|1", "|", ""]
+    return f"gen9championsvgc2026{fmt}-0", log + "\n" + "\n".join(start)
 
 
 def advice_text(
@@ -310,27 +470,41 @@ def advice_text(
     names = move_names(log, dex_moves)
     who = players(log)
     other = "p2" if adv.role == "p1" else "p1"
+    pre = adv.turn == 0
+    kind = "preview" if pre else "turn"
+    typical = "typical leads" if pre else "a typical choice"
+    me = who.get(adv.role, adv.role)
     lines = [
-        f"{who.get(adv.role, adv.role)} (you) vs {who.get(other, other)}.",
-        f"Turn {adv.turn}. Your win chance now: {pct(adv.wp)}; after a typical "
-        f"choice: {pct(adv.typical)}.",
+        ("You" if me == "You" else f"{me} (you)") + f" vs {who.get(other, other)}.",
+        ("Team preview." if pre else f"Turn {adv.turn}.")
+        + f" Your win chance now: {pct(adv.wp)}; after {typical}: "
+        f"{pct(adv.typical)}.",
         "",
     ]
     if adv.hidden:
         lines[-1:] = [HIDDEN_NOTE.split(" Team preview")[0], ""]
     lines.append(
-        "Your likely choices, best first: your win chance after this turn, on "
+        "Your leads, best first: your win chance at turn 1's start, on average "
+        "over their likely leads, and against typical leads."
+        if pre
+        else "Your likely choices, best first: your win chance after this turn, on "
         "average over their likely replies, and against a typical choice."
     )
     for n, (j, v, p) in enumerate(adv.choices[:top], 1):
-        words = say_choice(joint_json(j), "turn", adv.role, sheets, names)
+        words = say_choice(joint_json(j), kind, adv.role, sheets, names)
+        often = f"players lead them {pct(p)}" if pre else f"players choose it {pct(p)}"
         lines.append(
-            f"  {n}. {words}: {pct(v)} ({shown(adv.typical, v)} against a typical "
-            f"choice); players choose it {pct(p)}"
+            f"  {n}. {words}: {pct(v)} ({shown(adv.typical, v)} against {typical}); "
+            + often
         )
-    lines += ["", "Their likeliest replies (the model's chances):"]
+    lines += [
+        "",
+        "Their likeliest leads (the model's chances):"
+        if pre
+        else "Their likeliest replies (the model's chances):",
+    ]
     for j, q in adv.replies[:top]:
-        words = say_choice(joint_json(j), "turn", other, sheets, names)
+        words = say_choice(joint_json(j), kind, other, sheets, names)
         lines.append(f"  {words}: {pct(q)}")
     lines += [
         "",
@@ -346,12 +520,19 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     from wpa.bring import brought_from_log
 
     p = argparse.ArgumentParser(
-        description="Your best choice at a turn's start, against their likely "
-        "replies: a game so far, or a finished game at a turn you name."
+        description="Your best choice at a turn's start, or your best leads at "
+        "team preview, against their likely replies."
     )
-    p.add_argument("game", help="a replay link, or a saved replay or log")
-    p.add_argument("--player", required=True, help="your name in the game")
+    p.add_argument("game", nargs="?", help="a replay link, or a saved replay or log")
+    p.add_argument("--player", help="your name in the game")
     p.add_argument("--turn", type=int, default=None, help="the turn to advise on")
+    p.add_argument("--preview", action="store_true", help="the leads, at team preview")
+    p.add_argument(
+        "--vs",
+        help="team preview from the app: their six species, separated by commas "
+        "(with --team and --format)",
+    )
+    p.add_argument("--format", choices=sorted(TIERS), default="regma")
     p.add_argument("--top", type=int, default=5, help="how many choices to show")
     p.add_argument("--team", type=Path, default=None, help="your team paste")
     p.add_argument("--hidden", action="store_true", help="their sheet hidden")
@@ -363,14 +544,31 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if reconfigure is not None:
         reconfigure(errors="replace")
+    own = None
+    theirs: list[str] = []
     try:
-        tag, full_log = RP.load(a.game)
-        fmt = RP.format_for(tag, full_log)
-        role = RP.side_of(full_log, a.player)
         team = a.team.read_text(encoding="utf-8") if a.team else None
-        games, a.hidden = RP.prepare([(tag, full_log, fmt)], a.player, team, a.hidden)
-        full_log = games[0][1]  # with the sheets put in, for a game that shows none
-        log = up_to_turn(full_log, a.turn)
+        if a.vs:
+            if not team:
+                raise ReplayError("--vs needs your team paste (--team)")
+            theirs = [s.strip() for s in a.vs.split(",") if s.strip()]
+            tag, log = preview_log(team, theirs, a.format)  # checks there are six
+            fmt, role, a.hidden, a.preview = a.format, "p1", True, True
+        else:
+            if not a.game or not a.player:
+                raise ReplayError("give a game and your name (--player), or --vs")
+            tag, full_log = RP.load(a.game)
+            fmt = RP.format_for(tag, full_log)
+            role = RP.side_of(full_log, a.player)
+            games, a.hidden = RP.prepare(
+                [(tag, full_log, fmt)], a.player, team, a.hidden
+            )
+            full_log = games[0][1]  # with the sheets put in, for a game showing none
+            log = up_to_turn(full_log, 1 if a.preview else a.turn)
+            # the four you brought, when the whole game shows them (you know them)
+            seen = brought_from_log(full_log).get(role, set())
+            if a.turn is not None and len(seen) >= 4:
+                own = seen
         if a.hidden and not (a.public_models / "regma").exists():
             raise ReplayError(
                 "their sheet hidden needs the model trained that way, in "
@@ -380,12 +578,20 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
         sys.exit(f"Sorry: {e}.")
     print("Thinking (about half a minute)...", flush=True)
     A._init(RP._options(a))
-    # the four you brought, when the whole game shows them (you know them)
-    seen = brought_from_log(full_log).get(role, set())
-    own = seen if a.turn is not None and len(seen) >= 4 else None
-    adv = advise(tag, log, fmt, A._W["tools"], role, own_four=own)
-    dex_moves = A._W["tools"].dexes[fmt].moves
-    print(advice_text(adv, log, dex_moves, a.top))
+    tools = A._W["tools"]
+    try:
+        if a.vs:  # their species as the format's data names them
+            dex = tools.dexes[fmt]
+            known = set(tools.hidden.for_game(tag, log))
+            theirs = [species_name(s, dex, known) for s in theirs]
+            tag, log = preview_log(team or "", theirs, fmt)
+        if a.preview:
+            adv = advise_preview(tag, log, fmt, tools, role)
+        else:
+            adv = advise(tag, log, fmt, tools, role, own_four=own)
+    except ReplayError as e:
+        sys.exit(f"Sorry: {e}.")
+    print(advice_text(adv, log, tools.dexes[fmt].moves, a.top))
 
 
 if __name__ == "__main__":

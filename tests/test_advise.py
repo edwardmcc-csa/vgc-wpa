@@ -151,3 +151,128 @@ def test_advice_at_a_turn_of_a_real_game(monkeypatch, hidden):
     assert 0 < adv.typical < 1  # your likely choices on average
     assert sum(p for _j, p in adv.replies) == pytest.approx(1.0)
     assert "Your win chance now" in AD.advice_text(adv, log)
+
+
+# --------------------------------------------------------------------------
+# Team preview: which two to lead, from your team paste and their six species
+# --------------------------------------------------------------------------
+
+from tests.test_replay_hidden import TEAM  # noqa: E402
+
+THEIRS = [
+    "Basculegion",
+    "Incineroar",
+    "Amoonguss",
+    "Archaludon",
+    "Whimsicott",
+    "Floette-Eternal",
+]
+
+
+def test_team_preview_from_your_paste_and_their_six_species():
+    from wpa.team_sheets import sheets_from_log
+
+    tag, log = AD.preview_log(TEAM, THEIRS, "regma", now=1781792080)
+    assert RP.format_for(tag, log) == "regma"
+    sheets = sheets_from_log(log)
+    assert [m.species for m in sheets["p1"]][:2] == ["gholdengo", "dragonite"]
+    assert sheets["p1"][1].item == "choiceband"
+    assert [m.species for m in sheets["p2"]] == [
+        "basculegion",
+        "incineroar",
+        "amoonguss",
+        "archaludon",
+        "whimsicott",
+        "floetteeternal",
+    ]
+    assert sheets["p2"][0].moves == ()  # only the species: their sheet is hidden
+    lines = log.split("\n")
+    assert (
+        lines.index("|teampreview|4") < lines.index("|start") < lines.index("|turn|1")
+    )
+    assert log.endswith("|turn|1\n|\n")  # turn 1's start, the leads' board
+    assert RP.players(log) == {"p1": "You", "p2": "Opponent"}
+
+
+def test_six_species_are_needed():
+    with pytest.raises(RP.ReplayError, match="six"):
+        AD.preview_log(TEAM, THEIRS[:5], "regma")
+
+
+def test_lead_advice_reads_in_words():
+    from wpa.attribution import lead_joint
+
+    adv = AD.Advice(
+        tag=TAG,
+        turn=0,
+        role="p1",
+        wp=0.5,
+        choices=[(lead_joint((0, 1)), 0.56, 0.2), (lead_joint((2, 3)), 0.49, 0.1)],
+        replies=[(lead_joint((0, 1)), 0.4)],
+        kept=1.0,
+        hidden=True,
+        typical=0.52,
+    )
+    text = AD.advice_text(adv, LOG)
+    assert "Team preview. Your win chance now: 50%; after typical leads: 52%." in text
+    first = next(x for x in text.splitlines() if x.strip().startswith("1."))
+    assert "lead Kingambit and Dragonite: 56% (+4 against typical leads)" in first
+    assert "players lead them 20%" in first
+    assert "lead Basculegion and Incineroar: 40%" in text  # their likeliest leads
+
+
+@pytest.mark.skipif(
+    not all(p.exists() for p in NEEDS) or not os.environ.get("WPA_SLOW"),
+    reason="about a minute (set WPA_SLOW=1)",
+)
+def test_lead_advice_from_team_preview_alone(monkeypatch):
+    import argparse
+
+    from wpa import attribution as A
+
+    def model(models, fmt, groups):
+        return lambda X: 1 / (1 + np.exp(-np.asarray(X, float).mean(axis=1) / 50))
+
+    monkeypatch.setattr(A, "wp_model", model)
+    moves = ROOT / "build"
+    a = argparse.Namespace(
+        dex_tables=None,
+        showdown=ROOT / "pokemon-showdown",
+        moves_dir=moves if (moves / "moves_regma.json").exists() else None,
+        usage=ROOT / "usage_stats",
+        bring=ROOT / "models_v4" / "bring.json",
+        policy=ROOT / "models_v4" / "policy.json",
+        models=None,
+        groups="ABCDEFGHIJ",
+        resolution=0.05,
+        cap=300,
+        top=6,
+        draws=6,
+        alternatives=10,
+        hidden_sets=True,
+        public_models=None,
+        leads=ROOT / "models_v4" / "leads.json",
+    )
+    tools = A._tools(a)
+    tag, log = AD.preview_log(TEAM, THEIRS, "regma", now=1781792080)
+    adv = AD.advise_preview(tag, log, "regma", tools, "p1")
+    assert adv.turn == 0 and adv.hidden
+    assert len(adv.choices) == 15  # every pair of six
+    vals = [v for _j, v, _p in adv.choices]
+    assert vals == sorted(vals, reverse=True)
+    assert sum(p for _j, _v, p in adv.choices) == pytest.approx(1.0)
+    assert sum(q for _j, q in adv.replies) == pytest.approx(1.0)
+    assert "Team preview" in AD.advice_text(adv, log)
+
+
+def test_their_species_as_you_type_them():
+    from tests.test_hidden import DEX
+
+    known = {"incineroar", "floetteeternal", "floettemega", "rillaboom"}
+    assert AD.species_name("incineroar", DEX, known) == "Incineroar"
+    # the app's name for a form the format allows only one way
+    assert AD.species_name("Floette", DEX, known) == "Floette-Eternal"
+    with pytest.raises(RP.ReplayError, match="Pikachuu"):
+        AD.species_name("Pikachuu", DEX, known)
+    with pytest.raises(RP.ReplayError, match="did you mean Rillaboom"):
+        AD.species_name("Rilaboom", DEX, known)
