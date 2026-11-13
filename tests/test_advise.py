@@ -265,6 +265,130 @@ def test_lead_advice_from_team_preview_alone(monkeypatch):
     assert "Team preview" in AD.advice_text(adv, log)
 
 
+# --------------------------------------------------------------------------
+# Team preview as the app asks it: pick four, the first two you pick lead
+# --------------------------------------------------------------------------
+
+
+def test_the_back_two_are_the_two_players_bring_most_with_those_leads():
+    # the bring model's odds: Sneasler (3) and Sinistcha (5) brought most
+    odds = [0.5, 0.5, 0.6, 0.9, 0.2, 0.8]
+    assert AD.usual_back(odds, (0, 1)) == (3, 5)
+    assert AD.usual_back(odds, (3, 5)) == (0, 2)  # a tie: the earlier position
+
+
+def test_pick_advice_keeps_the_leads_ranking_and_adds_the_usual_back(monkeypatch):
+    """The model's value of a back two did not predict results (Week 12: 892
+    validation games), so the leads are ranked and the back two are the usual."""
+    from types import SimpleNamespace as NS
+
+    from wpa.attribution import lead_joint
+
+    leads = AD.Advice(
+        TAG,
+        0,
+        "p1",
+        0.5,
+        [(lead_joint((0, 1)), 0.56, 0.2), (lead_joint((3, 5)), 0.49, 0.1)],
+        [(lead_joint((0, 1)), 0.4)],
+        1.0,
+        True,
+        0.52,
+        "preview",
+    )
+    monkeypatch.setattr(AD, "advise_preview", lambda *a, **k: leads)
+    odds = [0.5, 0.5, 0.6, 0.9, 0.2, 0.8]
+    tools = NS(bring=NS(odds=lambda fmt, species, prev: odds))
+    adv = AD.advise_bring(TAG, LOG, "regma", tools, "p1")
+    assert adv.kind == "bring" and adv.typical == 0.52
+    assert [c for c, _v, _p in adv.choices] == [
+        AD.Pick((0, 1), (3, 5)),
+        AD.Pick((3, 5), (0, 2)),
+    ]
+    assert [(v, p) for _c, v, p in adv.choices] == [(0.56, 0.2), (0.49, 0.1)]
+    assert adv.replies == leads.replies
+
+
+def test_the_pick_reads_in_words():
+    from wpa.attribution import lead_joint
+
+    adv = AD.Advice(
+        tag=TAG,
+        turn=0,
+        role="p1",
+        wp=0.5,
+        choices=[
+            (AD.Pick((0, 1), (2, 3)), 0.56, 0.2),
+            (AD.Pick((2, 4), (0, 5)), 0.49, 0.05),
+        ],
+        replies=[(lead_joint((0, 1)), 0.4)],
+        kept=1.0,
+        hidden=True,
+        typical=0.52,
+        kind="bring",
+    )
+    text = AD.advice_text(adv, LOG)
+    assert "Team preview. Your win chance now: 50%; after typical leads: 52%." in text
+    assert "the first two you pick lead" in text
+    assert "the two players most often bring with those leads" in text
+    first = next(x for x in text.splitlines() if x.strip().startswith("1."))
+    assert (
+        "pick Kingambit and Dragonite (they lead), then Gholdengo and Sneasler: "
+        "56% (+4 against typical leads)" in first
+    )
+    assert "players lead them 20%" in first
+    assert "lead Basculegion and Incineroar: 40%" in text  # their likeliest leads
+
+
+@pytest.mark.skipif(
+    not all(p.exists() for p in NEEDS) or not os.environ.get("WPA_SLOW"),
+    reason="about a minute (set WPA_SLOW=1)",
+)
+def test_pick_advice_from_team_preview_alone(monkeypatch):
+    import argparse
+
+    from wpa import attribution as A
+
+    def model(models, fmt, groups):
+        return lambda X: 1 / (1 + np.exp(-np.asarray(X, float).mean(axis=1) / 50))
+
+    monkeypatch.setattr(A, "wp_model", model)
+    moves = ROOT / "build"
+    a = argparse.Namespace(
+        dex_tables=None,
+        showdown=ROOT / "pokemon-showdown",
+        moves_dir=moves if (moves / "moves_regma.json").exists() else None,
+        usage=ROOT / "usage_stats",
+        bring=ROOT / "models_v4" / "bring.json",
+        policy=ROOT / "models_v4" / "policy.json",
+        models=None,
+        groups="ABCDEFGHIJ",
+        resolution=0.05,
+        cap=300,
+        top=6,
+        draws=6,
+        alternatives=10,
+        hidden_sets=True,
+        public_models=None,
+        leads=ROOT / "models_v4" / "leads.json",
+    )
+    tools = A._tools(a)
+    tag, log = AD.preview_log(TEAM, THEIRS, "regma", now=1781792080)
+    adv = AD.advise_bring(tag, log, "regma", tools, "p1")
+    assert adv.kind == "bring" and adv.hidden
+    assert len(adv.choices) == 15  # every pair of leads, with its usual back two
+    for c, _v, _p in adv.choices:
+        assert len(set(c.leads + c.back)) == 4
+    vals = [v for _j, v, _p in adv.choices]
+    assert vals == sorted(vals, reverse=True)
+    assert sum(p for _j, _v, p in adv.choices) == pytest.approx(1.0)
+    assert sum(q for _j, q in adv.replies) == pytest.approx(1.0)
+    assert "(they lead)" in AD.advice_text(adv, log)
+    # from the app: their six as typed, the names the format's statistics know
+    six = ["Incineroar", "Sneasler", "Floette", "Garchomp", "Kingambit", "Basculegion"]
+    assert "(they lead)" in AD.pick_advice(TEAM, six, "regma", tools)
+
+
 def test_their_species_as_you_type_them():
     from tests.test_hidden import DEX
 

@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -72,14 +72,18 @@ class Advice:
     turn: int
     role: str
     wp: float  # the player's win chance now
-    choices: list[tuple[Joint, float, float]]  # best first: chance after, how often
+    # best first: the choice (a joint, or a `Pick` at "bring"), chance after,
+    # how often players make it
+    choices: list[tuple[Any, float, float]]
     replies: list[tuple[Joint, float]]  # their likeliest replies, with chances
     kept: float  # the share of their replies' chance taken exactly
     hidden: bool  # the opponent's sheet hidden
     # the player's chance after a typical choice (their likely choices, as §3's
     # typical choice): what playing the turn out gives, whatever they choose
     typical: float = float("nan")
-    kind: str = "turn"  # "turn", "preview" or "replacement" (a forced switch)
+    # "turn", "preview" (the leads), "bring" (team preview as the app asks it:
+    # four to pick, the first two lead) or "replacement" (a forced switch)
+    kind: str = "turn"
 
 
 @dataclass
@@ -95,7 +99,7 @@ class _Point:
     theirs: list | None  # the other's side with believed items (sheet hidden)
     fld: object
     rv: object
-    bw: object
+    bw: Any
     wp: float
     pol_spreads: dict
     odds: Any
@@ -342,6 +346,57 @@ def advise_preview(
     )
 
 
+class Pick(NamedTuple):
+    """Team preview as the app asks it: four Pokemon (sheet positions) in the
+    order you pick them; the first two lead."""
+
+    leads: tuple[int, ...]
+    back: tuple[int, ...]
+
+
+def usual_back(odds: Sequence[float], leads: Iterable[int]) -> tuple[int, ...]:
+    """The two players most often bring with these leads: the likeliest four
+    that holds them by the bring model's odds (`wpa.bring.set_chances`), less
+    the leads. A tie goes to the earlier sheet positions."""
+    from wpa.bring import set_chances
+
+    chances = set_chances(list(odds), set(leads))
+    four = max(sorted(chances, key=sorted), key=lambda f: chances[f])
+    return tuple(sorted(four - set(leads)))
+
+
+def advise_bring(
+    tag: str,
+    log: str,
+    fmt: str,
+    tools,
+    role: str,
+    prev: Mapping[str, frozenset[str]] | None = None,
+) -> Advice:
+    """Team preview as the app asks it: four to pick, the first two leading.
+    The leads are ranked as `advise_preview` ranks them. With each pair of
+    leads, the back two players most often bring with them (the bring model):
+    the model does not rank back twos. On the 892 games of the resolver check's
+    sample (validation, Week 12), its win chance at turn 1's start moved 6 to 8
+    points between fours with the same leads, but for the four actually brought
+    it predicted the result no better than for the others (it did better in
+    50% of comparisons, in each format)."""
+    from wpa.team_sheets import sheets_from_log
+
+    adv = advise_preview(tag, log, fmt, tools, role, prev)
+    mons = sheets_from_log(log)[role]
+    odds = (
+        tools.bring.odds(fmt, tuple(m.species for m in mons), None)
+        if tools.bring is not None
+        else [1.0] * len(mons)
+    )
+    choices: list[tuple[Any, float, float]] = []
+    for j, v, p in adv.choices:
+        leads = tuple(sorted(int(a.switch_to or 0) for a in j))
+        choices.append((Pick(leads, usual_back(odds, leads)), v, p))
+    return replace(adv, choices=choices, kind="bring")
+
+
 def up_to_switch(log: str, turn: int | None) -> str:
     """The log up to the forced switch after `turn` (or after the last turn the
     log reaches, when None): its end of turn (`|upkeep`), with an empty block
@@ -573,17 +628,23 @@ def advice_text(
     names = move_names(log, dex_moves)
     who = players(log)
     other = "p2" if adv.role == "p1" else "p1"
-    kind = "preview" if adv.kind == "preview" or adv.turn == 0 else adv.kind
-    pre = kind == "preview"
+    kind = "preview" if adv.kind == "turn" and adv.turn == 0 else adv.kind
+    pre = kind in ("preview", "bring")  # their side: likely leads
     typical = "typical leads" if pre else "a typical choice"
     head = {
         "preview": "Team preview.",
+        "bring": "Team preview.",
         "turn": f"Turn {adv.turn}.",
         "replacement": f"After turn {adv.turn}: a forced switch.",
     }[kind]
     intro = {
         "preview": "Your leads, best first: your win chance at turn 1's start, on "
         "average over their likely leads, and against typical leads.",
+        "bring": "Which four to pick (the first two you pick lead), best leads "
+        "first: your win chance at turn 1's start, on average over their likely "
+        "leads, and against typical leads. The back two are the two players most "
+        "often bring with those leads: the model cannot yet tell which back two "
+        "win more.",
         "turn": "Your likely choices, best first: your win chance after this turn, "
         "on average over their likely replies, and against a typical choice.",
         "replacement": "Who to send in, best first: your win chance at the next "
@@ -592,6 +653,7 @@ def advice_text(
     }[kind]
     theirs = {
         "preview": "Their likeliest leads (the model's chances):",
+        "bring": "Their likeliest leads (the model's chances):",
         "turn": "Their likeliest replies (the model's chances):",
         "replacement": "Their likeliest switch-ins (the model's chances):",
     }[kind]
@@ -606,8 +668,17 @@ def advice_text(
         lines[-1:] = [HIDDEN_NOTE.split(" Team preview")[0], ""]
     lines.append(intro)
     for n, (j, v, p) in enumerate(adv.choices[:top], 1):
-        words = say_choice(joint_json(j), kind, adv.role, sheets, names)
-        often = f"players lead them {pct(p)}" if pre else f"players choose it {pct(p)}"
+        if kind == "bring":
+            mine = sheets[adv.role]
+            a, b = (mine[i] for i in j.leads)
+            c, d = (mine[i] for i in j.back)
+            words = f"pick {a} and {b} (they lead), then {c} and {d}"
+            often = f"players lead them {pct(p)}"
+        else:
+            words = say_choice(joint_json(j), kind, adv.role, sheets, names)
+            often = (
+                f"players lead them {pct(p)}" if pre else f"players choose it {pct(p)}"
+            )
         lines.append(
             f"  {n}. {words}: {pct(v)} ({shown(adv.typical, v)} against {typical}); "
             + often
@@ -617,7 +688,9 @@ def advice_text(
     else:
         lines += ["", theirs]
         for j, q in adv.replies[:top]:
-            words = say_choice(joint_json(j), kind, other, sheets, names)
+            words = say_choice(
+                joint_json(j), "preview" if pre else kind, other, sheets, names
+            )
             lines.append(f"  {words}: {pct(q)}")
     lines += [
         "",
@@ -636,6 +709,19 @@ def lead_advice(team: str, theirs: Sequence[str], fmt: str, tools, top: int = 5)
     names = [species_name(s, dex, known) for s in theirs]
     tag, log = preview_log(team, names, fmt)
     adv = advise_preview(tag, log, fmt, tools, "p1")
+    return advice_text(adv, log, dex.moves, top)
+
+
+def pick_advice(team: str, theirs: Sequence[str], fmt: str, tools, top: int = 5) -> str:
+    """Team preview as the app asks it, in words: which four to pick and which
+    two lead, from your team paste and their six species as typed, their sheet
+    hidden."""
+    tag, log = preview_log(team, theirs, fmt)  # checks there are six
+    dex = tools.dexes[fmt]
+    known = set(tools.hidden.for_game(tag, log))
+    names = [species_name(s, dex, known) for s in theirs]
+    tag, log = preview_log(team, names, fmt)
+    adv = advise_bring(tag, log, fmt, tools, "p1")
     return advice_text(adv, log, dex.moves, top)
 
 
@@ -672,8 +758,8 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     from wpa.bring import brought_from_log
 
     p = argparse.ArgumentParser(
-        description="Your best choice at a turn's start, or your best leads at "
-        "team preview, against their likely replies."
+        description="Your best choice at a turn's start, your best four and leads "
+        "at team preview, or who to send in, against their likely replies."
     )
     p.add_argument("game", nargs="?", help="a replay link, or a saved replay or log")
     p.add_argument("--player", help="your name in the game")
@@ -687,7 +773,7 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     p.add_argument(
         "--vs",
         help="team preview from the app: their six species, separated by commas "
-        "(with --team and --format)",
+        "(with --team and --format); which four to pick, the first two leading",
     )
     p.add_argument(
         "--session",
@@ -726,8 +812,8 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
         A._init(RP._options(a))
         tools = A._W["tools"]
 
-        def answer(names: list[str]) -> str:
-            return lead_advice(team, names, a.format, tools, a.top)
+        def answer(names: list[str]) -> str:  # the four to pick, as the app asks
+            return pick_advice(team, names, a.format, tools, a.top)
 
         if a.session:
             run_session(input, answer, print)

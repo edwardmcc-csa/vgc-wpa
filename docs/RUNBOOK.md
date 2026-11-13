@@ -1425,8 +1425,9 @@ python -m wpa.advise LINK --player "your Showdown name" --turn 3
   `--hidden` reads their sheet as hidden.
 - `--top 10` shows ten choices instead of five.
 
-**Team preview: which two to lead.** From the app, type their six species as
-team preview shows them, with your team paste:
+**Team preview: which four to pick.** From the app, type their six species as
+team preview shows them, with your team paste. It answers as the app asks:
+four Pokemon in the order to pick them, the first two leading.
 ```
 python -m wpa.advise --vs "Incineroar, Sneasler, Floette, Garchomp, Kingambit, Basculegion" --team my_team.txt --format regma
 ```
@@ -1435,9 +1436,15 @@ python -m wpa.advise --vs "Incineroar, Sneasler, Floette, Garchomp, Kingambit, B
   names.
 - Their sheet is hidden, as in the app, so it needs Section 23 step 3's model.
 - Each pair of your leads is valued at turn 1's start, after both sides' leads
-  come in, against their likely leads (the lead model). Your back two are not
-  valued.
-- For a game already played: the replay link with `--preview` (and `--player`).
+  come in, against their likely leads (the lead model).
+- The back two with each pair are the two players most often bring with those
+  leads (the bring model), not ranked. On the 892 validation games of the
+  resolver check, the model's win chance moved 6 to 8 points between fours with
+  the same leads, but for the four actually brought it predicted the result no
+  better than for the others.
+- It takes about a second once loaded.
+- For a game already played: the replay link with `--preview` (and `--player`)
+  ranks the leads only.
 - **While you play, game after game:** `--session` loads once (about 20
   seconds), then answers each team preview in about a second. Type their six
   species when it asks; `q` stops it.
@@ -1463,8 +1470,8 @@ sides' newcomers come in, against theirs when they have a forced switch too.
 - Their likeliest replies, with the model's chances.
 
 **Limits**
-- A turn's start, team preview's leads and a forced switch; not which four to
-  bring.
+- A turn's start, team preview and a forced switch. At team preview the back
+  two are the usual ones, not the model's pick.
 - It does not read the board off your phone yet.
 - "The best" is the best of your 10 likeliest choices against the replies the
   model expects: a coaching number, not a solver's answer.
