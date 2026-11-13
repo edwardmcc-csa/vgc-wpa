@@ -38,7 +38,13 @@ from pathlib import Path
 
 from wpa.choices import Action
 from wpa.decisions import PROTECT_MOVES, STATS, to_id
-from wpa.spreads import Spread, damage_request, default_spread, speed_request
+from wpa.spreads import (
+    ALLY_BOOSTS,
+    Spread,
+    damage_request,
+    default_spread,
+    speed_request,
+)
 from wpa.team_sheets import Dex, SheetMon, form_of
 
 ROLES = ("p1", "p2")
@@ -1916,6 +1922,25 @@ class Resolver:
         for s in SCREENS:
             f[s] = bool(w.fld.sides[tgt[0]].get(s)) and tgt[0] != role
         f["helpinghand"] = (role, a.user) in w.helped
+        # abilities on the field that change damage (found by the resolver
+        # check, Week 12): Fairy and Dark Aura, whoever holds them; Friend Guard
+        # on the target's ally; Battery, Power Spot and the like on the user's
+        on = {
+            (r, j): self.ability(r, j, x)
+            for r in ROLES
+            for j, x in enumerate(w.sides[r])
+            if x["active"] and not x["fainted"]
+        }
+        f["fairyaura"] = "fairyaura" in on.values()
+        f["darkaura"] = "darkaura" in on.values()
+        f["friendguard"] = any(
+            ab == "friendguard" and k[0] == tgt[0] and k != tuple(tgt)
+            for k, ab in on.items()
+        )
+        for boost in sorted(ALLY_BOOSTS):
+            f[boost] = any(
+                ab == boost and k[0] == role and k[1] != a.user for k, ab in on.items()
+            )
         down = {r: sum(bool(x["fainted"]) for x in w.sides[r]) for r in ROLES}
         key = (
             role,

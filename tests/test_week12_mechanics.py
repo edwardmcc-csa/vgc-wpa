@@ -128,3 +128,45 @@ def test_the_board_keeps_a_binding_until_it_ends_or_the_pokemon_leaves():
     assert "bound" not in _mon(at_turn_start(log, 3), 0)  # it ended
     assert _mon(at_turn_start(log, 4), 1)["bound"] == 8
     assert "bound" not in _mon(at_turn_start(log, 5), 1)  # it left the field
+
+
+def _mean_lost(rv, b, acts, side="p1", idx=0):
+    outs = rv.resolve(b, R.Field(), acts)
+    return sum(o.prob * (1 - o.sides[side][idx]["hp_fraction"]) for o in outs)
+
+
+@needs_showdown
+@pytest.mark.parametrize(
+    ("holder", "ability", "ratio"),
+    [
+        # Fairy Aura on the field, whoever holds it: Fairy moves x 5448/4096
+        (("p1", 1), "fairyaura", 5448 / 4096),
+        # Friend Guard on the target's ally: x 0.75
+        (("p1", 1), "friendguard", 0.75),
+        # (Battery, Power Spot and the like on the attacker's ally are passed
+        # too, but the calculator's Champions rules do not use them)
+    ],
+)
+def test_auras_and_allies_change_the_damage(tools, holder, ability, ratio):
+    """Found by the resolver check: Mega Floette's Fairy Aura (Light of Ruin in
+    game 2608046888) was not passed to the calculator."""
+    dex, moves, calc = tools
+    acts = {
+        "p1": (
+            Action(0, "move", move="swordsdance"),
+            Action(1, "move", move="protect"),
+        ),
+        "p2": (
+            Action(0, "move", move="swordsdance"),
+            Action(1, "move", move="moonblast", target=("foe", 0)),
+        ),
+    }
+    plain = R.Resolver(dex, moves, calc, SHEETS, SPREADS)
+    role, i = holder
+    mons = list(SHEETS[role])
+    old = mons[i]
+    mons[i] = SheetMon(old.position, old.species, old.item, ability, old.moves, "")
+    sheets = {**SHEETS, role: tuple(mons)}
+    with_it = R.Resolver(dex, moves, calc, sheets, SPREADS)
+    got = _mean_lost(with_it, board(), acts) / _mean_lost(plain, board(), acts)
+    assert got == pytest.approx(ratio, rel=0.04)
