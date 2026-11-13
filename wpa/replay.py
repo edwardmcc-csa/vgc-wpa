@@ -168,6 +168,185 @@ def side_of(log: str, player: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# A game without team sheets (Week 12 Task 5)
+# --------------------------------------------------------------------------
+
+_STATS = {
+    "hp": "hp",
+    "atk": "atk",
+    "def": "def",
+    "spa": "spa",
+    "spd": "spd",
+    "spe": "spe",
+}
+_STAT_ORDER = ("hp", "atk", "def", "spa", "spd", "spe")
+
+
+def parse_team(text: str) -> list[dict]:
+    """A team as Showdown exports it (and PokePaste shows it): each Pokemon's
+    name, species, gender, item, ability, level, nature, stat points (EVs) and
+    moves, as written."""
+    out = []
+    for block in re.split(r"\n\s*\n", text.replace("\r\n", "\n").strip()):
+        lines = [x.strip() for x in block.split("\n") if x.strip()]
+        if not lines:
+            continue
+        head, _, item = lines[0].partition(" @ ")
+        head, gender = head.strip(), ""
+        found = re.search(r" \(([MF])\)$", head)
+        if found:
+            gender, head = found.group(1), head[: found.start()]
+        found = re.fullmatch(r"(.+?) \((.+)\)", head)
+        name, species = (found.group(1), found.group(2)) if found else (head, head)
+        mon = {
+            "name": name,
+            "species": species,
+            "gender": gender,
+            "item": item.strip(),
+            "ability": "",
+            "level": 50,
+            "nature": "",
+            "evs": {},
+            "moves": [],
+        }
+        for x in lines[1:]:
+            if x.startswith("Ability:"):
+                mon["ability"] = x[len("Ability:") :].strip()
+            elif x.startswith("Level:"):
+                mon["level"] = int(x[len("Level:") :].strip() or 50)
+            elif x.startswith("EVs:"):
+                for part in x[len("EVs:") :].split("/"):
+                    n, _, stat = part.strip().partition(" ")
+                    key = _STATS.get(to_id(stat))
+                    if key and n.isdigit():
+                        mon["evs"][key] = int(n)
+            elif x.endswith(" Nature"):
+                mon["nature"] = x[: -len(" Nature")].strip()
+            elif x.startswith("-"):
+                mon["moves"].append(x.lstrip("-~ ").split(" [")[0].strip())
+        out.append(mon)
+    return out
+
+
+def has_sheets(log: str) -> bool:
+    """Whether the log shows both players' team sheets."""
+    return {x.split("|")[2] for x in log.split("\n") if x.startswith("|showteam|")} >= {
+        "p1",
+        "p2",
+    }
+
+
+def _packed(mon: Mapping) -> str:
+    evs = mon.get("evs") or {}
+    ev = ",".join(str(evs.get(k, 0)) for k in _STAT_ORDER) if evs else ""
+    species = mon["species"] if mon["name"] != mon["species"] else ""
+    return "|".join(
+        [
+            mon["name"],
+            species,
+            mon.get("item", ""),
+            mon.get("ability", ""),
+            ",".join(mon.get("moves") or ()),
+            mon.get("nature", ""),
+            ev,
+            mon.get("gender", ""),
+            "",
+            "",
+            str(mon.get("level", 50)),
+            "",
+        ]
+    )
+
+
+def with_sheets(log: str, role: str, team: str) -> str:
+    """A log that shows no team sheets, with `|showteam|` lines put in where
+    Showdown puts them (after team preview starts): `role`'s from its team
+    paste, in team preview's order; the other's with the species team preview
+    shows and nothing else, as a closed-sheet game shows it. A log that shows
+    the sheets comes back as it is."""
+    if has_sheets(log):
+        return log
+    lines = log.split("\n")
+    preview: dict[str, list[dict]] = {"p1": [], "p2": []}
+    for x in lines:
+        p = x.split("|")
+        if x.startswith("|poke|") and len(p) > 3 and p[2] in preview:
+            details = [d.strip() for d in p[3].split(",")]
+            level = next((d[1:] for d in details if re.fullmatch(r"L\d+", d)), "50")
+            gender = next((d for d in details if d in ("M", "F")), "")
+            preview[p[2]].append(
+                {
+                    "name": details[0],
+                    "species": details[0],
+                    "gender": gender,
+                    "level": int(level),
+                }
+            )
+    if not preview["p1"] or not preview["p2"]:
+        raise ReplayError("this game has no team preview to read the teams from")
+    left = parse_team(team)
+    mine = []
+    for shown in preview[role]:
+        sp = to_id(shown["species"].replace("-*", ""))
+        hit = next((m for m in left if to_id(m["species"]) == sp), None) or next(
+            (
+                m
+                for m in left
+                if to_id(m["species"]).startswith(sp)
+                or sp.startswith(to_id(m["species"]))
+            ),
+            None,
+        )
+        if hit is None:
+            raise ReplayError(
+                f"your team paste has no {shown['species']}: give the team you "
+                "played in this game"
+            )
+        left.remove(hit)
+        mine.append(hit)
+    other = "p2" if role == "p1" else "p1"
+    show = [
+        f"|showteam|{role}|" + "]".join(_packed(m) for m in mine),
+        f"|showteam|{other}|" + "]".join(_packed(m) for m in preview[other]),
+    ]
+    at = next(
+        (i + 1 for i, x in enumerate(lines) if x.startswith("|teampreview")),
+        max(i for i, x in enumerate(lines) if x.startswith("|poke|")) + 1,
+    )
+    return "\n".join(lines[:at] + show + lines[at:])
+
+
+def prepare(
+    games: Sequence[tuple[str, str, str]],
+    player: str | None,
+    team: str | None,
+    hidden: bool = False,
+) -> tuple[list[tuple[str, str, str]], bool]:
+    """The games to analyse, and whether with the opponent's sheet hidden: so
+    when asked (`hidden`), and always for a game that shows no team sheets,
+    whose log then gets the player's sheet from their team paste."""
+    out = []
+    for tag, log, fmt in games:
+        if not has_sheets(log):
+            if not team or not player:
+                raise ReplayError(
+                    "this game shows no team sheets: give your team with --team "
+                    "(a team paste, as Showdown exports it) and your name with "
+                    "--player"
+                )
+            log, hidden = with_sheets(log, side_of(log, player), team), True
+        out.append((tag, log, fmt))
+    return out, hidden
+
+
+HIDDEN_NOTE = (
+    "Their team sheet was hidden: their moves, items and abilities are the "
+    "likeliest from the usage statistics and what the game showed. Team preview "
+    "and forced switches are not split."
+)
+
+
+# --------------------------------------------------------------------------
 # What happened, from the log
 # --------------------------------------------------------------------------
 
@@ -673,6 +852,8 @@ def game_report(
         f"https://{SITE}/{tag}",
         "",
     ]
+    if any(r.get("sheets") == "hidden" for r in records):
+        lines[-1:] = [HIDDEN_NOTE, ""]
     mine = _mine(records, role)
     if not mine:
         return "\n".join(lines + ["Nothing in this game could be analysed."])
@@ -817,6 +998,8 @@ def _options(a: argparse.Namespace) -> argparse.Namespace:  # pragma: no cover
         speed_beliefs=False,
         leads=Path("models_v4/leads.json"),
         replace=Path("models_v4/replace.json"),
+        hidden_sets=bool(getattr(a, "hidden", False)),
+        public_models=getattr(a, "public_models", None) or Path("models_v4_preview"),
     )
 
 
@@ -828,7 +1011,8 @@ def analyse(
 
     a.out.mkdir(parents=True, exist_ok=True)
     prev = A.previous_leads([(tag, log) for tag, log, _f in games])
-    saved = {tag: a.out / f"{tag}.jsonl" for tag, _l, _f in games}
+    end = "-hidden" if getattr(a, "hidden", False) else ""
+    saved = {tag: a.out / f"{tag}{end}.jsonl" for tag, _l, _f in games}
     jobs = [
         (tag, log, fmt, True, prev.get(tag, {}))
         for tag, log, fmt in games
@@ -878,6 +1062,20 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     p.add_argument("--models", type=Path, default=None)
     p.add_argument("--moves-dir", type=Path, default=None)
     p.add_argument("--dex-tables", type=Path, default=None)
+    p.add_argument(
+        "--team",
+        type=Path,
+        default=None,
+        help="your team paste (as Showdown exports it), for a game that shows "
+        "no team sheets",
+    )
+    p.add_argument(
+        "--hidden",
+        action="store_true",
+        help="read the game with the opponent's sheet hidden, as if it had not "
+        "been shown",
+    )
+    p.add_argument("--public-models", type=Path, default=Path("models_v4_preview"))
     a = p.parse_args(argv)
     # a console or file that cannot show a character shows "?" instead of failing
     reconfigure = getattr(sys.stdout, "reconfigure", None)
@@ -891,7 +1089,14 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
         if a.player:
             for tag, log, _f in games:
                 side_of(log, a.player)  # before the long part, not after
-    except ReplayError as e:
+        team = a.team.read_text(encoding="utf-8") if a.team else None
+        games, a.hidden = prepare(games, a.player, team, a.hidden)
+        if a.hidden and not (a.public_models / "regma").exists():
+            raise ReplayError(
+                "reading a game with the opponent's sheet hidden needs the model "
+                f"trained that way, in {a.public_models} (Runbook Section 23, step 3)"
+            )
+    except (ReplayError, OSError) as e:
         sys.exit(f"Sorry: {e}.")
     recs = analyse(games, a)
     dex_moves = None
@@ -943,11 +1148,14 @@ __all__ = [
     "format_for",
     "from_text",
     "game_report",
+    "has_sheets",
     "label",
     "load",
     "moments",
     "mostly",
     "move_names",
+    "parse_team",
+    "prepare",
     "pts",
     "replay_id",
     "say_choice",
@@ -956,4 +1164,5 @@ __all__ = [
     "side_of",
     "tag_from_log",
     "totals",
+    "with_sheets",
 ]

@@ -1239,6 +1239,19 @@ and 20.
    python -m wpa.replay "C:\Users\you\Downloads\replay.html" --player "your Showdown name"
    ```
 
+5. **A game without team sheets, or read as if it had none** (Week 12; needs
+   Section 23 step 3's model):
+   ```
+   python -m wpa.replay LINK --player "your Showdown name" --team my_team.txt
+   ```
+   - `my_team.txt` is your team as Showdown exports it (Teambuilder, then
+     Import/Export), saved as a text file.
+   - Their sets are guessed from the usage statistics and what the game shows:
+     a move used, an item shown, an ability announced. The report says so at
+     the top. Team preview and forced switches are not split.
+   - To read a game that shows the sheets as if it had not, add `--hidden`
+     (no `--team` needed). It is saved apart from the usual reading.
+
 **What the report shows**
 - Your win probability at team preview and at the start of each turn.
 - **Over the game:** how your choices, their decisions, the dice and the
@@ -1255,7 +1268,7 @@ and 20.
 **Limits**
 - Champions VGC 2026 Reg M-A and Reg M-B only; for another format it says so
   and stops.
-- The game must show open team sheets (Champions games do).
+- A game without open team sheets needs your team paste (`--team`, step 5).
 - "The best" is the best of your 10 likeliest choices against the opponent's
   likely replies, by the model. It is a coaching number, not a solver's answer.
 
