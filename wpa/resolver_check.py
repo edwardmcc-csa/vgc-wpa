@@ -461,7 +461,7 @@ def child_command(a: argparse.Namespace, dest: Path, root: Path) -> list[str]:
         return str(p if p.is_absolute() else (Path(root) / p).resolve())
 
     cmd = [sys.executable, "-m", "wpa.resolver_check"]
-    cmd += ["--label", a.label or a.code, "--expect-code", full(dest)]
+    cmd += ["--label", run_label(a, a.code), "--expect-code", full(dest)]
     for flag, value in (
         ("--sample", a.sample),
         ("--splits", a.splits),
@@ -481,9 +481,18 @@ def child_command(a: argparse.Namespace, dest: Path, root: Path) -> list[str]:
     cmd += ["--cap", str(a.cap)]
     if a.max_games:
         cmd += ["--max-games", str(a.max_games)]
+    if a.spread_hits:
+        cmd.append("--spread-hits")
     if a.fresh:
         cmd.append("--fresh")
     return cmd
+
+
+def run_label(a: argparse.Namespace, code: str) -> str:
+    """A run's name: the code's (commit), and what it was asked to do."""
+    if a.label:
+        return a.label
+    return f"{code}-spread-hits" if a.spread_hits else code
 
 
 def _label() -> str:  # pragma: no cover - asks git
@@ -570,7 +579,7 @@ def run(a: argparse.Namespace) -> None:  # pragma: no cover - runs on the corpus
     )
     sample = load_sample(a.sample, splits)
     fmt_of = {t: f for f, ts in sample.items() for t in ts}
-    label = a.label or _label()
+    label = run_label(a, _label())
     out_dir = Path(a.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out, meta_path = out_dir / f"{label}.jsonl", out_dir / f"{label}.json"
@@ -675,6 +684,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--moves-dir", type=Path, default=None)
     p.add_argument("--dex-tables", type=Path, default=None)
     p.add_argument("--resolution", type=float, default=0.05)
+    p.add_argument(
+        "--spread-hits",
+        action="store_true",
+        help="hits branch on the likely spreads where they decide a knock-out "
+        "(Week 12 Task 4)",
+    )
     p.add_argument("--cap", type=int, default=300)
     p.add_argument("--label", default=None, help=argparse.SUPPRESS)
     p.add_argument("--expect-code", type=Path, default=None, help=argparse.SUPPRESS)
@@ -715,6 +730,7 @@ __all__ = [
     "check_turn",
     "child_command",
     "done_tags",
+    "run_label",
     "extract_code",
     "load_runs",
     "load_sample",

@@ -127,6 +127,12 @@ ON_TARGET = {"healpulse", "floralhealing", "psychup", "strengthsap"}
 PROTEAN = {"protean", "libero"}
 RETYPE = {"soak", "trickortreat", "forestscurse", "reflecttype"}
 LOSES_TYPE = {"burnup": "Fire", "doubleshock": "Electric"}
+# Week 12 Task 4: spreads only where they decide something. A spread is likely
+# with this much of the belief, at most this many per Pokemon; a hit branches on
+# them when one changes the chance of a knock-out by this much
+SPREAD_LIKELY = 0.10
+SPREAD_MOST = 3
+KO_DECIDES = 0.25
 # abilities that ignore the target's ability (here: Good as Gold)
 MOLD = {"moldbreaker", "teravolt", "turboblaze"}
 # targets a single foe: an overridden move (Encore) picks one at random
@@ -456,12 +462,18 @@ class Resolver:
         prune: float = 0.0,
         cap: int | None = None,
         dists: Mapping[tuple[str, int], Sequence[tuple[Spread, float]]] | None = None,
+        spread_hits: bool = False,
+        speed_beliefs: bool | None = None,
     ) -> None:
         self.dex, self.moves, self.calc = dex, moves, calc
         self.sheets, self.spreads = sheets, spreads
-        # each Pokemon's whole spread belief (Week 11 Task 2): move order then
-        # branches on the Speeds the evidence has not settled
+        # each Pokemon's whole spread belief: with `speed_beliefs` (Week 11 Task
+        # 2) move order branches on the Speeds the evidence has not settled; with
+        # `spread_hits` (Week 12 Task 4) a hit branches on the likely spreads
+        # where they decide whether the target is knocked out
         self.dists = dists or {}
+        self.speed_beliefs = bool(dists) if speed_beliefs is None else speed_beliefs
+        self.spread_hits = spread_hits
         self.resolution, self.prune, self.cap = resolution, prune, cap
         self.coarsest = resolution or 0.0  # the grid the last resolve needed
         self.held = 0  # the most boards the last resolve held at once in a step
@@ -510,18 +522,14 @@ class Resolver:
             out = [t for t in out if t != "Flying"] or ["Normal"]
         return out
 
-    def max_hp(self, role: str, idx: int) -> int:
-        key = (role, idx)
+    def max_hp(self, role: str, idx: int, spread: Spread | None = None) -> int:
+        sp = spread or self.spread(role, idx)
+        key = (role, idx, sp)
         if key not in self._hp:
             from wpa.spreads import _damage_mon
 
             m = _damage_mon(
-                self.sheets[role][idx],
-                {},
-                self.spread(role, idx),
-                self.dex,
-                ("hp",),
-                lambda h: 1.0,
+                self.sheets[role][idx], {}, sp, self.dex, ("hp",), lambda h: 1.0
             )
             ans = self.calc.run([{"op": "stats", "mon": m}])[0]
             self._hp[key] = int(ans["stats"]["hp"])
@@ -633,7 +641,7 @@ class Resolver:
     def _speed_dist(self, w: _World, role: str, idx: int) -> list[tuple[float, float]]:
         """The Speeds this Pokemon may have, each with its chance: from its
         spread belief where there is one, else the likeliest spread's."""
-        d = self.dists.get((role, idx))
+        d = self.dists.get((role, idx)) if self.speed_beliefs else None
         if not d or len(d) < 2:
             return [(self._speed(w, role, idx), 1.0)]
         by: dict[float, float] = {}
@@ -1871,10 +1879,21 @@ class Resolver:
         return [1 / 24, 1 / 8, 1 / 2][stage] if stage < 3 else 1.0
 
     def _damage(
-        self, w: _World, role: str, a: Action, tgt, spread: bool, crit: bool
+        self,
+        w: _World,
+        role: str,
+        a: Action,
+        tgt,
+        spread: bool,
+        crit: bool,
+        spreads: tuple[Spread | None, Spread | None] = (None, None),
     ) -> dict:
+        """The calculator's answer for one hit; `spreads`: the attacker's and
+        the target's, when not the likeliest (Task 4)."""
         from wpa.features import _board_state
 
+        sp_a = spreads[0] or self.spread(role, a.user)
+        sp_d = spreads[1] or self.spread(*tgt)
         st = w.sides[role][a.user]
         t = w.sides[tgt[0]][tgt[1]]
         f: dict[str, object] = {
@@ -1898,16 +1917,18 @@ class Resolver:
             down[role],
             down[tgt[0]],
             st.get("hits", 0),
+            sp_a,
+            sp_d,
         )
         if key in self._dmg:
             return self._dmg[key]
         req = damage_request(
             self.sheets[role][a.user],
             _board_state(st, down[role]),
-            self.spread(role, a.user),
+            sp_a,
             self.sheets[tgt[0]][tgt[1]],
             _board_state(t, down[tgt[0]]),
-            self.spread(*tgt),
+            sp_d,
             a.move,
             self.dex,
             spread=spread,
@@ -1930,15 +1951,104 @@ class Resolver:
     def _hit_distribution(
         self, w: _World, role: str, a: Action, m: Mapping, tgt, spread: bool
     ) -> list[tuple[float, int]]:
-        """(chance, damage) over crit, multi-hit count and roll; the accuracy
-        check is separate."""
+        """(chance, damage) over crit, multi-hit count and roll, and with
+        `spread_hits` over the likely spreads where they decide whether the
+        target is knocked out (Task 4; damage then in the likeliest spread's hit
+        points, so the board keeps one scale); the accuracy check is separate."""
+        base = self._rolls(w, role, a, m, tgt, spread)
+        mix = self._spread_mix(w, role, a, m, tgt, spread, base)
+        if mix is None:
+            return base
+        out: dict[int, float] = {}
+        full = self.max_hp(*tgt)
+        for pw, sa, sd in mix:
+            scale = full / self.max_hp(tgt[0], tgt[1], sd) if sd is not None else 1.0
+            for p, d in self._rolls(w, role, a, m, tgt, spread, (sa, sd)):
+                de = int(round(d * scale))
+                out[de] = out.get(de, 0.0) + pw * p
+        return sorted((p, d) for d, p in out.items())
+
+    def _likely_spreads(self, role: str, idx: int) -> list[tuple[Spread, float]]:
+        """Its likely spreads (Task 4) with their share of the belief: the
+        likeliest first, then others with at least SPREAD_LIKELY of it."""
+        base = self.spread(role, idx)
+        d = self.dists.get((role, idx)) or []
+        rest = sorted(
+            ((s, p) for s, p in d if s != base and p >= SPREAD_LIKELY),
+            key=lambda x: -x[1],
+        )[: SPREAD_MOST - 1]
+        # the likeliest's own share (the largest, if the belief does not list it)
+        top = sum(p for s, p in d if s == base) or max((p for _, p in d), default=1.0)
+        return [(base, top), *rest]
+
+    def _spread_mix(
+        self,
+        w: _World,
+        role: str,
+        a: Action,
+        m: Mapping,
+        tgt,
+        spread: bool,
+        base: list[tuple[float, int]],
+    ) -> list[tuple[float, Spread | None, Spread | None]] | None:
+        """Where another likely spread (the attacker's or the target's) moves
+        the chance of a knock-out by KO_DECIDES or more: each likely pair of the
+        side(s) that decide it, with its share; None to keep the likeliest."""
+        if not self.spread_hits or tgt == (role, a.user):
+            return None
+        t = w.sides[tgt[0]][tgt[1]]
+        full = self.max_hp(*tgt)
+        hp = round(t["hp_fraction"] * full)
+        if hp <= 0 or t.get("sub"):
+            return None
+
+        def ko(dist: list[tuple[float, int]], scale: float = 1.0) -> float:
+            return sum(p for p, d in dist if round(d * scale) >= hp)
+
+        p0 = ko(base)
+        sides = {"att": self._likely_spreads(role, a.user), "def": []}
+        sides["def"] = self._likely_spreads(*tgt)
+        decides = {}
+        for side, opts in sides.items():
+            decides[side] = False
+            for s, _p in opts[1:]:
+                pair = (s, None) if side == "att" else (None, s)
+                scale = full / self.max_hp(tgt[0], tgt[1], s) if side == "def" else 1.0
+                dist = self._rolls(w, role, a, m, tgt, spread, pair)
+                if abs(ko(dist, scale) - p0) >= KO_DECIDES:
+                    decides[side] = True
+                    break
+        if not any(decides.values()):
+            return None
+        att = sides["att"] if decides["att"] else [(sides["att"][0][0], 1.0)]
+        dfn = sides["def"] if decides["def"] else [(sides["def"][0][0], 1.0)]
+        za = sum(p for _, p in att)
+        zd = sum(p for _, p in dfn)
+        return [
+            (pa / za * pd / zd, None if i == 0 else sa, None if j == 0 else sd)
+            for i, (sa, pa) in enumerate(att)
+            for j, (sd, pd) in enumerate(dfn)
+        ]
+
+    def _rolls(
+        self,
+        w: _World,
+        role: str,
+        a: Action,
+        m: Mapping,
+        tgt,
+        spread: bool,
+        spreads: tuple[Spread | None, Spread | None] = (None, None),
+    ) -> list[tuple[float, int]]:
+        """(chance, damage) over crit, multi-hit count and roll for one pair of
+        spreads (the likeliest unless given)."""
         c = self._crit_chance(role, a, m, w, tgt)
         out: dict[int, float] = {}
         st = w.sides[role][a.user]
         for crit, pc in ((False, 1 - c), (True, c)):
             if pc <= 0:
                 continue
-            ans = self._damage(w, role, a, tgt, spread, crit)
+            ans = self._damage(w, role, a, tgt, spread, crit, spreads)
             rolls = ans.get("rolls")
             if not rolls or "error" in ans:
                 w.partial.add(f"damage:{a.move}")

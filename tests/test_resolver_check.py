@@ -373,3 +373,14 @@ def test_a_trial_run_can_stop_after_a_few_games():
     a = RC.parse_args(["--max-games", "20"])
     assert a.max_games == 20
     assert RC.parse_args([]).max_games is None
+
+
+def test_a_run_with_spread_hits_is_named_for_it_and_passes_it_on(tmp_path):
+    a = RC.parse_args(["--spread-hits"])
+    assert a.spread_hits is True
+    assert RC.run_label(a, "abc1234") == "abc1234-spread-hits"
+    assert RC.run_label(RC.parse_args([]), "abc1234") == "abc1234"
+    a = RC.parse_args(["--code", "9e9ef90", "--spread-hits"])
+    cmd = RC.child_command(a, tmp_path / "code", Path.cwd())
+    assert "--spread-hits" in cmd
+    assert cmd[cmd.index("--label") + 1] == "9e9ef90-spread-hits"

@@ -939,6 +939,9 @@ class Tools:
     # recorded beside the one reported, to measure them
     strength: float = 0.0
     measure_strengths: tuple[float, ...] = ()
+    # hits branch on the likely spreads where they decide a knock-out (Week 12
+    # Task 4); off until measured
+    spread_hits: bool = False
 
 
 @dataclass
@@ -1139,7 +1142,11 @@ def turn_setups(
                 ctxs[k].spreads,
                 resolution=tools.resolution,
                 cap=tools.cap,
-                dists=ctxs[k].dists if tools.speed_beliefs else None,
+                dists=(
+                    ctxs[k].dists if tools.speed_beliefs or tools.spread_hits else None
+                ),
+                spread_hits=tools.spread_hits,
+                speed_beliefs=tools.speed_beliefs,
             )
             bw = BoardWP(
                 tools.predict[fmt],
@@ -1849,6 +1856,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     tools.typical = not getattr(a, "no_typical", False)
     tools.speed_beliefs = bool(getattr(a, "speed_beliefs", False))
     tools.strength = strength_value(a)
+    tools.spread_hits = bool(getattr(a, "spread_hits", False))
     tools.measure_strengths = tuple(getattr(a, "measure_strengths", None) or ())
     if getattr(a, "leads", None) and Path(a.leads).exists():
         from wpa.lead_model import LeadModel
@@ -2554,6 +2562,12 @@ def main() -> None:  # pragma: no cover
         action="store_true",
         help="move order from each Pokemon's spread belief (Week 11 Task 2; "
         "2.6 times slower and no change measured, so off by default)",
+    )
+    p.add_argument(
+        "--spread-hits",
+        action="store_true",
+        help="hits branch on the likely spreads where they decide whether the "
+        "target is knocked out (Week 12 Task 4)",
     )
     p.add_argument(
         "--no-typical",
