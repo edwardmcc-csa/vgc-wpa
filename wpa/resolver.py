@@ -1925,22 +1925,20 @@ class Resolver:
         # abilities on the field that change damage (found by the resolver
         # check, Week 12): Fairy and Dark Aura, whoever holds them; Friend Guard
         # on the target's ally; Battery, Power Spot and the like on the user's
-        on = {
-            (r, j): self.ability(r, j, x)
-            for r in ROLES
-            for j, x in enumerate(w.sides[r])
-            if x["active"] and not x["fainted"]
-        }
-        f["fairyaura"] = "fairyaura" in on.values()
-        f["darkaura"] = "darkaura" in on.values()
-        f["friendguard"] = any(
-            ab == "friendguard" and k[0] == tgt[0] and k != tuple(tgt)
-            for k, ab in on.items()
-        )
-        for boost in sorted(ALLY_BOOSTS):
-            f[boost] = any(
-                ab == boost and k[0] == role and k[1] != a.user for k, ab in on.items()
+        mtype = self.move(a.move).get("type")
+        aura = {"Fairy": "fairyaura", "Dark": "darkaura"}.get(mtype or "")
+        f["fairyaura"] = f["darkaura"] = False
+        if aura:
+            f[aura] = any(
+                self.ability(r, j, x) == aura
+                for r in ROLES
+                for j, x in enumerate(w.sides[r])
+                if x["active"] and not x["fainted"]
             )
+        f["friendguard"] = self._ally_has(w, tgt[0], tgt[1], {"friendguard"})
+        mine = self._ally_has(w, role, a.user, ALLY_BOOSTS)
+        for boost in sorted(ALLY_BOOSTS):
+            f[boost] = boost == mine
         down = {r: sum(bool(x["fainted"]) for x in w.sides[r]) for r in ROLES}
         key = (
             role,
@@ -1985,6 +1983,15 @@ class Resolver:
                 req[side]["types"] = self.types(who[0], who[1], s)
         self._dmg[key] = self.calc.run([req])[0]
         return self._dmg[key]
+
+    def _ally_has(self, w: _World, role: str, idx: int, abilities) -> str:
+        """The ability among `abilities` that its active ally has, or ""."""
+        for j, x in enumerate(w.sides[role]):
+            if j != idx and x["active"] and not x["fainted"]:
+                ab = self.ability(role, j, x)
+                if ab in abilities:
+                    return ab
+        return ""
 
     def _hit_distribution(
         self, w: _World, role: str, a: Action, m: Mapping, tgt, spread: bool
