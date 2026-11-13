@@ -1321,7 +1321,10 @@ and never reads the test split.
 
 ---
 
-## 23. Week 12: the stronger opponent model and the sample again
+## 23. Week 12: the stronger opponent model, the sample again, hidden sheets
+
+Steps 1 and 2 are the week's run; steps 3 and 4 check the analysis with the
+opponent's sheet hidden (Task 5), as in a game without open team sheets.
 
 This week's run adds two things to Section 20's:
 - **Task 4's spread method** (`--spread-hits`): a hit branches on the target's
@@ -1360,6 +1363,36 @@ first: step 2 uses what it learns.
 
    At the end it prints the summary and saves it as
    `reports\attribution_week12.txt`. Send me that file.
+
+3. **The model trained with the opponent's sheet blanked** (Task 5; about 1½ to
+   2½ hours: the table, then two trainings; after step 2, so they do not share
+   the computer). Team preview's six species are known; their items,
+   abilities, moves and spreads stay hidden until the game shows them. It is
+   Section 18 step 4's build; skip the first command if `features_v4_preview`
+   is already there:
+   ```
+   python -m wpa.features --from-logs logs_shards --out features_v4_preview --groups ABCDEFGHIJ --usage usage_stats --bring models_v4/bring.json --blank --train-sample 0.2 --shards 64 --workers 4
+   python -m wpa.evaluate v2-train --format regma --groups ABCDEFGHIJ --features features_v4_preview --models models_v4_preview --one-sided
+   python -m wpa.evaluate v2-train --format pooled --groups ABCDEFGHIJ --features features_v4_preview --models models_v4_preview --one-sided
+   python -m wpa.evaluate v2-report --features features_v4_preview --models models_v4_preview --full ABCDEFGHIJ
+   ```
+   Send me `models_v4_preview\report.txt`.
+
+4. **The check with the opponent's sheet hidden** (Task 5; about 4 to 5 hours;
+   after steps 2 and 3, on the first 100 Reg M-A and 60 Reg M-B games of
+   step 2's sample). Each player's turns are analysed from what that player
+   knew: their own sheet, and the opponent's believed from the usage
+   statistics and what the game had shown.
+   ```
+   python -m wpa.attribution --models models_v4_avg --moves-dir build --workers 6 --alternatives 0 --spread-hits --hidden-sets --max-games 100 60 --out reports/attribution_hidden.jsonl
+   python -m wpa.sheet_check
+   ```
+   The second command sets each turn beside step 2's and prints how far each
+   part of the split moves, and how often the board that happened is found,
+   with the sheet hidden. It saves `reports\sheet_check.txt`. Send me that
+   file.
+   - If step 3 has not finished, the first command stops at once and says so.
+   - Ctrl+C stops it; the same command carries on.
 
 ---
 
