@@ -1409,6 +1409,38 @@ first: step 2 uses what it learns.
 
 ---
 
+## 24. Advice at a turn's start (worked ahead, Week 12)
+
+The first step toward advice during a match. Give a game and a turn: it ranks
+your likely choices by your win chance against their likely replies, valued as
+the analysis values them, as if that turn had not been played yet.
+
+```
+python -m wpa.advise LINK --player "your Showdown name" --turn 3
+```
+- It takes about half a minute.
+- Without `--turn`, it advises on the last turn the log reaches: a game so far,
+  saved as a file.
+- A game without team sheets: add `--team my_team.txt` (Section 21, step 5).
+  `--hidden` reads their sheet as hidden.
+- `--top 10` shows ten choices instead of five.
+
+**What it shows**
+- Your win chance now, and after a typical choice: what players typically
+  choose here. Playing the turn out moves everyone's chance, whatever you choose
+  (the position, DEFINITIONS §3), so each choice is shown against the typical one.
+- Your likely choices, best first: your win chance after the turn, how much
+  better or worse than a typical choice, and how often players make that choice.
+- Their likeliest replies, with the model's chances.
+
+**Limits**
+- A turn's start only: not team preview or a forced switch yet.
+- It does not read the board off your phone yet.
+- "The best" is the best of your 10 likeliest choices against the replies the
+  model expects: a coaching number, not a solver's answer.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
