@@ -59,16 +59,19 @@ only.
 - [x] Tests first.
 
 ### Task 2 — Protean, Libero and other type changes
-- [ ] **The board keeps a changed type** from the log, until the Pokemon leaves
+- [x] **The board keeps a changed type** from the log, until the Pokemon leaves
       the field: Protean, Libero, and moves that change types.
-- [ ] **The resolver:** a Pokemon with Protean or Libero becomes the type of the
+- [x] **The resolver:** a Pokemon with Protean or Libero becomes the type of the
       move it uses, as often as Showdown's Champions data allows. Damage after
       that uses the new type: the calculator is told the types.
-- [ ] Other type changes the resolver cannot play out are marked "partly
+      Once each time it comes in, and again after Mega Evolution.
+- [x] Other type changes the resolver cannot play out are marked "partly
       modelled", never passed in silence.
-- [ ] **Check:** game 2616502323, turns 7 and 8 (Reg M-A's two biggest "choices"
+- [x] **Check:** game 2616502323, turns 7 and 8 (Reg M-A's two biggest "choices"
       in Week 11), against its log.
-- [ ] Tests first.
+      Done 12 Nov: p2's choice was -53 and -56 points; now +37 and +39.
+      Earth Power knocks out the Meowscarada that Protean made Dark, as it did.
+- [x] Tests first.
 
 ### Task 3 — The stronger opponent model
 Today the opponent's likely replies come from a model of what players choose,
