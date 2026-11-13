@@ -111,6 +111,7 @@ LEAVING = (
     "typeadd",
     "protean",
     "roost",
+    "bound",
 )
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
@@ -332,6 +333,7 @@ class _World:
                 m.get("typeadd", ""),
                 m.get("protean", 0),
                 m.get("roost", 0),
+                m.get("bound", 0),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -775,6 +777,11 @@ class Resolver:
         o, n = w.sides[role][old], w.sides[role][new]
         if n["fainted"] or n["active"]:
             return False
+        if o["active"] and not o["fainted"]:
+            if self.ability(role, old, o) == "regenerator":
+                full = self.max_hp(role, old)  # a third back on leaving
+                hp = round(o["hp_fraction"] * full) + full // 3
+                o["hp_fraction"] = min(1.0, hp / full)
         o.update(active=False, boosts={}, moved=False, last_move="", protect_streak=0)
         o.pop("perish", None)  # switching out ends the count
         for k in LEAVING:  # and confusion, a charging move, Encore, Rage Fist's hits
@@ -801,6 +808,12 @@ class Resolver:
             self._set_weather(w, WEATHER_ABILITIES[ab], st.get("item") or "")
         elif ab in TERRAIN_ABILITIES:
             self._set_terrain(w, TERRAIN_ABILITIES[ab], st.get("item") or "")
+        elif ab == "hospitality":
+            # its ally gets a quarter of its hit points back (Week 12)
+            for j, x in enumerate(w.sides[role]):
+                if j != idx and x["active"] and not x["fainted"]:
+                    full = self.max_hp(role, j)
+                    self._heal(w, role, j, (full // 4) / full)
 
     def _intimidate(self, w: _World, role: str, idx: int) -> None:
         st = w.sides[role][idx]
@@ -2206,6 +2219,11 @@ class Resolver:
         if dmg > 0:
             w.hit.add(tgt)
             t["hits"] = t.get("hits", 0) + 1  # Rage Fist counts it
+            if m.get("volatileStatus") == "partiallytrapped" and not t.get("bound"):
+                # bound (Infestation and the like): a sixth with Binding
+                # Band, else an eighth, at each end of turn (Week 12)
+                band = w.sides[role][a.user].get("item") == "bindingband"
+                t["bound"] = 6 if band else 8
         if new == 0:
             self._faint(w, tgt)
         elif t.get("item") == "sitrusberry" and new <= max_hp / 2:
@@ -2494,6 +2512,16 @@ class Resolver:
                     continue
                 if "seeded" in st and ab != "magicguard":
                     self._leech(w, r, j)
+                if st["fainted"]:
+                    continue
+                if st.get("bound") and ab != "magicguard":
+                    self._lose(w, (r, j), 1 / st["bound"])
+                if (
+                    fld.weather in ("sunnyday", "desolateland")
+                    and ab == "solarpower"
+                    and st.get("item") != "utilityumbrella"
+                ):
+                    self._lose(w, (r, j), 1 / 8)
                 if st["fainted"]:
                     continue
                 if ab != "magicguard":

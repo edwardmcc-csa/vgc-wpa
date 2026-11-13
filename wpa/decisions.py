@@ -123,6 +123,7 @@ LEAVING = (
     "types",
     "typeadd",
     "protean",
+    "bound",
 )
 # what `side` passes on when present
 TRACKED = (
@@ -139,7 +140,21 @@ TRACKED = (
     "types",
     "typeadd",
     "protean",
+    "bound",
 )
+# the moves that bind (an eighth at each end of turn, for 4 or 5 turns)
+BINDING = {
+    "bind",
+    "wrap",
+    "firespin",
+    "whirlpool",
+    "sandtomb",
+    "clamp",
+    "infestation",
+    "magmastorm",
+    "snaptrap",
+    "thundercage",
+}
 
 _EFFECT_LINES = {
     "-boost",
@@ -433,6 +448,10 @@ class _Board:
             m["typeadd"] = p[4]  # Trick-or-Treat, Forest's Curse
         elif t == "-end" and what == "typechange":
             m.pop("types", None)
+        elif t == "-activate" and what in BINDING:
+            m["bound"] = 8  # an eighth each end of turn (Week 12)
+        elif t == "-end" and "[partiallytrapped]" in p[4:]:
+            m.pop("bound", None)
         elif t == "-end" and what in ("leechseed", "taunt", "yawn"):
             m.pop(
                 {"leechseed": "seeded", "taunt": "taunt", "yawn": "drowsy"}[what], None
