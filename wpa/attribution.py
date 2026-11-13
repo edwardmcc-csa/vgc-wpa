@@ -485,15 +485,22 @@ def fit_strength(
     return 0.5 * (lo_s + hi_s), curve
 
 
-def strength_value(a) -> float:
+def strength_value(a, s: str | None = None) -> float:
     """The opponent model's strength the run asks for: `--strength` as a number,
     or "fitted" for the one learned on training games (strength.json beside the
     policy); 0, the model of DEFINITIONS revision 10, when not given."""
-    s = str(getattr(a, "strength", "0") or "0")
+    s = str(s if s is not None else getattr(a, "strength", "0") or "0")
     if s == "fitted":
         path = Path(a.policy).with_name("strength.json")
         return float(json.loads(path.read_text(encoding="utf-8"))["strength"])
     return float(s)
+
+
+def measure_values(a) -> tuple[float, ...]:
+    """The strengths `--measure-strengths` names (numbers, or "fitted")."""
+    return tuple(
+        strength_value(a, str(s)) for s in getattr(a, "measure_strengths", None) or ()
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1857,7 +1864,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     tools.speed_beliefs = bool(getattr(a, "speed_beliefs", False))
     tools.strength = strength_value(a)
     tools.spread_hits = bool(getattr(a, "spread_hits", False))
-    tools.measure_strengths = tuple(getattr(a, "measure_strengths", None) or ())
+    tools.measure_strengths = measure_values(a)
     if getattr(a, "leads", None) and Path(a.leads).exists():
         from wpa.lead_model import LeadModel
 
@@ -2605,10 +2612,10 @@ def main() -> None:  # pragma: no cover
     )
     p.add_argument(
         "--measure-strengths",
-        type=float,
         nargs="*",
         default=(),
-        help="record the split at these strengths too, to measure them",
+        help="record the split at these strengths too, to measure them "
+        "(numbers, or 'fitted')",
     )
     p.add_argument(
         "--fit-strength",

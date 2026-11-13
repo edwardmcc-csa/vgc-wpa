@@ -190,3 +190,14 @@ def test_the_summary_shows_each_measured_strength(tmp_path):
     line20 = next(x for x in text.splitlines() if x.strip().startswith("strength 20:"))
     assert "their decision mean -3.0" in line0 and "their decision mean -0.5" in line20
     assert "your choice mean +3.0" in line0
+
+
+def test_the_strengths_to_measure_may_name_the_fitted_one(tmp_path):
+    import argparse
+    import json
+
+    policy = tmp_path / "policy.json"
+    (tmp_path / "strength.json").write_text(json.dumps({"strength": 17.5}))
+    a = argparse.Namespace(measure_strengths=["0", "fitted", "40"], policy=policy)
+    assert A.measure_values(a) == (0.0, 17.5, 40.0)
+    assert A.measure_values(argparse.Namespace(policy=policy)) == ()
