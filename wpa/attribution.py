@@ -372,6 +372,131 @@ def fit_sharpness(
 
 
 # --------------------------------------------------------------------------
+# The stronger opponent model (Week 12 Task 3; DEFINITIONS §7 draft)
+# --------------------------------------------------------------------------
+
+
+def strengthen(mix: Mix, worth: Sequence[float], strength: float) -> Mix:
+    """Each choice's chance also weighed by how good it is for the one choosing:
+    chance x exp(strength x worth), scaled back to 1. `worth` is on the win
+    probability scale (0 to 1). Strength 0 leaves the chances as they are."""
+    if not strength or not mix:
+        return list(mix)
+    p = np.array([q for _, q in mix], dtype=float)
+    w = np.asarray(worth, dtype=float)
+    logq = np.log(np.clip(p, 1e-300, None)) + strength * (w - w.max())
+    q = np.exp(logq - logq.max())
+    q /= q.sum()
+    return [(j, float(v)) for (j, _), v in zip(mix, q)]
+
+
+def worth(
+    value: Callable[[Joint, Joint], float], mine: Mix, theirs: Mix
+) -> list[float]:
+    """Each of `mine` against `theirs` (their chances): E[WP | it] for the one
+    choosing (`value(mine, theirs)` from its side)."""
+    return [expected(value, [(j, 1.0)], theirs) for j, _ in mine]
+
+
+def strengthened(
+    value: Callable[[Joint, Joint], float], mine: Mix, theirs: Mix, strength: float
+) -> Mix:
+    """`mine` weighed by its worth against `theirs` (`strengthen`)."""
+    if not strength:
+        return list(mine)
+    return strengthen(mine, worth(value, mine, theirs), strength)
+
+
+def strong_mixes(tv, likely_: Mapping[str, Mix], strength: float) -> dict[str, Mix]:
+    """Both sides' likely choices weighed by their worth, each against the
+    other side's likely choices as the plain model gives them (one step of
+    reasoning, so neither depends on the other's weighing). `tv`: p1's values,
+    with `for_role` (TurnValues)."""
+    if not strength:
+        return {r: list(m) for r, m in likely_.items()}
+    return {
+        r: strengthened(tv.for_role(r), likely_[r], likely_[o], strength)
+        for r, o in (("p1", "p2"), ("p2", "p1"))
+    }
+
+
+@dataclass(frozen=True)
+class StrengthSample:
+    """One choice a player made, for learning the strength: the likeliest of
+    their choices (the candidates) with their chances from the plain model,
+    each one's worth to them against the other side's likely choices, and which
+    candidate they took (-1: none of them)."""
+
+    chances: list[float]
+    worth: list[float]
+    taken: int
+
+
+def _in_fit(samples: Sequence[StrengthSample]) -> list[StrengthSample]:
+    return [s for s in samples if 0 <= s.taken < len(s.chances)]
+
+
+def mean_choice(samples: Sequence[StrengthSample], strength: float) -> float:
+    """The choice made against the model's, on average: worth(taken) minus the
+    worth the model expects, at `strength` (the candidates only)."""
+    xs = _in_fit(samples)
+    out = 0.0
+    for s in xs:
+        q = strengthen([((), p) for p in s.chances], s.worth, strength)
+        out += s.worth[s.taken] - sum(qq * w for (_, qq), w in zip(q, s.worth))
+    return out / len(xs) if xs else 0.0
+
+
+def log_likelihood(samples: Sequence[StrengthSample], strength: float) -> float:
+    """The log chance the model at `strength` gives the choices made, among the
+    candidates."""
+    out = 0.0
+    for s in _in_fit(samples):
+        q = strengthen([((), p) for p in s.chances], s.worth, strength)
+        out += float(np.log(max(q[s.taken][1], 1e-300)))
+    return out
+
+
+def fit_strength(
+    samples: Sequence[StrengthSample], hi: float = 400.0
+) -> tuple[float, list[tuple[float, float]]]:
+    """The strength that makes the choices made likeliest. Its likelihood's slope
+    is the number of choices times `mean_choice`, which falls as the strength
+    rises, so this is where the choice made averages zero against the model's:
+    0 when it is already at or below zero. With the curve (strength, average)."""
+    grid = [0.0] + list(np.exp(np.linspace(np.log(0.5), np.log(hi), 40)))
+    curve = [(float(s), mean_choice(samples, s)) for s in grid]
+    if curve[0][1] <= 0:
+        return 0.0, curve
+    lo_s, hi_s = 0.0, None
+    for s, m in curve:
+        if m <= 0:
+            hi_s = s
+            break
+        lo_s = s
+    if hi_s is None:
+        return float(hi), curve
+    for _ in range(60):
+        mid = 0.5 * (lo_s + hi_s)
+        if mean_choice(samples, mid) > 0:
+            lo_s = mid
+        else:
+            hi_s = mid
+    return 0.5 * (lo_s + hi_s), curve
+
+
+def strength_value(a) -> float:
+    """The opponent model's strength the run asks for: `--strength` as a number,
+    or "fitted" for the one learned on training games (strength.json beside the
+    policy); 0, the model of DEFINITIONS revision 10, when not given."""
+    s = str(getattr(a, "strength", "0") or "0")
+    if s == "fitted":
+        path = Path(a.policy).with_name("strength.json")
+        return float(json.loads(path.read_text(encoding="utf-8"))["strength"])
+    return float(s)
+
+
+# --------------------------------------------------------------------------
 # One turn's values: the resolver and a win-probability function
 # --------------------------------------------------------------------------
 
@@ -809,6 +934,11 @@ class Tools:
     # move order from each Pokemon's spread belief (Week 11 Task 2): off by
     # default, as it cost 2.6 times the time and changed nothing measured
     speed_beliefs: bool = False
+    # the opponent model's strength (Week 12 Task 3, DEFINITIONS §7 draft): 0, the
+    # model of revision 10, until the PO approves; and strengths whose split is
+    # recorded beside the one reported, to measure them
+    strength: float = 0.0
+    measure_strengths: tuple[float, ...] = ()
 
 
 @dataclass
@@ -1410,27 +1540,48 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     for alt in alts2 or ():
         pairs += [(x, y) for x, _ in l1 for y, _ in alt]
     tv.prepare(pairs)
+    plain = {"p1": l1, "p2": l2}
+    # each side's likely choices: the plain model, or weighed by their worth
+    # (the stronger model, Week 12 Task 3); measured strengths besides
+    strengths = [tools.strength, *tools.measure_strengths]
+    strong = {s: strong_mixes(tv, plain, s) for s in dict.fromkeys(strengths)}
     recs = []
     for r, other in (("p1", "p2"), ("p2", "p1")):
         taken, _l, _k, alts, unknown = mixes[r]
-        _t, lk, kept, _a, _u = mixes[other]
+        _t, _lk, kept, _a, _u = mixes[other]
         b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
-        sp = decompose(
-            tv.for_role(r),
-            b,
-            a,
-            taken,
-            mixes[other][0],
-            lk,
-            alts,
-            kept,
-            typical=mixes[r][1] if tools.typical else None,
-        )
+
+        def split(s: float) -> Split:
+            return decompose(
+                tv.for_role(r),
+                b,
+                a,
+                taken,
+                mixes[other][0],
+                strong[s][other],
+                alts,
+                kept,
+                typical=strong[s][r] if tools.typical else None,
+            )
+
+        sp = split(tools.strength)
         board = ts.after_board if r == "p1" else 1 - ts.after_board
         recs.append(
             dict(ts.base, role=r, unknown=unknown, after_board=board, **asdict(sp))
         )
+        if tools.strength:
+            recs[-1]["strength"] = tools.strength
+        if tools.measure_strengths:
+            recs[-1]["at_strength"] = {
+                f"{s:g}": {
+                    k: getattr(x, k)
+                    for k in ("choice", "position", "theirs", "dice", "vs_best")
+                }
+                for s in tools.measure_strengths
+                for x in (split(s),)
+            }
         if alts:
+            lk = strong[tools.strength][other]
             best = best_choice(tv.for_role(r), alts, lk, b + sp.yours)
             recs[-1]["best"] = joint_json(best) if best else None
     pairs = [(x, y) for x, _ in t1 for y, _ in t2]
@@ -1560,6 +1711,56 @@ def sharp_samples(
     return out
 
 
+def strength_samples(
+    tag: str, log: str, fmt: str, tools: Tools, most: int = 12
+) -> list[StrengthSample]:
+    """For learning the opponent model's strength (Week 12 Task 3): at each
+    turn, for each player whose choice the log shows in full, their `most`
+    likeliest choices by the plain model, each one's worth to them against the
+    other side's likely choices (as the analysis takes those), and which of them
+    they made."""
+    out: list[StrengthSample] = []
+    for ts in turn_setups(tag, log, fmt, tools):
+        if not isinstance(ts, TurnSetup):
+            continue
+        try:
+            fulls, lks, made = {}, {}, {}
+            for r in ("p1", "p2"):
+                t, opts, ch = ts.turns[r], ts.opts[r], ts.chances[r]
+                fulls[r] = mixture({i: list(zip(opts[i], ch[i])) for i in opts})
+                seed = f"{ts.base['tag']} {ts.turn} {r}"
+                lks[r], _ = likely(fulls[r], tools.top, tools.draws, seed)
+                if opts and all(
+                    isinstance(t.taken.get(i), Action) and i not in t.hidden
+                    for i in opts
+                ):
+                    made[r] = taken_mixture(t.taken, t.hidden, opts, ch)[0][0]
+            cands, pairs = {}, []
+            for r, other in (("p1", "p2"), ("p2", "p1")):
+                if r in made:
+                    cands[r] = sorted(fulls[r], key=lambda x: -x[1])[:most]
+                    pairs += [
+                        (c, y) if r == "p1" else (y, c)
+                        for c, _ in cands[r]
+                        for y, _ in lks[other]
+                    ]
+            ts.tv.prepare(pairs)
+            for r, other in (("p1", "p2"), ("p2", "p1")):
+                if r not in cands:
+                    continue
+                joints = [j for j, _ in cands[r]]
+                out.append(
+                    StrengthSample(
+                        [p for _, p in cands[r]],
+                        worth(ts.tv.for_role(r), cands[r], lks[other]),
+                        joints.index(made[r]) if made[r] in joints else -1,
+                    )
+                )
+        except Exception:  # pragma: no cover - a turn left out of the fit
+            continue
+    return out
+
+
 # --------------------------------------------------------------------------
 # The run and the report
 # --------------------------------------------------------------------------
@@ -1647,6 +1848,8 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     tools.budget = getattr(a, "budget", None) or None
     tools.typical = not getattr(a, "no_typical", False)
     tools.speed_beliefs = bool(getattr(a, "speed_beliefs", False))
+    tools.strength = strength_value(a)
+    tools.measure_strengths = tuple(getattr(a, "measure_strengths", None) or ())
     if getattr(a, "leads", None) and Path(a.leads).exists():
         from wpa.lead_model import LeadModel
 
@@ -1675,6 +1878,109 @@ def _init(a) -> None:  # pragma: no cover
 def _one_sharp(job) -> list[SharpSample]:  # pragma: no cover
     tag, log, fmt, _alt = job
     return sharp_samples(tag, log, fmt, _W["tools"])
+
+
+def _one_strength(job) -> tuple[str, str, list[StrengthSample]]:  # pragma: no cover
+    tag, log, fmt = job
+    try:
+        return tag, fmt, strength_samples(tag, log, fmt, _W["tools"])
+    except Exception:  # a game left out of the fit
+        return tag, fmt, []
+
+
+def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
+    """Learn the opponent model's strength on training sets (Week 12 Task 3).
+    Each game's samples are kept in --strength-samples, so a stopped run
+    carries on (--max-new: at most that many new games this time). The fit,
+    per format and both together, is printed and saved beside the policy
+    (strength.json, strength.txt). Nothing else changes: the analysis uses it
+    only when asked (--strength fitted)."""
+    from multiprocessing import Pool
+
+    from wpa.resolver_check import done_tags
+
+    splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
+    games = sample_sets(
+        a.logs, splits, {"regma": a.sets[0], "regmb": a.sets[1]}, split="train"
+    )
+    path = Path(a.strength_samples)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    done = done_tags(path)  # also mends a line cut off when a run stopped
+    jobs = [
+        (tag, log, fmt)
+        for fmt, gs in games.items()
+        for tag, log in gs
+        if tag not in done
+    ]
+    left = len(jobs)
+    jobs = jobs[: a.max_new] if a.max_new else jobs
+    print(f"{len(jobs)} training games to sample ({len(done)} done before)", flush=True)
+    if jobs:
+        with (
+            open(path, "a", encoding="utf-8") as f,
+            Pool(a.workers, _init, (a,)) as pool,
+        ):
+            for i, (tag, fmt, got) in enumerate(
+                pool.imap_unordered(_one_strength, jobs), 1
+            ):
+                rows = [[s.chances, s.worth, s.taken] for s in got]
+                f.write(json.dumps({"tag": tag, "format": fmt, "samples": rows}) + "\n")
+                f.flush()
+                if i % 10 == 0:
+                    print(f"{i}/{len(jobs)} games", flush=True)
+    if len(jobs) < left:
+        print(f"{left - len(jobs)} games left: the same command carries on")
+    by: dict[str, list[StrengthSample]] = {"regma": [], "regmb": []}
+    n_games: dict[str, int] = {"regma": 0, "regmb": 0}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            d = json.loads(line)
+            n_games[d["format"]] = n_games.get(d["format"], 0) + 1
+            by.setdefault(d["format"], []).extend(
+                StrengthSample(c, w, k) for c, w, k in d["samples"]
+            )
+    both = [s for xs in by.values() for s in xs]
+    fits = {f: fit_strength(xs) for f, xs in (*by.items(), ("both", both)) if xs}
+    lines = [
+        "The opponent model's strength (Week 12 Task 3), learned on training sets",
+        "  each choice weighed by chance x exp(strength x its worth); the strength",
+        "  that makes the choices players made likeliest",
+    ]
+    for f, xs in (*by.items(), ("both", both)):
+        if f not in fits:
+            continue
+        s, curve = fits[f]
+        inn = len(_in_fit(xs))
+        name = {"regma": "Reg M-A", "regmb": "Reg M-B", "both": "Both"}[f]
+        games_f = sum(n_games.values()) if f == "both" else n_games.get(f, 0)
+        lines += [
+            f"{name}: {games_f} games, {len(xs)} choices, "
+            f"{100 * inn / max(1, len(xs)):.0f}% among the 12 likeliest (the fit)",
+            f"  the choice made against the plain model: "
+            f"{100 * mean_choice(xs, 0.0):+.1f} points on average",
+            f"  learned strength {s:.1f}: {100 * mean_choice(xs, s):+.1f} points; "
+            f"log likelihood {log_likelihood(xs, 0.0):.0f} -> "
+            f"{log_likelihood(xs, s):.0f}",
+            "  the curve (strength: the choice made against the model's, points):",
+            "    " + ", ".join(f"{x:.0f}: {100 * m:+.1f}" for x, m in curve[::5]),
+        ]
+    text = "\n".join(lines)
+    print(text)
+    if "both" in fits:
+        out = Path(a.policy).with_name("strength.json")
+        out.write_text(
+            json.dumps(
+                {
+                    "strength": fits["both"][0],
+                    "by_format": {f: fits[f][0] for f in fits if f != "both"},
+                    "games": sum(n_games.values()),
+                    "choices": len(both),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        out.with_suffix(".txt").write_text(text + "\n", encoding="utf-8")
 
 
 def fit_run(a) -> None:  # pragma: no cover - runs on the corpus
@@ -1893,6 +2199,9 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
     turns = {(r["tag"], r["turn"]): r["seconds"] for r in ok}
     secs = np.array(list(turns.values()))
     head = f"{name}: {games} games, {len(ok)} decision points ({len(turns)} turns)"
+    used = {r.get("strength", 0) for r in ok}
+    if used != {0}:
+        head += f"; opponent model strength {', '.join(f'{s:g}' for s in sorted(used))}"
     if skipped:
         head += f"; left out: {skipped}"
     lines = [
@@ -1916,6 +2225,7 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
             "  your decision (revision 8: your choice + the position): "
             f"{_pts([r['yours'] for r in ok])}"
         )
+    lines += _strength_lines(ok)
     lines += [
         f"  the parts add up: largest error {err:.2e} (allowed 1e-3)",
         "  a part of 3 points or more (the reporting threshold): "
@@ -1956,8 +2266,8 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
     lines[-2:-2] = _by_cause(turns_)
     big = sorted(
         turns_.values(),
-        key=lambda d: -abs(
-            next(iter(d.values()))["after"] - next(iter(d.values()))["before"]
+        key=lambda d: (
+            -abs(next(iter(d.values()))["after"] - next(iter(d.values()))["before"])
         ),
     )[:top]
     lines += [_turn_line(d) for d in big] + [""]
@@ -1973,6 +2283,26 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
         + _forced_lines(every, top)
         + _chain_lines(every)
     )
+
+
+def _strength_lines(ok: Sequence[Mapping]) -> list[str]:
+    """The split's averages at each strength measured (Week 12 Task 3)."""
+    at = [r for r in ok if r.get("at_strength")]
+    if not at:
+        return []
+    keys = sorted({k for r in at for k in r["at_strength"]}, key=float)
+    lines = ["  the opponent model's strength (measured, Week 12 Task 3):"]
+    for k in keys:
+        xs = [r["at_strength"][k] for r in at if k in r["at_strength"]]
+        best = [x["vs_best"] for x in xs if x.get("vs_best") is not None]
+        line = (
+            f"    strength {k}: your choice {_pts([x['choice'] for x in xs])}; "
+            f"their decision {_pts([x['theirs'] for x in xs])}"
+        )
+        if best:
+            line += f"; cost vs best mean {100 * float(np.mean(best)):.1f}"
+        lines.append(line)
+    return lines
 
 
 def _preview_lines(rs: Sequence[Mapping], top: int) -> list[str]:
@@ -2253,7 +2583,37 @@ def main() -> None:  # pragma: no cover
         default=None,
         help="with --fit-sharpness: save this setting instead of the fitted one",
     )
+    p.add_argument(
+        "--strength",
+        default="0",
+        help="the opponent model's strength (Week 12 Task 3, DEFINITIONS §7 draft): "
+        "0 (revision 10's model, the default), a number, or 'fitted'",
+    )
+    p.add_argument(
+        "--measure-strengths",
+        type=float,
+        nargs="*",
+        default=(),
+        help="record the split at these strengths too, to measure them",
+    )
+    p.add_argument(
+        "--fit-strength",
+        action="store_true",
+        help="learn the opponent model's strength on training sets (--sets of them)",
+    )
+    p.add_argument(
+        "--strength-samples", type=Path, default=Path("reports/strength_samples.jsonl")
+    )
+    p.add_argument(
+        "--max-new",
+        type=int,
+        default=None,
+        help="with --fit-strength: at most this many new games this run",
+    )
     a = p.parse_args()
+    if a.fit_strength:
+        fit_strength_run(a)
+        return
     if a.fit_sharpness:
         fit_run(a)
         return
@@ -2276,6 +2636,7 @@ __all__ = [
     "BoardWP",
     "ReplacementSetup",
     "SharpSample",
+    "StrengthSample",
     "SwitchIns",
     "TurnSetup",
     "Split",
@@ -2288,6 +2649,7 @@ __all__ = [
     "expand_pivots",
     "expected",
     "fit_sharpness",
+    "fit_strength",
     "joint_from_json",
     "joint_json",
     "likely",
