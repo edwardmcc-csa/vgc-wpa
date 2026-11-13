@@ -719,7 +719,12 @@ class BoardWP:
     boards are grouped by hit points on a coarser grid (0.05, doubling) until
     the groups fit, and each group takes the value of its first board: nothing
     is dropped. The coarsest grid needed is kept in `grid`. Time per turn is
-    almost all valuing boards (about 7 ms each in Week 9's run)."""
+    almost all valuing boards (about 7 ms each in Week 9's run).
+
+    `role` (Week 12 Task 5): the board is valued from that player's own row
+    (`states`, `k` and `joined` are theirs), and given back as p1's chance.
+    `public`: the row as that player saw it, the opponent's items the game has
+    not shown left out (`features.blank_state`), for the model trained so."""
 
     def __init__(
         self,
@@ -734,9 +739,13 @@ class BoardWP:
         ctx,
         same_point: bool = False,
         budget: int | None = None,
+        role: str = "p1",
+        public: bool = False,
     ) -> None:
         self.same_point = same_point
         self.budget = budget
+        self.role = role
+        self.public = public
         self.grid = 0.0
         s0 = states[k]
         self.turn = s0["turn"]
@@ -757,9 +766,11 @@ class BoardWP:
         self._cache: dict[str, float] = {}
 
     def _row(self, ours, theirs, fld) -> list[float]:
-        from wpa.features import columns, state_features
+        from wpa import features as F
         from wpa.resolver import timers_for
 
+        if self.role == "p2":  # the board from p2's side
+            ours, theirs = theirs, ours
         board = {
             "our_pokemon": [dict(m) for m in ours],
             "opp_pokemon": [dict(m) for m in theirs],
@@ -778,11 +789,13 @@ class BoardWP:
                 decision_index=(self.s0["decision_index"] + 1) if fell else 0,
             )
             rows = [*self.prior, s]
-        j = timers_for(fld, "p1", before=self.joined)
-        f = state_features(
+        if self.public:
+            rows[-1] = F.blank_state(rows[-1])
+        j = timers_for(fld, self.role, before=self.joined)
+        f = F.state_features(
             rows,
             len(rows) - 1,
-            "p1",
+            self.role,
             j,
             self.sheets,
             self.dex,
@@ -790,7 +803,7 @@ class BoardWP:
             self.groups,
             self.ctx,
         )
-        return [f[c] for c in columns(self.groups)]
+        return [f[c] for c in F.columns(self.groups)]
 
     def boards(self, items: Sequence[tuple[Sequence, Sequence, object]]) -> np.ndarray:
         keys = [_board_key(a, b, f) for a, b, f in items]
@@ -813,8 +826,9 @@ class BoardWP:
                 self.grid = max(self.grid, g)
             X = np.array([self._row(*todo[k]) for k in groups], dtype=np.float32)
             for rep, p in zip(groups, self.predict(X)):
+                v = float(p) if self.role == "p1" else 1.0 - float(p)
                 for key in groups[rep]:
-                    self._cache[key] = float(p)
+                    self._cache[key] = v
         return np.array([self._cache[k] for k in keys])
 
     def __call__(self, outs) -> np.ndarray:
@@ -954,6 +968,11 @@ class Tools:
     # hits branch on the likely spreads where they decide a knock-out (Week 12
     # Task 4); off until measured
     spread_hits: bool = False
+    # the opponent's sheet hidden (Week 12 Task 5): the sets in the statistics
+    # (`wpa.hidden.SetStore`) and, per format, the one-sided model trained with
+    # the opponent's sheet blanked; None: the sheets as the log shows them
+    hidden: Any = None
+    predict_public: dict | None = None
 
 
 @dataclass
@@ -976,6 +995,9 @@ class TurnSetup:
     chances: dict  # role -> {Pokemon: chances}
     t0: float
     after_board: float = float("nan")
+    # Week 12 Task 5: the one player whose turn this is, from what they knew
+    # (the values and WPs still p1's chances); None: both, from one set
+    only: str | None = None
 
 
 @dataclass
@@ -1434,6 +1456,302 @@ def _preview_setup(
     )
 
 
+# --------------------------------------------------------------------------
+# Week 12 Task 5: the opponent's sheet hidden
+# --------------------------------------------------------------------------
+
+
+def next_own(states: Sequence[Mapping], i: int) -> int:
+    """A player's own next decision point after their state `i`: a turn's start,
+    a forced switch after a turn, or the end of the game. With the opponent's
+    sheet hidden, each player's WPs chain on their own points."""
+    for j in range(i + 1, len(states)):
+        if states[j]["moment"] in (*POINTS, "terminal"):
+            return j
+    return len(states) - 1
+
+
+def player_view(
+    sheets: Mapping[str, Sequence],
+    role: str,
+    theirs: Sequence[Mapping],
+    sets: Mapping,
+    dex,
+    taken: Mapping[int, Action | str] | None = None,
+) -> tuple[dict, list[dict]]:
+    """What `role` knew at a turn's start: their own sheet whole, and the
+    other's believed from what the game had shown (`theirs`: the other's side
+    as `role` saw it; `wpa.hidden.belief_sheet`), with the Mega Stone of a
+    Pokemon that Mega Evolves this turn (that shows before any move); and the
+    other's side with the believed items. The other's moves this turn are not
+    put in: their likely replies stay what `role` could expect, and the
+    resolver plays any move."""
+    from dataclasses import replace
+
+    from wpa import hidden as H
+    from wpa.features import public_sheet
+
+    other = "p2" if role == "p1" else "p1"
+    belief = list(H.belief_sheet(public_sheet(sheets[other], theirs), sets, dex))
+    for idx, act in (taken or {}).items():
+        if isinstance(act, Action) and act.mega and idx < len(belief):
+            belief[idx] = replace(belief[idx], item=sheets[other][idx].item)
+    view = {role: tuple(sheets[role]), other: tuple(belief)}
+    return view, H.hidden_side(theirs, belief)
+
+
+def public_setups(tag: str, log: str, fmt: str, tools: Tools):
+    """Each decision point of one game with the opponent's sheet hidden, from
+    each player's own side: a TurnSetup per turn and player (`only`), valued
+    from what that player knew (`player_view`; spreads from the statistics
+    alone) by the one-sided model trained with the opponent's sheet blanked
+    (`tools.predict_public`). Team preview and forced switches keep each
+    player's own WPs, so each player's game chains, but are not split. The
+    records say "sheets": "hidden"."""
+    from dataclasses import replace
+
+    from wpa import choices as C
+    from wpa import decisions as D
+    from wpa import resolver as R
+    from wpa.bring import brought_from_log
+    from wpa.features import (
+        _blank_contexts,
+        blank_state,
+        columns,
+        public_sheet,
+        state_features,
+    )
+    from wpa.policy_data import _timers_by_turn, game_tools, turn_options
+    from wpa.spreads import Belief, priors_for
+    from wpa.state_timing import loser_has_pokemon_left
+
+    assert tools.hidden is not None and tools.predict_public is not None
+    dex, table = tools.dexes[fmt], tools.tables[fmt]
+    sheets, _spreads, odds = game_tools(tag, log, fmt, tools.store, tools.bring, dex)
+    if set(sheets) != {"p1", "p2"}:
+        return
+    game = D.build_game(log, table)
+    states = game.states["p1"]
+    if not states or states[-1]["outcome"] is None:
+        return
+    usage = tools.store.for_game(tag, log)
+    sets = tools.hidden.for_game(tag, log)
+    context_for = _blank_contexts(
+        tag, log, "p1", sheets, dex, tools.calc, tools.store, tools.bring
+    )
+    predict = tools.predict_public[fmt]
+    timers = {r: _timers_by_turn(game, r) for r in ("p1", "p2")}
+    brought = brought_from_log(log)
+    four = brought_four({r: brought.get(r, set()) for r in ("p1", "p2")})
+    turns: dict[int, dict[str, C.Turn]] = {}
+    for t in C.turns(log, dex):
+        turns.setdefault(t.turn, {})[t.role] = t
+    rates = (
+        tools.policy.rates.get(fmt, {}) if isinstance(tools.policy.rates, dict) else {}
+    )
+    cols = columns(tools.groups)
+    result = float(bool(states[-1]["outcome"]))
+    starts = {
+        r: {
+            s["turn"]: i
+            for i, s in enumerate(game.states[r])
+            if s["moment"] == "turn_start"
+        }
+        for r in ("p1", "p2")
+    }
+    wps: dict[tuple[str, int], float] = {}
+
+    def other_of(r: str) -> str:
+        return "p2" if r == "p1" else "p1"
+
+    def public_of(r: str, i: int) -> dict:
+        o = other_of(r)
+        return {
+            r: sheets[r],
+            o: public_sheet(sheets[o], game.states[r][i]["opp_pokemon"]),
+        }
+
+    def wp_own(r: str, i: int) -> float:
+        """`r`'s own chance at its state `i`, from what it knew then."""
+        if (r, i) not in wps:
+            s = game.states[r][i]
+            if s["moment"] == "terminal":
+                v = result if r == "p1" else 1.0 - result
+            else:
+                pub = public_of(r, i)
+                f = state_features(
+                    [*game.states[r][:i], blank_state(s)],
+                    i,
+                    r,
+                    game.joined[r][i],
+                    pub,
+                    dex,
+                    table,
+                    tools.groups,
+                    context_for(i, pub),
+                )
+                x = np.array([[f[c] for c in cols]], dtype=np.float32)
+                v = float(predict(x)[0])
+            wps[(r, i)] = v
+        return wps[(r, i)]
+
+    def kept(base: dict, r: str, i: int, why: str) -> dict:
+        """A point not split, with `r`'s own WPs, so its game chains."""
+        try:
+            b, a = wp_own(r, i), wp_own(r, next_own(game.states[r], i))
+        except Exception as e:  # pragma: no cover - reported, not hidden
+            return dict(base, role=r, skipped=f"error: {type(e).__name__}: {e}"[:90])
+        return dict(base, role=r, skipped=why, before=b, after=a)
+
+    def point(kind: str, turn: int, r: str, i: int) -> dict:
+        return {
+            "tag": tag,
+            "format": fmt,
+            "turn": turn,
+            "kind": kind,
+            "point": game.points[r][i],
+            "result": result,
+            "sheets": "hidden",
+        }
+
+    for r in ("p1", "p2"):
+        for i, s in enumerate(game.states[r][: len(game.points[r])]):
+            if s["moment"] == "preview":
+                why = "team preview: not split with the sheet hidden"
+                yield [kept(point("preview", 0, r, i), r, i, why)]
+            elif s["moment"] == "after_turn":
+                why = "forced switch: not split with the sheet hidden"
+                yield [kept(point("replacement", s["turn"], r, i), r, i, why)]
+
+    for k, s in enumerate(states[:-1]):
+        if s["moment"] != "turn_start":
+            continue
+        idx = {r: starts[r].get(s["turn"]) for r in ("p1", "p2")}
+        bases = {
+            r: point("turn", s["turn"], r, i) for r, i in idx.items() if i is not None
+        }
+        tt = turns.get(s["turn"], {})
+        if set(tt) != {"p1", "p2"} or set(bases) != {"p1", "p2"}:
+            yield [
+                kept(bases[r], r, i, "choices not in the log")
+                for r, i in idx.items()
+                if i is not None
+            ]
+            continue
+        end = end_of_turn(game, k)
+        if end is None:
+            continue
+        if end[3] is not None and loser_has_pokemon_left(end[3]):
+            yield [dict(bases[r], role=r, skipped="forfeit or timer") for r in bases]
+            continue
+        a_p1, a_p2, a_j, _term = end
+        fld = R.field_from_timers(game.joined["p1"][k], "p1")
+        for r in ("p1", "p2"):
+            o, i, base = other_of(r), idx[r], bases[r]
+            assert i is not None
+            t0 = time.time()
+            try:
+                mine = game.states[r][i]
+                view, theirs = player_view(
+                    sheets, r, mine["opp_pokemon"], sets, dex, tt[o].taken
+                )
+                sides = {
+                    r: [dict(m) for m in mine["our_pokemon"]],
+                    o: [dict(m) for m in theirs],
+                }
+                for q in ("p1", "p2"):
+                    for j in brought.get(q, ()):
+                        if j < len(sides[q]):
+                            sides[q][j]["_brought"] = True
+                sides = {"p1": sides["p1"], "p2": sides["p2"]}
+                pri = priors_for(view, usage, dex)
+                spreads = {key: Belief(v).best() for key, v in pri.items() if v}
+                dists = {key: [(c, c.weight) for c in v] for key, v in pri.items() if v}
+                rv = R.Resolver(
+                    dex,
+                    tools.moves[fmt],
+                    tools.calc,
+                    view,
+                    spreads,
+                    resolution=tools.resolution,
+                    cap=tools.cap,
+                    dists=dists if tools.speed_beliefs or tools.spread_hits else None,
+                    spread_hits=tools.spread_hits,
+                    speed_beliefs=tools.speed_beliefs,
+                )
+                pub = public_of(r, i)
+                bw = BoardWP(
+                    predict,
+                    game.states[r],
+                    i,
+                    game.joined[r][i],
+                    pub,
+                    dex,
+                    table,
+                    tools.groups,
+                    context_for(i, pub),
+                    budget=tools.budget,
+                    role=r,
+                    public=True,
+                )
+                before = wp_own(r, i)
+                after = wp_own(r, next_own(game.states[r], i))
+                if r == "p2":  # as p1's chances, as the values are
+                    before, after = 1.0 - before, 1.0 - after
+                after_board = float(
+                    bw.boards([(a_p1, a_p2, R.field_from_timers(a_j, "p1"))])[0]
+                )
+                opts, chances = {}, {}
+                for q in ("p1", "p2"):
+                    # each side's options, with the other's items as `r` saw them
+                    t = tt[q]
+                    t = (
+                        replace(t, ours=[dict(m) for m in theirs])
+                        if q == o
+                        else replace(t, theirs=[dict(m) for m in theirs])
+                    )
+                    feats = turn_options(
+                        t,
+                        timers[q].get(t.turn),
+                        view,
+                        spreads,
+                        dex,
+                        tools.moves[fmt],
+                        rates,
+                        tools.calc,
+                        odds,
+                    )
+                    opts[q], chances[q] = only_brought(
+                        *expand_pivots(
+                            {j: x for j, (x, _X) in feats.items()},
+                            {
+                                j: list(tools.policy.chances(X))
+                                for j, (_x, X) in feats.items()
+                            },
+                        ),
+                        four[q],
+                    )
+            except Exception as e:  # pragma: no cover - reported, not hidden
+                why = f"error: {type(e).__name__}: {str(e)[:80]}"
+                yield [dict(base, role=r, skipped=why)]
+                continue
+            yield TurnSetup(
+                base,
+                s["turn"],
+                TurnValues(rv, sides, fld, bw),
+                bw,
+                before,
+                after,
+                {"p1": a_p1, "p2": a_p2},
+                tt,
+                opts,
+                chances,
+                t0,
+                after_board,
+                only=r,
+            )
+
+
 def _analyse_preview(ps: PreviewSetup, tools: Tools) -> list[dict]:
     """Team preview's leads split as a turn is (DEFINITIONS §3): your choice
     against the typical pair, the position, their decision against their likely
@@ -1497,7 +1815,12 @@ def analyse_game(
     """One record per decision point (team preview, each turn and each forced
     switch, each player) of one game."""
     out: list[dict] = []
-    for ts in turn_setups(tag, log, fmt, tools, forced=True, prev_leads=prev_leads):
+    setups = (
+        public_setups(tag, log, fmt, tools)
+        if tools.hidden is not None
+        else turn_setups(tag, log, fmt, tools, forced=True, prev_leads=prev_leads)
+    )
+    for ts in setups:
         if isinstance(ts, list):
             out += ts
             continue
@@ -1527,6 +1850,7 @@ def _priorities(dex) -> dict[str, int]:
 
 def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[dict]:
     tv = ts.tv
+    roles = (ts.only,) if ts.only else ("p1", "p2")
     mixes = {}
     for r in ("p1", "p2"):
         t, opts, ch = ts.turns[r], ts.opts[r], ts.chances[r]
@@ -1537,7 +1861,7 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         seed = f"{ts.base['tag']} {ts.turn} {r}"
         lk, kept = likely(full, tools.top, tools.draws, seed)
         alts = None
-        if with_alternatives and tools.alternatives:
+        if with_alternatives and tools.alternatives and r in roles:
             top, _ = trim(full, 1.0, tools.alternatives)
             alts = [[(j, 1.0)] for j, _ in top]
             if not (len(taken) == 1 and any(taken[0][0] == j for j, _ in top)):
@@ -1548,8 +1872,11 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         mixes[r] = (taken, lk, kept, alts, unknown)
     t1, l1, _k1, alts1, _u1 = mixes["p1"]
     t2, l2, _k2, alts2, _u2 = mixes["p2"]
-    pairs = [(x, y) for x, _ in t1 for y, _ in l2 + t2]
-    pairs += [(x, y) for x, _ in l1 for y, _ in t2]
+    # p1's split: p1's choice against p2's likely and taken ones; p2's: p1's
+    # likely and taken choices against p2's
+    pairs = [(x, y) for x, _ in t1 for y, _ in l2 + t2] if "p1" in roles else []
+    if "p2" in roles:
+        pairs += [(x, y) for x, _ in l1 + t1 for y, _ in t2]
     # each player's typical choice against the other's likely replies
     # (DEFINITIONS §3, revision 10): one block serves both players
     if tools.typical:
@@ -1566,6 +1893,8 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     strong = {s: strong_mixes(tv, plain, s) for s in dict.fromkeys(strengths)}
     recs = []
     for r, other in (("p1", "p2"), ("p2", "p1")):
+        if r not in roles:
+            continue
         taken, _l, _k, alts, unknown = mixes[r]
         _t, _lk, kept, _a, _u = mixes[other]
         b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
@@ -1870,6 +2199,11 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     tools.strength = strength_value(a)
     tools.spread_hits = bool(getattr(a, "spread_hits", False))
     tools.measure_strengths = measure_values(a)
+    if getattr(a, "hidden_sets", False):
+        from wpa.hidden import SetStore
+
+        tools.hidden = SetStore(a.usage)
+        tools.predict_public = {f: wp_model(a.public_models, f, a.groups) for f in mods}
     if getattr(a, "leads", None) and Path(a.leads).exists():
         from wpa.lead_model import LeadModel
 
@@ -2583,6 +2917,19 @@ def main() -> None:  # pragma: no cover
         "target is knocked out (Week 12 Task 4)",
     )
     p.add_argument(
+        "--hidden-sets",
+        action="store_true",
+        help="the opponent's sheet hidden: each player's turns from what they "
+        "knew, with --public-models (Week 12 Task 5)",
+    )
+    p.add_argument(
+        "--public-models",
+        type=Path,
+        default=Path("models_v4_preview"),
+        help="with --hidden-sets: the one-sided model trained with the "
+        "opponent's sheet blanked",
+    )
+    p.add_argument(
         "--no-typical",
         action="store_true",
         help="leave out each player's typical choice (revision 8's split); "
@@ -2649,8 +2996,13 @@ def main() -> None:  # pragma: no cover
         print(text)
         a.out.with_suffix(".txt").write_text(text + "\n", encoding="utf-8")
         return
-    # a missing fitted strength stops the run here, not in each worker
+    # what is missing stops the run here, not in each worker
     _ = (strength_value(a), measure_values(a))
+    if a.hidden_sets and not (Path(a.public_models) / "regma").exists():
+        raise SystemExit(
+            f"No model trained with the opponent's sheet blanked in "
+            f"{a.public_models}: train it first (Runbook Section 23)"
+        )
     run(a)
     text = report(a.out)
     print(text)
