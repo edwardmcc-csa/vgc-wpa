@@ -492,6 +492,11 @@ def strength_value(a, s: str | None = None) -> float:
     s = str(s if s is not None else getattr(a, "strength", "0") or "0")
     if s == "fitted":
         path = Path(a.policy).with_name("strength.json")
+        if not path.exists():
+            raise SystemExit(
+                f"No fitted strength yet ({path}): learn it first with "
+                "python -m wpa.attribution --fit-strength (Runbook Section 23)"
+            )
         return float(json.loads(path.read_text(encoding="utf-8"))["strength"])
     return float(s)
 
@@ -2311,7 +2316,8 @@ def _strength_lines(ok: Sequence[Mapping]) -> list[str]:
         xs = [r["at_strength"][k] for r in at if k in r["at_strength"]]
         best = [x["vs_best"] for x in xs if x.get("vs_best") is not None]
         line = (
-            f"    strength {k}: your choice {_pts([x['choice'] for x in xs])}; "
+            f"    strength {float(k):.3g}: "
+            f"your choice {_pts([x['choice'] for x in xs])}; "
             f"their decision {_pts([x['theirs'] for x in xs])}"
         )
         if best:
@@ -2643,6 +2649,8 @@ def main() -> None:  # pragma: no cover
         print(text)
         a.out.with_suffix(".txt").write_text(text + "\n", encoding="utf-8")
         return
+    # a missing fitted strength stops the run here, not in each worker
+    _ = (strength_value(a), measure_values(a))
     run(a)
     text = report(a.out)
     print(text)

@@ -1300,6 +1300,8 @@ and never reads the test split.
 - Ctrl+C stops a run; the same command carries on where it stopped.
 - `--max-games 20` is a quick trial on 20 games.
 - `--fresh` starts a run over.
+- `--spread-hits` runs it with Task 4's spread method (Section 23). The run's
+  column is named with "-spread-hits".
 
 **What the table shows, per format**
 - **Fully modelled:** the share of turns where nothing happened that the
@@ -1316,6 +1318,48 @@ and never reads the test split.
 - **Boards per turn** and **resolver time per turn:** what it costs.
 - **Partly modelled, turns by reason:** what is left to model, with each run's
   count.
+
+---
+
+## 23. Week 12: the stronger opponent model and the sample again
+
+This week's run adds two things to Section 20's:
+- **Task 4's spread method** (`--spread-hits`): a hit branches on the target's
+  likely spreads where one of them would change whether it is knocked out.
+- **Task 3's stronger opponent model, measured only:** each likely choice is
+  also weighed by how good it is for the one choosing. Its one setting, the
+  strength, is learned on training games. The analysis itself still uses the
+  model of DEFINITIONS revision 10 (strength 0) until you approve a change.
+
+It needs everything from Section 20, including `models_v4_avg`. Do step 1
+first: step 2 uses what it learns.
+
+1. **Learn the strength** (about half an hour to an hour; training games of 40
+   Reg M-A and 30 Reg M-B sets, never validation or test):
+   ```
+   python -m wpa.attribution --fit-strength --spread-hits --models models_v4_avg --moves-dir build --workers 6 --sets 40 30
+   ```
+   - It counts the games as it goes (115 in all: 59 Reg M-A, 56 Reg M-B).
+   - Ctrl+C stops it; the same command carries on where it stopped.
+   - At the end it prints the strength per format and saves
+     `models_v4\strength.txt` (and `strength.json`, which step 2 reads).
+     Send me `strength.txt`.
+
+2. **Decision versus luck again** (Task 6; the same 300 Reg M-A and 199 Reg M-B
+   sets as Week 11, the averaged model, sharpness 4; about as long as Week 11's
+   run, one long night or two):
+   ```
+   python -m wpa.attribution --models models_v4_avg --moves-dir build --workers 6 --alternatives-every 3 --spread-hits --measure-strengths 0 fitted --out reports/attribution_week12.jsonl
+   ```
+   - The summary is laid out as Week 11's. A new section, "the opponent
+     model's strength", shows the split at strength 0 and at the learned one,
+     side by side.
+   - If step 1 has not finished, it stops at once and says so.
+   - Ctrl+C stops it and the same command carries on, so it can run over two
+     nights.
+
+   At the end it prints the summary and saves it as
+   `reports\attribution_week12.txt`. Send me that file.
 
 ---
 

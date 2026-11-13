@@ -201,3 +201,35 @@ def test_the_strengths_to_measure_may_name_the_fitted_one(tmp_path):
     a = argparse.Namespace(measure_strengths=["0", "fitted", "40"], policy=policy)
     assert A.measure_values(a) == (0.0, 17.5, 40.0)
     assert A.measure_values(argparse.Namespace(policy=policy)) == ()
+
+
+def test_fitted_before_the_fit_says_what_to_run(tmp_path):
+    import argparse
+
+    a = argparse.Namespace(strength="fitted", policy=tmp_path / "policy.json")
+    with pytest.raises(SystemExit, match="--fit-strength"):
+        A.strength_value(a)
+
+
+def test_the_run_stops_before_it_starts_without_the_fitted_strength(
+    tmp_path, monkeypatch
+):
+    """Checked before the workers start: a worker that stops as it starts is
+    started again, over and over."""
+    import sys
+
+    def started(_a):
+        raise AssertionError("the run started")
+
+    monkeypatch.setattr(A, "run", started)
+    argv = ["attribution", "--policy", str(tmp_path / "policy.json")]
+    monkeypatch.setattr(sys, "argv", [*argv, "--measure-strengths", "0", "fitted"])
+    with pytest.raises(SystemExit, match="--fit-strength"):
+        A.main()
+
+
+def test_a_learned_strength_shows_rounded():
+    m = _measured(0.01, -0.01)
+    lines = A._strength_lines([{"at_strength": {"0": m, "6.87554": m}}])
+    assert lines[1].startswith("    strength 0: ")
+    assert lines[2].startswith("    strength 6.88: ")
