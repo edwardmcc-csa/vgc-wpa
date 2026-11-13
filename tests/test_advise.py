@@ -362,3 +362,32 @@ def test_switch_advice_after_a_knock_out(monkeypatch, hidden):
     assert vals == sorted(vals, reverse=True)
     assert adv.replies == [((), 1.0)]  # p2 had no forced switch
     assert "send in" in AD.advice_text(adv, log)
+
+
+def test_a_session_answers_each_team_preview_until_you_stop():
+    """Loading takes about 20 seconds, a team preview's advice about 1, so a
+    session loads once and answers each game's team preview as it comes."""
+    asked = iter(
+        [
+            "Incineroar, Sneasler, Floette, Garchomp, Kingambit, Basculegion",
+            "Incineroar, Sneasler",  # five short: said, and the session goes on
+            "",
+            "q",
+            "never read",
+        ]
+    )
+    said: list[str] = []
+
+    def answer(theirs):
+        if len(theirs) != 6:
+            raise RP.ReplayError("give their six species, as team preview shows them")
+        return "advice for " + " / ".join(theirs)
+
+    AD.run_session(lambda: next(asked), answer, said.append)
+    text = "\n".join(said)
+    assert "advice for Incineroar / Sneasler / Floette" in text
+    assert "Sorry: give their six species" in text
+    assert "never read" not in text
+    # the end of the input ends it too
+    said.clear()
+    AD.run_session(lambda: next(iter(())), answer, said.append)

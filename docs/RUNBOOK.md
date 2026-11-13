@@ -1438,6 +1438,12 @@ python -m wpa.advise --vs "Incineroar, Sneasler, Floette, Garchomp, Kingambit, B
   come in, against their likely leads (the lead model). Your back two are not
   valued.
 - For a game already played: the replay link with `--preview` (and `--player`).
+- **While you play, game after game:** `--session` loads once (about 20
+  seconds), then answers each team preview in about a second. Type their six
+  species when it asks; `q` stops it.
+  ```
+  python -m wpa.advise --session --team my_team.txt --format regma
+  ```
 
 **A forced switch: who to send in after a knock-out.** Add `--switch`: the
 switch after the turn `--turn` names (or, for a game so far, after the last

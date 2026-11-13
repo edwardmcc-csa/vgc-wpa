@@ -627,6 +627,45 @@ def advice_text(
     return "\n".join(lines)
 
 
+def lead_advice(team: str, theirs: Sequence[str], fmt: str, tools, top: int = 5) -> str:
+    """Team preview's advice in words, from your team paste and their six
+    species as typed (`species_name`), their sheet hidden."""
+    tag, log = preview_log(team, theirs, fmt)  # checks there are six
+    dex = tools.dexes[fmt]
+    known = set(tools.hidden.for_game(tag, log))
+    names = [species_name(s, dex, known) for s in theirs]
+    tag, log = preview_log(team, names, fmt)
+    adv = advise_preview(tag, log, fmt, tools, "p1")
+    return advice_text(adv, log, dex.moves, top)
+
+
+def run_session(
+    ask: Callable[[], str],
+    answer: Callable[[list[str]], str],
+    say: Callable[[str], None],
+) -> None:
+    """Team preview after team preview, from one load: each line their six
+    species, separated by commas; an empty line asks again; "q" (or the end of
+    the input) ends it. A line it cannot use is said, and the session goes on."""
+    say("Their six species, separated by commas (q to stop):")
+    while True:
+        try:
+            line = ask().strip()
+        except (EOFError, StopIteration, KeyboardInterrupt):
+            return
+        if line.lower() in ("q", "quit", "exit"):
+            return
+        if not line:
+            continue
+        theirs = [s.strip() for s in line.split(",") if s.strip()]
+        try:
+            say(answer(theirs))
+        except ReplayError as e:
+            say(f"Sorry: {e}.")
+        say("")
+        say("Their six species (q to stop):")
+
+
 def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     from wpa import attribution as A
     from wpa import replay as RP
@@ -650,6 +689,11 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
         help="team preview from the app: their six species, separated by commas "
         "(with --team and --format)",
     )
+    p.add_argument(
+        "--session",
+        action="store_true",
+        help="team preview after team preview, loading once (with --team)",
+    )
     p.add_argument("--format", choices=sorted(TIERS), default="regma")
     p.add_argument("--top", type=int, default=5, help="how many choices to show")
     p.add_argument("--team", type=Path, default=None, help="your team paste")
@@ -663,33 +707,52 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     if reconfigure is not None:
         reconfigure(errors="replace")
     own = None
-    theirs: list[str] = []
     try:
         team = a.team.read_text(encoding="utf-8") if a.team else None
-        if a.vs:
+        if a.session or a.vs:
             if not team:
-                raise ReplayError("--vs needs your team paste (--team)")
-            theirs = [s.strip() for s in a.vs.split(",") if s.strip()]
-            tag, log = preview_log(team, theirs, a.format)  # checks there are six
-            fmt, role, a.hidden, a.preview = a.format, "p1", True, True
+                raise ReplayError("team preview needs your team paste (--team)")
+            if not (a.public_models / "regma").exists():
+                raise ReplayError(
+                    "their sheet hidden needs the model trained that way, in "
+                    f"{a.public_models} (Runbook Section 23, step 3)"
+                )
+            a.hidden = True
+    except (ReplayError, OSError) as e:
+        sys.exit(f"Sorry: {e}.")
+    if a.session or a.vs:
+        assert team is not None
+        print("Loading (about 20 seconds)...", flush=True)
+        A._init(RP._options(a))
+        tools = A._W["tools"]
+
+        def answer(names: list[str]) -> str:
+            return lead_advice(team, names, a.format, tools, a.top)
+
+        if a.session:
+            run_session(input, answer, print)
+            return
+        try:
+            print(answer([s.strip() for s in a.vs.split(",") if s.strip()]))
+        except ReplayError as e:
+            sys.exit(f"Sorry: {e}.")
+        return
+    try:
+        if not a.game or not a.player:
+            raise ReplayError("give a game and your name (--player), or --vs")
+        tag, full_log = RP.load(a.game)
+        fmt = RP.format_for(tag, full_log)
+        role = RP.side_of(full_log, a.player)
+        games, a.hidden = RP.prepare([(tag, full_log, fmt)], a.player, team, a.hidden)
+        full_log = games[0][1]  # with the sheets put in, for a game showing none
+        if a.switch:
+            log = up_to_switch(full_log, a.turn)
         else:
-            if not a.game or not a.player:
-                raise ReplayError("give a game and your name (--player), or --vs")
-            tag, full_log = RP.load(a.game)
-            fmt = RP.format_for(tag, full_log)
-            role = RP.side_of(full_log, a.player)
-            games, a.hidden = RP.prepare(
-                [(tag, full_log, fmt)], a.player, team, a.hidden
-            )
-            full_log = games[0][1]  # with the sheets put in, for a game showing none
-            if a.switch:
-                log = up_to_switch(full_log, a.turn)
-            else:
-                log = up_to_turn(full_log, 1 if a.preview else a.turn)
-            # the four you brought, when the whole game shows them (you know them)
-            seen = brought_from_log(full_log).get(role, set())
-            if a.turn is not None and len(seen) >= 4:
-                own = seen
+            log = up_to_turn(full_log, 1 if a.preview else a.turn)
+        # the four you brought, when the whole game shows them (you know them)
+        seen = brought_from_log(full_log).get(role, set())
+        if a.turn is not None and len(seen) >= 4:
+            own = seen
         if a.hidden and not (a.public_models / "regma").exists():
             raise ReplayError(
                 "their sheet hidden needs the model trained that way, in "
@@ -701,11 +764,6 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     A._init(RP._options(a))
     tools = A._W["tools"]
     try:
-        if a.vs:  # their species as the format's data names them
-            dex = tools.dexes[fmt]
-            known = set(tools.hidden.for_game(tag, log))
-            theirs = [species_name(s, dex, known) for s in theirs]
-            tag, log = preview_log(team or "", theirs, fmt)
         if a.preview:
             adv = advise_preview(tag, log, fmt, tools, role)
         elif a.switch:
