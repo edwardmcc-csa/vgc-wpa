@@ -957,6 +957,27 @@ def _score(P, A: Belief, D: Belief, a_prior, d_prior, h) -> dict:
 # --------------------------------------------------------------------------
 
 
+def usage_key(folder: Path, tag: str, log: str, cutoff: int = 1500) -> str | None:
+    """The usage statistics file for a game ("<YYYY-MM>-<format>"): the game's
+    own format (Bo3 apart) and month; the nearest earlier month on file if that
+    month is missing, then the nearest later one. None when there is none."""
+    import datetime as dt
+
+    fmt = tag.split("-")[0]
+    i = log.find("|t:|")
+    month = ""
+    if i >= 0:
+        ts = int(log[i + 4 : log.index("\n", i)])
+        month = dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m")
+    files = sorted(Path(folder).glob(f"*-{fmt}-{cutoff}.json"))
+    if not files:
+        return None
+    months = [f.name[:7] for f in files]
+    earlier = [m for m in months if m <= month]
+    pick = earlier[-1] if earlier else months[0]
+    return f"{pick}-{fmt}"
+
+
 class UsageStore:
     """`usage_stats/<YYYY-MM>-<format>-1500.json`, loaded when first needed."""
 
@@ -966,23 +987,10 @@ class UsageStore:
         self._cache: dict[str, dict[str, list[Spread]]] = {}
 
     def for_game(self, tag: str, log: str) -> dict[str, list[Spread]]:
-        """The game's own format (Bo3 apart) and month; the nearest earlier month
-        on file if that month is missing, then the nearest later one."""
-        import datetime as dt
-
-        fmt = tag.split("-")[0]
-        i = log.find("|t:|")
-        month = ""
-        if i >= 0:
-            ts = int(log[i + 4 : log.index("\n", i)])
-            month = dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m")
-        files = sorted(self.folder.glob(f"*-{fmt}-{self.cutoff}.json"))
-        if not files:
+        """The game's own format (Bo3 apart) and month (`usage_key`)."""
+        key = usage_key(self.folder, tag, log, self.cutoff)
+        if key is None:
             return {}
-        months = [f.name[:7] for f in files]
-        earlier = [m for m in months if m <= month]
-        pick = earlier[-1] if earlier else months[0]
-        key = f"{pick}-{fmt}"
         if key not in self._cache:
             self._cache[key] = self._load(key)
         return self._cache[key]
