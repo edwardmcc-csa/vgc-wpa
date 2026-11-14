@@ -420,6 +420,25 @@ def strong_mixes(tv, likely_: Mapping[str, Mix], strength: float) -> dict[str, M
     }
 
 
+def strong_taken(
+    tv, taken: Mapping[str, Mix], likely_: Mapping[str, Mix], strength: float
+) -> dict[str, Mix]:
+    """Each side's taken choice (`taken_mixture`) at a strength. Where the log
+    hides part of it (a Pokemon knocked out before it moved), the hidden part
+    is weighed by its worth as the likely choices are (`strong_mixes`), against
+    the other side's plain likely choices. Averaged plainly, a player whose
+    choice the log hides would be judged against a smarter typical choice than
+    their own average. A choice the log shows whole stays as it is."""
+    if not strength:
+        return {r: list(m) for r, m in taken.items()}
+    return {
+        r: strengthened(tv.for_role(r), taken[r], likely_[o], strength)
+        if len(taken[r]) > 1
+        else list(taken[r])
+        for r, o in (("p1", "p2"), ("p2", "p1"))
+    }
+
+
 @dataclass(frozen=True)
 class StrengthSample:
     """One choice a player made, for learning the strength: the likeliest of
@@ -1891,6 +1910,11 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     # (the stronger model, Week 12 Task 3); measured strengths besides
     strengths = [tools.strength, *tools.measure_strengths]
     strong = {s: strong_mixes(tv, plain, s) for s in dict.fromkeys(strengths)}
+    # the taken choices, their hidden parts weighed as the likely choices are
+    taken_s = {
+        s: strong_taken(tv, {q: mixes[q][0] for q in ("p1", "p2")}, plain, s)
+        for s in dict.fromkeys(strengths)
+    }
     recs = []
     for r, other in (("p1", "p2"), ("p2", "p1")):
         if r not in roles:
@@ -1900,14 +1924,15 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
 
         def split(s: float) -> Split:
+            mine = taken_s[s][r]
             return decompose(
                 tv.for_role(r),
                 b,
                 a,
-                taken,
-                mixes[other][0],
+                mine,
+                taken_s[s][other],
                 strong[s][other],
-                alts,
+                [mine if alt is taken else alt for alt in alts] if alts else alts,
                 kept,
                 typical=strong[s][r] if tools.typical else None,
             )

@@ -233,3 +233,28 @@ def test_a_learned_strength_shows_rounded():
     lines = A._strength_lines([{"at_strength": {"0": m, "6.87554": m}}])
     assert lines[1].startswith("    strength 0: ")
     assert lines[2].startswith("    strength 6.88: ")
+
+
+def test_a_choice_the_log_hides_is_weighed_as_the_likely_choices_are():
+    """Where the log hides part of a choice (a Pokemon knocked out before it
+    moved), its choice is averaged over the choices the log allows. At a
+    strength, the typical choice is weighed by worth; the hidden part is
+    weighed the same way, against the other side's plain likely choices.
+    Averaged plainly, a player whose Pokemon fell before moving was judged
+    against a smarter typical choice than their own average (game 2615562713
+    turn 7: -78 points at strength 6.55, though every choice there won)."""
+    v = {(a, x): 0.6, (a, y): 0.2, (b, x): 0.9, (b, y): 0.5}
+    v |= {(c, x): 0.7, (c, y): 0.7}
+    tv = _Values(v)
+    taken = {"p1": [((a,), 0.5), ((b,), 0.5)], "p2": [((y,), 1.0)]}  # p1's hidden
+    likely = {
+        "p1": [((a,), 0.4), ((b,), 0.3), ((c,), 0.3)],
+        "p2": [((x,), 0.5), ((y,), 0.5)],
+    }
+    out = A.strong_taken(tv, taken, likely, 8.0)
+    assert out["p1"] == A.strengthened(
+        tv.for_role("p1"), taken["p1"], likely["p2"], 8.0
+    )
+    assert dict(out["p1"])[(b,)] > 0.5  # b is worth more against p2's likely
+    assert out["p2"] == taken["p2"]  # a choice the log shows whole: as it is
+    assert A.strong_taken(tv, taken, likely, 0.0) == taken
