@@ -131,6 +131,8 @@ LEAVING = (
     "attract",
     "transform",
     "moves",
+    "recharge",
+    "glaiverush",
 )
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
@@ -471,6 +473,8 @@ class _World:
                 m.get("attract", -1),
                 tuple(m.get("transform") or ()),
                 m.get("slot", ""),
+                m.get("recharge", 0),
+                m.get("glaiverush", 0),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -585,6 +589,7 @@ def _mon_key(st: Mapping) -> tuple:
         st.get("roost", 0),
         st.get("ability", ""),
         tuple(st.get("transform") or ()),
+        st.get("glaiverush", 0),
     )
 
 
@@ -1306,6 +1311,10 @@ class Resolver:
         st = w.sides[role][a.user]
         if st["fainted"] or not st["active"]:
             return [w]
+        st.pop("glaiverush", None)  # it ends as the Pokemon tries to move again
+        if st.pop("recharge", None):  # Meteor Assault and the like (Week 14)
+            w.acted.add((role, a.user))
+            return [w]
         enc = st.get("encore")
         if enc and a.kind == "move" and a.move != enc:
             # Encore landed before it moved: the encored move instead, at a
@@ -1944,6 +1953,17 @@ class Resolver:
             self._heal(w, role, a.user, gain)
             return [w]
         targets = self._targets(w, role, a, m)
+        if m.get("heal") and m.get("target") == "adjacentAllyOrSelf":
+            # Milk Drink in Champions: the user or its ally (Week 14)
+            n, d = m["heal"]
+            j = a.target[1] if a.target and a.target[0] == "ally" else a.user
+            self._heal(w, role, j, n / d)
+            return [w]
+        if mv == "revivalblessing":
+            return self._revive(w, role)
+        if mv == "courtchange":  # the two sides' conditions trade places
+            w.fld.sides = {"p1": w.fld.sides["p2"], "p2": w.fld.sides["p1"]}
+            return [w]
         if m.get("heal") and m.get("target") in ("self", "allies", "allySide"):
             n, d = m["heal"]
             if m.get("target") == "self":
@@ -2081,6 +2101,27 @@ class Resolver:
                 x for b in out for x in (self._drag(b, targets[0]) if targets else [b])
             ]
         return out
+
+    def _revive(self, w: _World, role: str) -> list[_World]:
+        """Revival Blessing (Week 14): a fainted Pokemon of the user's back with
+        half its hit points (rounded down). Its player picks which: with one,
+        that one; with more, marked partly modelled. One that fell this turn in
+        a place still empty comes straight back in: marked too."""
+        down = [j for j, x in enumerate(w.sides[role]) if x["fainted"]]
+        if not down:
+            return [w]
+        if len(down) > 1:
+            w.partial.add("revival blessing: which one")
+            return [w]
+        x = w.sides[role][down[0]]
+        taken = {y.get("slot") for y in w.sides[role] if y["active"]}
+        if x.get("slot") and x["slot"] not in taken:
+            w.partial.add("revival blessing: back in at once")
+            return [w]
+        full = self.max_hp(role, down[0])
+        x.update(fainted=False, hp_fraction=(full // 2) / full, active=False)
+        x.pop("slot", None)
+        return [w]
 
     def _bounces(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> bool:
         """Magic Bounce (Week 13): a foe that has it sends back a move with the
@@ -2432,8 +2473,8 @@ class Resolver:
 
     def _accuracy(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> float:
         acc = m.get("accuracy", True)
-        if acc is True:
-            return 1.0
+        if acc is True or w.sides[tgt[0]][tgt[1]].get("glaiverush"):
+            return 1.0  # (after Glaive Rush, every move at it hits: Week 14)
         weather = w.fld.weather
         if a.move in {"thunder", "hurricane"}:
             if weather == "raindance":
@@ -2545,6 +2586,7 @@ class Resolver:
         to: int | None = None,
         how: object = True,
         sub: int | None = None,
+        why: str = "switch-in after a pivot move",
     ) -> list[_World]:
         """The user switches out to `to` (the Pokemon its choice brings in);
         without one, each Pokemon on the bench alike, marked partly modelled.
@@ -2569,7 +2611,7 @@ class Resolver:
             chances = self.switch_in(w.sides, w.fld, role, bench)
             picks = [(j, float(p)) for j, p in zip(bench, chances) if p > 0]
         else:
-            w.partial.add("switch-in after a pivot move")
+            w.partial.add(why)  # each alike, without the forced-switch model
             picks = [(j, 1 / len(bench)) for j in bench]
         out = []
         for j, pj in picks:
@@ -2584,23 +2626,34 @@ class Resolver:
 
     def _eject_button(self, w: _World, role: str) -> list[_World]:
         """A Pokemon holding an Eject Button that this move hit switches out. Its
-        player picks the Pokemon; here each on the bench alike, marked partly
-        modelled. Only the first one hit goes."""
+        player picks the Pokemon: by the forced-switch model, as after a pivot
+        move (Week 14; each on the bench alike, marked, without it). Only the
+        first one hit goes."""
         for tgt in sorted(w.hit):
             t = w.sides[tgt[0]][tgt[1]]
             if tgt[0] == role or t["fainted"] or t.get("item") != "ejectbutton":
                 continue
-            bench = self._bench(w, tgt[0])
-            if not bench:
+            if not self._bench(w, tgt[0]):
                 continue
-            w.partial.add("eject button")
-            t["item"] = ""
-            out = []
-            for j in bench:
-                b = w.clone(w.p / len(bench))
-                self._switch(b, tgt[0], tgt[1], j)
-                out.append(b)
-            return out
+            t["item"], t["rev_item"] = "", "ejectbutton"
+            return self._self_switch(w, tgt[0], tgt[1], why="eject button")
+        return [w]
+
+    def _red_card(self, w: _World, role: str, a: Action, m: Mapping) -> list[_World]:
+        """Week 14 (Reg M-C): a Pokemon holding a Red Card that this damaging
+        move hit, still standing, sends the attacker out; the one that comes in
+        is drawn at random (Showdown's drag). The card is used; only the first."""
+        user = w.sides[role][a.user]
+        if m.get("category") == "Status" or user["fainted"] or not user["active"]:
+            return [w]
+        for tgt in sorted(w.hit):
+            t = w.sides[tgt[0]][tgt[1]]
+            if tgt[0] == role or t["fainted"] or t.get("item") != "redcard":
+                continue
+            if not self._bench(w, role):
+                return [w]
+            t["item"], t["rev_item"] = "", "redcard"
+            return self._drag(w, (role, a.user))
         return [w]
 
     def _drag(self, w: _World, tgt) -> list[_World]:
@@ -2629,6 +2682,10 @@ class Resolver:
             stage += 1
         if st.get("item") in {"scopelens", "razorclaw"}:
             stage += 1
+        if st.get("item") == "leek" and self.sheets[role][a.user].species.startswith(
+            ("farfetchd", "sirfetchd")
+        ):
+            stage += 2  # Week 14 (Reg M-C)
         if st.get("focusenergy"):
             stage += 2
         return [1 / 24, 1 / 8, 1 / 2][stage] if stage < 3 else 1.0
@@ -2921,6 +2978,8 @@ class Resolver:
                 continue
             for r in rolls:
                 out[int(r)] = out.get(int(r), 0.0) + pc / len(rolls)
+        if w.sides[tgt[0]][tgt[1]].get("glaiverush") and tgt != (role, a.user):
+            out = {2 * d: p for d, p in out.items()}  # Glaive Rush: twice (Week 14)
         return sorted((p, d) for d, p in out.items())
 
     def _attack(self, w: _World, role: str, a: Action, m: Mapping) -> list[_World]:
@@ -2961,6 +3020,11 @@ class Resolver:
                     self._take_in(b, tgt, ab)  # before the accuracy check
                     nxt.append(b)
                     continue
+                if (
+                    self.ability(role, a.user, b.sides[role][a.user]) == "stakeout"
+                    and tgt in b.replaced.values()
+                ):
+                    b.partial.add("ability:stakeout")  # its double: not passed
                 acc = self._accuracy(b, role, a, m, tgt)
                 if acc < 1:
                     miss = b.clone(b.p * (1 - acc))
@@ -2974,6 +3038,7 @@ class Resolver:
             self._after_attack(b, role, a, m)
         out = [x for b in out for x in self._secondaries(b, role, a, m)]
         out = [x for b in out for x in self._chance_abilities(b, a)]
+        out = [x for b in out for x in self._red_card(b, role, a, m)]
         out = [x for b in out for x in self._eject_button(b, role)]
         if m.get("selfSwitch"):
             out = [
@@ -3087,6 +3152,14 @@ class Resolver:
         if dmg > 0:
             w.hit.add(tgt)
             t["hits"] = t.get("hits", 0) + 1  # Rage Fist counts it
+            if t.get("item") == "airballoon":  # it pops (Week 14)
+                t["item"], t["rev_item"] = "", "airballoon"
+            if (
+                self.ability(tgt[0], tgt[1], t) in {"emergencyexit", "wimpout"}
+                and 0 < new <= max_hp // 2 < hp
+                and self._bench(w, tgt[0])
+            ):
+                w.partial.add("ability:emergencyexit")  # it would switch out
             if m.get("volatileStatus") == "partiallytrapped" and not t.get("bound"):
                 # bound (Infestation and the like): a sixth with Binding
                 # Band, else an eighth, at each end of turn (Week 12)
@@ -3316,6 +3389,14 @@ class Resolver:
                 st["hp_fraction"] = min(1.0, st["hp_fraction"] + (dealt // 8) / max_hp)
         if m.get("self") and m["self"].get("boosts") and w.hit and not st["fainted"]:
             self._boost(st, m["self"]["boosts"])
+        vol = (m.get("self") or {}).get("volatileStatus")
+        if vol in ("mustrecharge", "glaiverush") and (w.hit or w.subbed):
+            # Week 14: Meteor Assault and the like rest next turn; after Glaive
+            # Rush every move at it hits, twice as hard, until it moves again
+            st["recharge" if vol == "mustrecharge" else "glaiverush"] = 1
+        gem = f"{self._move_type(w, role, a, m).lower()}gem"
+        if st.get("item") == gem and (w.hit or w.subbed):
+            st["item"], st["rev_item"] = "", gem  # used up (the calculator boosts)
         if a.move in LOSES_TYPE and w.hit and not st["fainted"]:
             # Burn Up, Double Shock: the type is lost ("???" in its place)
             lose = LOSES_TYPE[a.move]

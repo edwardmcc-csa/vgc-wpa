@@ -109,6 +109,7 @@ _VOLATILE_LINES = frozenset(
         "-ability",
         "-singlemove",
         "-transform",
+        "-mustrecharge",
     }
 )
 # Week 13: hazards and the most layers of each
@@ -126,6 +127,8 @@ WEEK13 = (
     "attract",
     "transform",
     "moves",
+    "recharge",
+    "glaiverush",
 )
 # what leaving the field ends (Rage Fist's hits too, in Champions; the Toxic
 # count starts again; Leech Seed, Taunt, Yawn and Disable end)
@@ -430,6 +433,13 @@ class _Board:
             return
         t = p[1]
         what = to_id(p[3].removeprefix("move: ")) if len(p) > 3 else ""
+        if t == "-mustrecharge":
+            m["recharge"] = 1  # Meteor Assault and the like: it rests next turn
+            return
+        if t == "cant":
+            m.pop("glaiverush", None)  # it tried to move: Glaive Rush is over
+            if what == "recharge":
+                m.pop("recharge", None)
         if t == "-damage":
             # badly poisoned: each end of turn's damage counts one more
             if len(p) > 4 and "[from] psn" in p[4:] and p[3].endswith("tox"):
@@ -515,6 +525,8 @@ class _Board:
             m.pop("healblock", None)
         elif t == "-singlemove" and what == "destinybond":
             m["destinybond"] = 1
+        elif t == "-singlemove" and what == "glaiverush":
+            m["glaiverush"] = 1  # every move at it hits, twice as hard (Week 14)
         elif t == "-transform" and len(p) > 3 and p[3][:2] in ROLES:
             # Week 13 (Imposter): the foe it copied, and whether that one had
             # Mega Evolved; its moves, stat stages (the log does not print
@@ -557,6 +569,7 @@ class _Board:
             m.pop("charging", None)  # the charged move goes off
         if move != "destinybond":
             m.pop("destinybond", None)  # it ends when the Pokemon moves again
+        m.pop("glaiverush", None)  # so does Glaive Rush (its own line follows)
         called = any(x.startswith("[from]") and "lockedmove" not in x for x in p[4:])
         # the real-data check: Fake Out only before moving, and Choice locks
         self._fakeout = None
