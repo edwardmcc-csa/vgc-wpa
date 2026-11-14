@@ -41,7 +41,7 @@ ROLES = ("p1", "p2")
 TOL = 0.06  # the analysis's: the larger of 3 points and the HP grid (5) + 1
 SAMPLE = Path("data/resolver_check_games.json")
 OUT_DIR = Path("reports/resolver_check")
-FORMAT_NAMES = {"regma": "Reg M-A", "regmb": "Reg M-B"}
+FORMAT_NAMES = {"regma": "Reg M-A", "regmb": "Reg M-B", "regmc": "Reg M-C"}
 
 
 # --------------------------------------------------------------------------
@@ -561,6 +561,27 @@ def save_sample(path: Path, games: Mapping[str, Sequence[str]], note: str) -> No
     path.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
 
 
+def add_to_sample(path: Path, fmt: str, games: Sequence[str], note: str) -> None:
+    """Week 14: a new format's games added to the saved sample, once; the other
+    formats' games stay exactly as they are."""
+    path = Path(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if fmt in data["games"]:
+        raise FileExistsError(f"{path} already has {fmt}: it is kept as it is")
+    data["games"][fmt] = list(games)
+    data.setdefault("added", {})[fmt] = {"note": note, "made": date.today().isoformat()}
+    path.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+
+
+def _iter_all(dirs: Sequence[Path]):
+    """The games of every logs folder (`--logs` may name more than one: Reg
+    M-C's are in their own)."""
+    from wpa.policy_data import _iter_logs
+
+    for d in dirs:
+        yield from _iter_logs(d)
+
+
 def load_sample(
     path: Path, splits: Mapping[str, str] | None = None
 ) -> dict[str, list[str]]:
@@ -622,10 +643,10 @@ def child_command(a: argparse.Namespace, dest: Path, root: Path) -> list[str]:
     a = argparse.Namespace(**{**vars(a), "spread_damage": a.spread_damage and knows})
     cmd = [sys.executable, "-m", "wpa.resolver_check"]
     cmd += ["--label", run_label(a, a.code), "--expect-code", full(dest)]
+    cmd += ["--logs", *(full(d) for d in a.logs)]
     for flag, value in (
         ("--sample", a.sample),
         ("--splits", a.splits),
-        ("--logs", a.logs),
         ("--showdown", a.showdown),
         ("--usage", a.usage),
         ("--bring", a.bring),
@@ -734,8 +755,6 @@ def _expect_code(dest: Path) -> None:  # pragma: no cover
 def run(a: argparse.Namespace) -> None:  # pragma: no cover - runs on the corpus
     from multiprocessing import Pool
 
-    from wpa.policy_data import _iter_logs
-
     if a.expect_code:
         _expect_code(a.expect_code)
     splits = (
@@ -757,12 +776,13 @@ def run(a: argparse.Namespace) -> None:  # pragma: no cover - runs on the corpus
     print(f"The resolver check on {label}: reading the logs ...", flush=True)
     jobs = [
         (tag, log, fmt_of[tag])
-        for tag, log in _iter_logs(a.logs)
+        for tag, log in _iter_all(a.logs)
         if tag in fmt_of and tag not in done
     ]
     lost = len(fmt_of) - len(done) - len(jobs)
     if lost:
-        print(f"  {lost} games of the sample are not in {a.logs}", flush=True)
+        where = ", ".join(str(d) for d in a.logs)
+        print(f"  {lost} games of the sample are not in {where}", flush=True)
     left = len(jobs)
     if a.max_games:
         jobs = jobs[: a.max_games]
@@ -802,7 +822,7 @@ def make_sample(a: argparse.Namespace) -> None:  # pragma: no cover - reads the 
     from wpa.attribution import sample_sets
 
     splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
-    games = sample_sets(a.logs, splits, {"regma": a.sets[0], "regmb": a.sets[1]})
+    games = sample_sets(a.logs[0], splits, {"regma": a.sets[0], "regmb": a.sets[1]})
     save_sample(
         a.sample,
         {f: [t for t, _log in gs] for f, gs in games.items()},
@@ -815,6 +835,34 @@ def make_sample(a: argparse.Namespace) -> None:  # pragma: no cover - reads the 
             f"{FORMAT_NAMES.get(f, f)} {len(gs)} games" for f, gs in games.items()
         )
     )
+
+
+def add_format_sample(a: argparse.Namespace) -> None:  # pragma: no cover - corpus
+    """Week 14: `--add-sample regmc 300`: that many of the format's validation
+    sets (the same hash as the brief's sample), added to the saved sample."""
+    from wpa.attribution import sample_sets
+
+    fmt, n = a.add_sample[0], int(a.add_sample[1])
+    splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
+    got: list[tuple[str, str]] = []
+    for d in a.logs:
+        got += sample_sets(d, splits, {fmt: 10**9})[fmt]
+    # the same order sample_sets gives within one folder, over every folder
+    import hashlib
+
+    from wpa.features import unit_of
+
+    units: dict[str, list] = {}
+    for tag, log in got:
+        unit, k = unit_of(tag, log)
+        units.setdefault(unit, []).append((k, tag))
+    order = sorted(
+        units, key=lambda u: hashlib.sha256(f"wpa-attribution:{u}".encode()).hexdigest()
+    )[:n]
+    tags = [t for u in order for _k, t in sorted(units[u])]
+    name = FORMAT_NAMES.get(fmt, fmt)
+    add_to_sample(a.sample, fmt, tags, f"every game of {n} {name} validation sets")
+    print(f"added to {a.sample}: {name} {len(tags)} games of {len(order)} sets")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -840,8 +888,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="make the sample (once) from the brief's sets",
     )
     p.add_argument("--sets", type=int, nargs=2, default=(300, 199))
+    p.add_argument(
+        "--add-sample",
+        nargs=2,
+        metavar=("FORMAT", "SETS"),
+        help="Week 14: add a format's validation sets to the saved sample (once)",
+    )
     p.add_argument("--out-dir", type=Path, default=OUT_DIR)
-    p.add_argument("--logs", type=Path, default=Path("logs_shards"))
+    p.add_argument(
+        "--logs",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="the logs folders (default: logs_shards, and logs_mc when it is there)",
+    )
     p.add_argument("--splits", type=Path, default=Path("splits.json"))
     p.add_argument("--showdown", type=Path, default=Path("pokemon-showdown"))
     p.add_argument("--usage", type=Path, default=Path("usage_stats"))
@@ -867,6 +927,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--label", default=None, help=argparse.SUPPRESS)
     p.add_argument("--expect-code", type=Path, default=None, help=argparse.SUPPRESS)
     a = p.parse_args(argv)
+    if a.logs is None:
+        a.logs = [Path("logs_shards")] + [d for d in [Path("logs_mc")] if d.exists()]
     if a.moves_dir is None and (Path("build") / "moves_regma.json").exists():
         a.moves_dir = Path("build")
     return a
@@ -876,6 +938,9 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     a = parse_args(argv)
     if a.new_sample:
         make_sample(a)
+        return
+    if a.add_sample:
+        add_format_sample(a)
         return
     if a.code and not a.report:
         root = Path.cwd()

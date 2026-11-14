@@ -687,15 +687,18 @@ def chains(
 # --------------------------------------------------------------------------
 
 
-def wp_models(models: Path, groups: str) -> dict:
-    """Each format's win model (`wp_model`); a format with none yet (Reg M-C
-    until Week 15) is left out."""
+def wp_models(models: Path | None, groups: str, model=None) -> dict:
+    """Each format's win model (`wp_model`, or `model`); a format with none yet
+    (Reg M-C until Week 15) is left out. With no models folder (the resolver
+    check, where a constant stands in), every format."""
     from wpa.durations import FORMAT_MODS
 
+    model = model or wp_model
     return {
-        f: wp_model(models, f, groups)
+        # None only where a constant stands in for the model (the check)
+        f: model(models, f, groups)  # pyright: ignore[reportArgumentType]
         for f in FORMAT_MODS
-        if (Path(models) / ("pooled" if f == "regmb" else f)).exists()
+        if models is None or (Path(models) / ("pooled" if f == "regmb" else f)).exists()
     }
 
 

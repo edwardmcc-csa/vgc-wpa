@@ -510,3 +510,39 @@ def test_the_summary_gives_the_bias_on_clean_hits():
     assert "real damage / estimate, median" in text and "1.00" in text
     assert "estimate too high by over 10%" in text and "25.0%" in text
     assert "estimate too low by over 10%" in text
+
+
+def test_reg_m_c_is_added_to_the_sample_without_changing_the_others(tmp_path):
+    """Week 14: the sample keeps M-A's and M-B's games as they are; M-C's are
+    added once, from its own validation sets."""
+    path = tmp_path / "games.json"
+    RC.save_sample(path, {"regma": ["a", "b"], "regmb": ["c"]}, "the brief's sample")
+    RC.add_to_sample(path, "regmc", ["m1", "m2"], "300 Reg M-C sets")
+    assert RC.load_sample(path) == {
+        "regma": ["a", "b"],
+        "regmb": ["c"],
+        "regmc": ["m1", "m2"],
+    }
+    with pytest.raises(FileExistsError):
+        RC.add_to_sample(path, "regmc", ["m3"], "again")
+    assert RC.FORMAT_NAMES["regmc"] == "Reg M-C"
+
+
+def test_the_logs_can_come_from_more_than_one_folder(tmp_path):
+    a = RC.parse_args(["--logs", "logs_shards", "logs_mc"])
+    assert a.logs == [Path("logs_shards"), Path("logs_mc")]
+    cmd = RC.child_command(
+        RC.parse_args(["--code", "9e9ef90", "--logs", "x", "y"]), tmp_path, Path.cwd()
+    )
+    i = cmd.index("--logs")
+    assert [Path(p).name for p in cmd[i + 1 : i + 3]] == ["x", "y"]
+    assert all(Path(p).is_absolute() for p in cmd[i + 1 : i + 3])
+
+
+def test_without_win_models_the_check_still_gets_every_format():
+    """The check needs no win model (a constant stands in): every format,
+    Reg M-C too, before its models exist."""
+    from wpa import attribution as A
+
+    got = A.wp_models(None, "ABCDEFGHIJ", model=lambda m, f, g: f)
+    assert got == {"regma": "regma", "regmb": "regmb", "regmc": "regmc"}
