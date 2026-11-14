@@ -344,10 +344,13 @@ def test_spicy_spray_burns_whoever_hits_it(tools):
 @pytest.mark.parametrize(
     "ability, move, marked",
     [
-        ("flamebody", "dragonclaw", True),  # contact
-        ("flamebody", "stoneedge", False),  # no contact
-        ("static", "dragonclaw", True),
-        ("cursedbody", "stoneedge", True),  # any hit
+        # modelled since Week 12 (`tests/test_week12_mechanics.py`): not marked
+        ("flamebody", "dragonclaw", False),
+        ("static", "dragonclaw", False),
+        ("cursedbody", "stoneedge", False),
+        # Cute Charm's infatuation is not modelled: marked, on contact only
+        ("cutecharm", "dragonclaw", True),
+        ("cutecharm", "stoneedge", False),
         ("blaze", "dragonclaw", False),
     ],
 )
@@ -359,10 +362,10 @@ def test_a_chance_ability_when_hit_marks_the_turn(tools, ability, move, marked):
 
 
 @needs_showdown
-def test_poison_touch_on_the_attacker_marks_the_turn(tools):
+def test_poison_touch_on_the_attacker_is_modelled(tools):
     outs = _hit(tools, _with_ability("poisontouch", "p1", 0), "dragonclaw")
     hit = [o for o in outs if o.sides["p2"][0]["hp_fraction"] < 1.0]
-    assert hit and all("ability:poisontouch" in o.partial for o in hit)
+    assert hit and not any("ability:poisontouch" in o.partial for o in hit)
 
 
 # --- Disable (32 decision points in Week 11's run) ------------------------------

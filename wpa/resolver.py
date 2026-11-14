@@ -122,8 +122,10 @@ LEAVING = (
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
 SLEEPLESS = {"insomnia", "vitalspirit", "sweetveil", "comatose", "purifyingsalt"}
-# abilities that act by chance when hit with contact (not modelled: marked)
+# abilities that act by chance when hit with contact (after Week 12: each a
+# branch, with Showdown's chances; Cute Charm's infatuation is not modelled)
 CONTACT_CHANCE = {"flamebody", "static", "poisonpoint", "effectspore", "cutecharm"}
+CONTACT_STATUS = {"flamebody": "brn", "static": "par", "poisonpoint": "psn"}
 # healing by the weather (Moonlight and the like; Shore Up in sand)
 WEATHER_HEAL = {"moonlight", "morningsun", "synthesis"}
 # status moves with a target, done in `_use`'s loop (after Week 11)
@@ -268,6 +270,9 @@ class _World:
     # this action only: a Pokemon Encore just changed the move of, before it
     # moved (its place in the order is then found again: `_requeued`)
     requeue: tuple[str, int] | None = None
+    # this action only: abilities that act by chance on its hits, done after
+    # its secondary effects (`_chance_abilities`): (ability, holder, other)
+    chances: list = field(default_factory=list)
 
     def clone(self, p: float | None = None) -> _World:
         f = self.fld
@@ -298,6 +303,7 @@ class _World:
             set(self.subbed),
             self.winner,
             self.requeue,
+            list(self.chances),
         )
 
     def key(self, resolution: float | None, coarsen: int = 0) -> tuple:
@@ -572,6 +578,7 @@ class Resolver:
         )
         for r in ROLES:
             for j, x in enumerate(start.sides[r]):
+                x["_who"] = (r, j)  # for `_boost`: whose ability
                 # a substitute the board says is up: a quarter of the hit points,
                 # unless it has been hit (the log never shows what is left)
                 up = x.pop("sub_up", None)
@@ -600,6 +607,7 @@ class Resolver:
                             continue
                         (role, act), tail = rest[0], rest[1:]
                         for b in branch:
+                            sig = self._speed_sig(b)
                             for x in self._act(b, role, act):
                                 if x.winner is not None:
                                     # the game is over: Showdown ends the
@@ -612,6 +620,8 @@ class Resolver:
                                 if x.requeue is not None:
                                     t = self._requeued(x, tail)
                                     x.requeue = None
+                                elif t and self._speed_sig(x) != sig:
+                                    t = self._resorted(x, t)
                                 # merged, and capped, as they arrive: a step
                                 # never holds every board it makes at once
                                 if t not in pools:
@@ -631,6 +641,45 @@ class Resolver:
             Outcome(w.p / total, w.sides, w.fld, frozenset(w.partial), w.winner)
             for w in out
         ]
+
+    @staticmethod
+    def _speed_sig(w: _World) -> tuple:
+        """What the order of the moves to come depends on, beyond the moves:
+        Trick Room, Tailwind, weather and terrain (Swift Swim and the like),
+        each Pokemon's Speed stage, paralysis, item (a Choice Scarf knocked
+        off, Unburden) and whether it is in."""
+        return (
+            w.fld.trickroom,
+            w.fld.weather,
+            w.fld.terrain,
+            tuple(bool(w.fld.sides[r].get("tailwind")) for r in ROLES),
+            tuple(
+                (
+                    m["active"],
+                    m["boosts"].get("spe", 0),
+                    m["status"] == "par",
+                    m.get("item"),
+                )
+                for r in ROLES
+                for m in w.sides[r]
+            ),
+        )
+
+    def _resorted(self, w: _World, tail: tuple) -> tuple:
+        """The moves still to come, sorted again by their priority and Speed as
+        they are now (Generation 8 on: Showdown's `runAction` sorts the queue
+        after each action, so a Tailwind or a Speed drop acts at once). Ties
+        keep their order."""
+        sign = 1 if w.fld.trickroom else -1
+        keyed = sorted(
+            enumerate(tail),
+            key=lambda it: (
+                -self._priority(w, it[1][0], it[1][1]),
+                sign * self._speed(w, it[1][0], it[1][1].user),
+                it[0],
+            ),
+        )
+        return tuple(ra for _i, ra in keyed)
 
     def _capped(self, worlds: list[_World]) -> list[_World]:
         """Over `cap` boards: merge on a coarser hit-point grid until under it.
@@ -828,17 +877,19 @@ class Resolver:
             return
         if ab == "mirrorarmor":
             return  # reflected; the user's side is not tracked here
-        self._boost(st, {"atk": -1})
+        self._boost(st, {"atk": -1}, herb=False)
         if st.get("item") == "ejectpack":
             w.partial.add("eject pack")
         if ab == "defiant":
-            self._boost(st, {"atk": 2})
+            self._boost(st, {"atk": 2}, herb=False)
         elif ab == "competitive":
-            self._boost(st, {"spa": 2})
+            self._boost(st, {"spa": 2}, herb=False)
         elif ab == "guarddog":
-            self._boost(st, {"atk": 2})  # Guard Dog: +1 on top of cancelling the drop
+            # Guard Dog: +1 on top of cancelling the drop
+            self._boost(st, {"atk": 2}, herb=False)
         elif ab == "rattled":
-            self._boost(st, {"spe": 1})
+            self._boost(st, {"spe": 1}, herb=False)
+        self._white_herb(st)
 
     def _set_weather(self, w: _World, weather: str, item: str) -> None:
         if w.fld.weather == weather:
@@ -852,8 +903,13 @@ class Resolver:
         w.fld.terrain = terrain
         w.fld.terrain_left = 8 if item == "terrainextender" else 5
 
-    @staticmethod
-    def _boost(st: dict, changes: Mapping[str, int]) -> None:
+    def _boost(self, st: dict, changes: Mapping[str, int], herb: bool = True) -> None:
+        """Stat stages changed, turned around by Contrary (Staraptor-Mega in
+        Champions); then White Herb (`herb`; False where Defiant and the like
+        may answer the change first)."""
+        who = st.get("_who")
+        if who is not None and self.ability(who[0], who[1], st) == "contrary":
+            changes = {k: -v for k, v in changes.items()}
         b = st["boosts"]
         for k, v in changes.items():
             n = max(-6, min(6, b.get(k, 0) + v))
@@ -861,6 +917,18 @@ class Resolver:
                 b[k] = n
             else:
                 b.pop(k, None)
+        if herb:
+            self._white_herb(st)
+
+    @staticmethod
+    def _white_herb(st: dict) -> None:
+        """A stage below 0 and White Herb held: the lowered stages back to 0 and
+        the herb used. Showdown checks it after each move and switch-in, so
+        before anything else acts."""
+        b = st["boosts"]
+        if st.get("item") == "whiteherb" and any(v < 0 for v in b.values()):
+            st["boosts"] = {k: v for k, v in b.items() if v > 0}
+            st["item"], st["rev_item"] = "", "whiteherb"
 
     def _megas(self, w: _World, actions) -> list[_World]:
         for r in ROLES:
@@ -1155,7 +1223,7 @@ class Resolver:
         protect_used = mv in PROTECT_LIKE
         first_turn = not st["moved"]
         st["moved"], st["last_move"] = True, mv
-        w.hit, w.dealt, w.subbed = set(), 0, set()
+        w.hit, w.dealt, w.subbed, w.chances = set(), 0, set(), []
         if not protect_used:
             st["protect_streak"] = 0
         w.acted.add((role, a.user))
@@ -1781,15 +1849,16 @@ class Resolver:
         ):
             return False
         before = dict(t["boosts"])
-        self._boost(t, boosts)
+        self._boost(t, boosts, herb=False)
         if t["boosts"] == before:
             return False  # already at the limit
         if lowering and t.get("item") == "ejectpack":
             w.partial.add("eject pack")  # it would switch out; not modelled
         if lowering and ab == "defiant":
-            self._boost(t, {"atk": 2})
+            self._boost(t, {"atk": 2}, herb=False)
         elif lowering and ab == "competitive":
-            self._boost(t, {"spa": 2})
+            self._boost(t, {"spa": 2}, herb=False)
+        self._white_herb(t)
         return True
 
     def _heal(self, w: _World, role: str, idx: int, frac: float) -> None:
@@ -1920,7 +1989,9 @@ class Resolver:
             "terrain": w.fld.terrain or None,
         }
         for s in SCREENS:
-            f[s] = bool(w.fld.sides[tgt[0]].get(s)) and tgt[0] != role
+            # Showdown's screens: any hit on their side but the user's own
+            # (an ally's spread move too: found by the resolver check)
+            f[s] = bool(w.fld.sides[tgt[0]].get(s)) and tgt != (role, a.user)
         f["helpinghand"] = (role, a.user) in w.helped
         # abilities on the field that change damage (found by the resolver
         # check, Week 12): Fairy and Dark Aura, whoever holds them; Friend Guard
@@ -2165,6 +2236,7 @@ class Resolver:
         for b in out:
             self._after_attack(b, role, a, m)
         out = [x for b in out for x in self._secondaries(b, role, a, m)]
+        out = [x for b in out for x in self._chance_abilities(b, a)]
         out = [x for b in out for x in self._eject_button(b, role)]
         if m.get("selfSwitch"):
             out = [
@@ -2287,10 +2359,12 @@ class Resolver:
             )
             if ab == "spicyspray":
                 self._inflict(w, (role, a.user), "brn", a.move)
+            elif ab == "cutecharm" and contact:
+                w.partial.add(f"ability:{ab}")  # infatuation: not modelled
             elif ab == "cursedbody" or (contact and ab in CONTACT_CHANCE):
-                w.partial.add(f"ability:{ab}")
+                w.chances.append((ab, tgt, (role, a.user)))
             if contact and self.ability(role, a.user, st) == "poisontouch":
-                w.partial.add("ability:poisontouch")
+                w.chances.append(("poisontouch", (role, a.user), tgt))
 
     def _leech(self, w: _World, r: str, j: int) -> None:
         """Leech Seed at the end of the turn: an eighth of the seeded Pokemon's
@@ -2501,10 +2575,64 @@ class Resolver:
             out = _merge(nxt, self.resolution, self.prune)
         return out
 
+    def _chance_abilities(self, w: _World, a: Action) -> list[_World]:
+        """The abilities this move's hits set off by chance, each a branch with
+        Showdown's chance (`data/abilities.ts`): Flame Body, Static and Poison
+        Point give the attacker their status 30% of the time; Effect Spore puts
+        it to sleep 11%, paralyses it 10% or poisons it 9% (not a Grass type,
+        nor with Overcoat or Safety Goggles); Poison Touch poisons what it hit
+        30% (not through Shield Dust or Covert Cloak); Cursed Body disables the
+        move that hit it 30%."""
+        out = [w]
+        for ab, holder, other in w.chances:
+            nxt: list[_World] = []
+            for b in out:
+                o = b.sides[other[0]][other[1]]
+                if o["fainted"]:
+                    nxt.append(b)
+                    continue
+                if ab == "effectspore":
+                    types = set(self.types(other[0], other[1], o))
+                    if (
+                        "Grass" in types
+                        or o.get("item") == "safetygoggles"
+                        or self.ability(other[0], other[1], o) == "overcoat"
+                    ):
+                        nxt.append(b)
+                        continue
+                    branches = [("slp", 0.11), ("par", 0.10), ("psn", 0.09)]
+                elif ab == "poisontouch":
+                    if (
+                        self.ability(other[0], other[1], o) == "shielddust"
+                        or o.get("item") == "covertcloak"
+                    ):
+                        nxt.append(b)
+                        continue
+                    branches = [("psn", 0.3)]
+                elif ab == "cursedbody":
+                    branches = [("disable", 0.3)]
+                else:
+                    branches = [(CONTACT_STATUS[ab], 0.3)]
+                rest = 1.0 - sum(q for _s, q in branches)
+                for what, q in branches:
+                    yes = b.clone(b.p * q)
+                    if what == "disable":
+                        self._disable(yes, other)
+                    else:
+                        self._inflict(yes, other, what, a.move)
+                    nxt.append(yes)
+                b.p *= rest
+                nxt.append(b)
+            out = _merge(nxt, self.resolution, self.prune)
+        for b in out:
+            b.chances = []
+        return out
+
     # ----------------------------------------------------------- end of turn
 
     def _end_of_turn(self, w: _World) -> list[_World]:
         fld = w.fld
+        moody: list[tuple[str, int]] = []
         for r in ROLES:
             for j, st in enumerate(w.sides[r]):
                 if not st["active"] or st["fainted"]:
@@ -2569,7 +2697,7 @@ class Resolver:
                 if not st["fainted"] and ab == "speedboost":
                     self._boost(st, {"spe": 1})
                 if not st["fainted"] and ab == "moody":
-                    w.partial.add("moody")
+                    moody.append((r, j))
         self._drowsy(w)
         self._perish(w)
         # every timer counts down one
@@ -2591,7 +2719,30 @@ class Resolver:
         for r in ROLES:
             for x in w.sides[r]:
                 x.pop("roost", None)
-        return [w]
+        if not moody:
+            return [w]
+        out = [w]
+        for r, j in moody:
+            out = [x for b in out for x in self._moody(b, r, j)]
+        return _merge(out, self.resolution, self.prune)
+
+    def _moody(self, w: _World, r: str, j: int) -> list[_World]:
+        """Moody (Showdown, Generation 8 on): one of the five stats not at +6
+        rises 2, then another not at -6 falls 1, each chosen evenly."""
+        b = w.sides[r][j]["boosts"]
+        stats = ("atk", "def", "spa", "spd", "spe")
+        ups: list[str | None] = [s for s in stats if b.get(s, 0) < 6] or [None]
+        out = []
+        for up in ups:
+            downs: list[str | None] = [
+                s for s in stats if b.get(s, 0) > -6 and s != up
+            ] or [None]
+            for down in downs:
+                x = w.clone(w.p / (len(ups) * len(downs)))
+                change = {s: v for s, v in ((up, 2), (down, -1)) if s is not None}
+                self._boost(x.sides[r][j], change)
+                out.append(x)
+        return out
 
 
 def _left(w: _World, role: str) -> bool:
