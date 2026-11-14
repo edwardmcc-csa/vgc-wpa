@@ -1614,6 +1614,10 @@ The first line adds 300 M-C validation sets to the check's sample, once.
   forced-switch model.
 - Meteor Assault's recharge, Glaive Rush, Revival Blessing, Milk Drink on an
   ally, Court Change.
+- Emergency Exit (Golisopod, on 13% of M-C teams): it switches out once a hit
+  or the end of the turn takes it to half or less; Flash Fire's boost;
+  Stakeout; Liquid Ooze; Guard Dog; Harvest; an ally's Steely Spirit; and
+  Dragon Tail's drag (missing before, in every format).
 
 **For the next regulation** (M-D, say), the same steps with its names:
 1. **Pin a copy of Showdown that has it:** `git submodule add --depth 1
