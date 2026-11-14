@@ -7,6 +7,7 @@ env/
 profile.prof
 
 battle_logs/
+battle_logs_mc/
 results*/
 trajs/
 wpa_states/
