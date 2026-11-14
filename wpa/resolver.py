@@ -509,6 +509,7 @@ class Resolver:
         self.held = 0  # the most boards the last resolve held at once in a step
         self._hp: dict = {}
         self._dmg: dict = {}  # damage answers by what changes them
+        self._hits: dict = {}  # hit distributions by what changes them
         self._spe: dict = {}
         self.dropped = 0.0  # chance dropped by `prune` in the last resolve
 
@@ -2072,24 +2073,9 @@ class Resolver:
             stage += 1
         return [1 / 24, 1 / 8, 1 / 2][stage] if stage < 3 else 1.0
 
-    def _damage(
-        self,
-        w: _World,
-        role: str,
-        a: Action,
-        tgt,
-        spread: bool,
-        crit: bool,
-        spreads: tuple[Spread | None, Spread | None] = (None, None),
-    ) -> dict:
-        """The calculator's answer for one hit; `spreads`: the attacker's and
-        the target's, when not the likeliest (Task 4)."""
-        from wpa.features import _board_state
-
-        sp_a = spreads[0] or self.spread(role, a.user)
-        sp_d = spreads[1] or self.spread(*tgt)
-        st = w.sides[role][a.user]
-        t = w.sides[tgt[0]][tgt[1]]
+    def _damage_field(self, w: _World, role: str, a: Action, tgt) -> tuple[dict, dict]:
+        """What on the field changes a hit's damage, and each side's Pokemon
+        knocked out (`_damage` and the hit cache share it)."""
         f: dict[str, object] = {
             "weather": w.fld.weather or None,
             "terrain": w.fld.terrain or None,
@@ -2117,6 +2103,27 @@ class Resolver:
         for boost in sorted(ALLY_BOOSTS):
             f[boost] = boost == mine
         down = {r: sum(bool(x["fainted"]) for x in w.sides[r]) for r in ROLES}
+        return f, down
+
+    def _damage(
+        self,
+        w: _World,
+        role: str,
+        a: Action,
+        tgt,
+        spread: bool,
+        crit: bool,
+        spreads: tuple[Spread | None, Spread | None] = (None, None),
+    ) -> dict:
+        """The calculator's answer for one hit; `spreads`: the attacker's and
+        the target's, when not the likeliest (Task 4)."""
+        from wpa.features import _board_state
+
+        sp_a = spreads[0] or self.spread(role, a.user)
+        sp_d = spreads[1] or self.spread(*tgt)
+        st = w.sides[role][a.user]
+        t = w.sides[tgt[0]][tgt[1]]
+        f, down = self._damage_field(w, role, a, tgt)
         key = (
             role,
             a.user,
@@ -2177,6 +2184,42 @@ class Resolver:
         `spread_hits` over the likely spreads where they decide whether the
         target is knocked out (Task 4; damage then in the likeliest spread's hit
         points, so the board keeps one scale); the accuracy check is separate."""
+        hk = self._hit_key(w, role, a, tgt, spread)
+        if hk not in self._hits:
+            before = set(w.partial)
+            got = self._hit_distribution_fresh(w, role, a, m, tgt, spread)
+            self._hits[hk] = (got, frozenset(w.partial - before))
+        got, partial = self._hits[hk]
+        w.partial |= partial  # a rule modelled in part, on every board it acts
+        return got
+
+    def _hit_key(self, w: _World, role: str, a: Action, tgt, spread: bool) -> tuple:
+        """What a hit's damage distribution depends on (Week 13: computed once
+        for every board with the same attacker, target and field)."""
+        f, down = self._damage_field(w, role, a, tgt)
+        st = w.sides[role][a.user]
+        t = w.sides[tgt[0]][tgt[1]]
+        return (
+            role,
+            a.user,
+            tgt,
+            a.move,
+            spread,
+            tuple(sorted(f.items())),
+            _mon_key(st),
+            _mon_key(t),
+            round(t["hp_fraction"] * self.max_hp(*tgt)),
+            bool(t.get("sub")),
+            self.ability(role, a.user, st),
+            self.ability(tgt[0], tgt[1], t),
+            down[role],
+            down[tgt[0]],
+            st.get("hits", 0),
+        )
+
+    def _hit_distribution_fresh(
+        self, w: _World, role: str, a: Action, m: Mapping, tgt, spread: bool
+    ) -> list[tuple[float, int]]:
         base = self._rolls(w, role, a, m, tgt, spread)
         mix = self._spread_mix(w, role, a, m, tgt, spread, base)
         if mix is None:

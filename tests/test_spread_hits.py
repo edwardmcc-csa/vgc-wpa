@@ -194,3 +194,32 @@ def test_with_spread_damage_every_hit_weighs_the_likely_spreads(tools):
     )  # no knock-out: no branch
     _rv, outs = lost(frail, spread_hits=True, spread_damage=True)
     assert _mean_lost(outs) == pytest.approx(0.6 * on_full + 0.4 * on_bulk, abs=0.01)
+
+
+def test_a_hit_is_worked_out_once_for_boards_that_share_it(tools):
+    """Week 13: a hit's damage is kept for every board with the same attacker,
+    target and field, so weighing the spreads costs once, not once per board.
+    A rule modelled in part (here the calculator failing) still marks each."""
+    dex, moves, _calc = tools
+
+    class Failing:
+        def run(self, reqs):
+            return [
+                {"stats": {"hp": 200}} if r.get("op") == "stats" else {"error": "x"}
+                for r in reqs
+            ]
+
+    rv = R.Resolver(dex, moves, Failing(), SHEETS, SPREADS)
+    worked = []
+    rolls = rv._rolls
+    rv._rolls = lambda *a, **k: worked.append(1) or rolls(*a, **k)
+    b = board()
+    worlds = [
+        R._World(0.5, {r: [dict(m) for m in b[r]] for r in b}, R.Field(), set())
+        for _ in range(2)
+    ]
+    m = rv.move("dragonclaw")
+    got = [rv._hit_distribution(w, "p1", CLAW[0], m, ("p2", 0), False) for w in worlds]
+    assert got[0] == got[1] == []
+    assert len(worked) == 1  # for the first board only
+    assert all("damage:dragonclaw" in w.partial for w in worlds)
