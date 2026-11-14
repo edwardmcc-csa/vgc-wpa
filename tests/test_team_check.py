@@ -92,6 +92,14 @@ def test_a_species_counts_its_mega_forms_too():
     assert TC.unseen(["raichu"], usage) == ([], [])
 
 
+def test_a_form_the_statistics_count_under_its_species_is_seen():
+    """The statistics count Sinistcha-Masterpiece as Sinistcha."""
+    dex = NS(species={"sinistchamasterpiece": {"baseSpecies": "Sinistcha"}})
+    usage = {"sneasler": NS(count=600), "sinistcha": NS(count=300)}
+    assert TC.unseen(["sinistchamasterpiece"], usage, dex) == ([], [])
+    assert TC.unseen(["sinistchamasterpiece"], usage) == (["sinistchamasterpiece"], [])
+
+
 def test_my_team_txt_is_the_team_unless_another_is_given(tmp_path):
     assert TC.default_team(None, tmp_path) is None
     (tmp_path / "my_team.txt").write_text(PASTE)

@@ -120,10 +120,20 @@ class _Variant:
     stone: str = ""  # the Mega Stone this set holds, or ""
 
 
+def own_set(species: str, sets: Mapping[str, SetUsage], dex: Dex) -> SetUsage | None:
+    """A species' own entry in the statistics. A form without one takes its
+    species': the statistics count Sinistcha-Masterpiece as Sinistcha and
+    Maushold-Four as Maushold."""
+    if species in sets:
+        return sets[species]
+    base = to_id(dex.species.get(species, {}).get("baseSpecies", ""))
+    return sets.get(base) if base and base != species else None
+
+
 def _variant(shown: SheetMon, sets: Mapping[str, SetUsage], dex: Dex) -> _Variant:
     """The likeliest of the species' sets in the statistics (its own, or one of
     its Mega forms') given what the game has shown."""
-    cands = [_Variant(sets.get(shown.species))]
+    cands = [_Variant(own_set(shown.species, sets, dex))]
     cands += [
         _Variant(sets[mega], stone)
         for stone, mega in megas_of(dex).get(shown.species, ())
@@ -151,7 +161,7 @@ def _ability(shown: SheetMon, v: _Variant, sets, dex: Dex) -> str:
     is the species' own."""
     if shown.ability:
         return shown.ability
-    own = v.usage if not v.stone else sets.get(shown.species)
+    own = v.usage if not v.stone else own_set(shown.species, sets, dex)
     if own is not None and own.abilities:
         return max(own.abilities, key=lambda a: own.abilities[a])
     abilities = dex.species.get(shown.species, {}).get("abilities") or {}

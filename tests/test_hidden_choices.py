@@ -67,3 +67,16 @@ def test_if_the_log_rules_everything_out_the_options_stand():
 def test_without_priorities_the_old_averaging_stays():
     got = _chances(A.taken_mixture({0: "fainted"}, set(), OPTS, CH))
     assert set(got) == {PROTECT, SUCKER, COWTOW, SD, MEGA, SWITCH}
+
+
+def test_a_hidden_choice_that_cannot_go_with_the_shown_ones_is_left_out():
+    """Game 2634478000 turn 4, the opponent's sheet hidden: Sinistcha fell
+    before moving with no moves believed, so its options were a switch to
+    Incineroar only, the Pokemon its partner switched to. No joint choice was
+    left, and the turn failed (division by zero). The shown choice stands."""
+    to_inc = Action(1, "switch", switch_to=0)
+    partner = Action(3, "switch", switch_to=0)
+    opts = {1: [to_inc], 3: [partner, Action(3, "move", move="protect")]}
+    chances = {1: [1.0], 3: [0.5, 0.5]}
+    mix = A.taken_mixture({1: "fainted", 3: partner}, set(), opts, chances, PRIORITY)
+    assert mix == [((partner,), 1.0)]

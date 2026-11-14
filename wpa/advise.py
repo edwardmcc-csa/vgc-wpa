@@ -729,12 +729,12 @@ def pick_advice(team: str, theirs: Sequence[str], fmt: str, tools, top: int = 5)
     known = set(tools.hidden.for_game(tag, log))
     names = [species_name(s, dex, known) for s in theirs]
     tag, log = preview_log(team, names, fmt)
-    note = rough_team_note(team, tools.hidden.for_game(tag, log))
+    note = rough_team_note(team, tools.hidden.for_game(tag, log), dex)
     adv = replace(advise_bring(tag, log, fmt, tools, "p1"), note=note)
     return advice_text(adv, log, dex.moves, top)
 
 
-def rough_team_note(team: str, usage) -> str:
+def rough_team_note(team: str, usage, dex=None) -> str:
     """The warning for your Pokemon the format's statistics have not seen, or
     have seen on under 1% of teams ("" when it has seen them all)."""
     from wpa import team_check as TC
@@ -743,7 +743,7 @@ def rough_team_note(team: str, usage) -> str:
 
     species = [m["species"] for m in parse_team(team)]
     by_id = {to_id(s): s for s in species}
-    missing, rare = TC.unseen(list(by_id), usage)
+    missing, rare = TC.unseen(list(by_id), usage, dex)
     return TC.rough_note([by_id[s] for s in missing], [by_id[s] for s in rare])
 
 

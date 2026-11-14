@@ -318,7 +318,17 @@ def taken_mixture(
             pairs = allowed or pairs
         s = sum(p for _, p in pairs)
         per[idx] = [(x, p / s) for x, p in pairs] if s > 0 else []
-    return mixture(per)
+    out = mixture(per)
+    if not out:
+        # the hidden choices cannot go with the shown ones (a hidden switch to
+        # the Pokemon a partner switched to): the shown choices alone
+        shown = {
+            k: v
+            for k, v in per.items()
+            if isinstance(taken.get(k), Action) and k not in hidden
+        }
+        out = mixture(shown)
+    return out
 
 
 # --------------------------------------------------------------------------

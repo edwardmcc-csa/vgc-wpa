@@ -83,11 +83,15 @@ def problems(mon: Mapping) -> list[str]:
     return out
 
 
-def unseen(species: Sequence[str], usage: Mapping) -> tuple[list[str], list[str]]:
+def unseen(
+    species: Sequence[str], usage: Mapping, dex=None
+) -> tuple[list[str], list[str]]:
     """Of these species ids, those not in the format's usage statistics, and
     those on under 1% of its teams (each team has six Pokemon). A species
     counts its Mega forms, which the statistics count apart (`raichumegax`);
-    a regional form (`raichualola`) is another species."""
+    a regional form (`raichualola`) is another species. With the `dex`, a form
+    the statistics count under its species (Sinistcha-Masterpiece) is that
+    species."""
     teams = sum(float(u.count) for u in usage.values()) / 6 or 1.0
 
     def count(s: str) -> float:
@@ -97,7 +101,13 @@ def unseen(species: Sequence[str], usage: Mapping) -> tuple[list[str], list[str]
             if k == s or k.startswith(s + "mega")
         )
 
-    seen = {s: count(s) for s in species}
+    def base(s: str) -> str:
+        from wpa.team_sheets import to_id
+
+        b = (dex.species.get(s, {}) if dex is not None else {}).get("baseSpecies", "")
+        return to_id(b) or s
+
+    seen = {s: count(s) or count(base(s)) for s in species}
     missing = [s for s in species if not seen[s]]
     rare = [s for s in species if 0 < seen[s] / teams < RARE]
     return missing, rare
@@ -141,7 +151,7 @@ def report(team: str, dex, usage: Mapping | None = None) -> str:
         line += ("; " + "; ".join(bad)) if bad else ""
         lines.append(line + ")")
     if usage is not None:
-        missing, rare = unseen([to_id(m["species"]) for m in mons], usage)
+        missing, rare = unseen([to_id(m["species"]) for m in mons], usage, dex)
         by_id = {to_id(m["species"]): m["species"] for m in mons}
         note = rough_note([by_id[s] for s in missing], [by_id[s] for s in rare])
         if note:

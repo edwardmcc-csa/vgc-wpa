@@ -151,6 +151,48 @@ def test_a_species_the_statistics_do_not_list_keeps_what_was_shown():
     assert gar == SheetMon(4, "garchomp", "", "sandveil", ("earthquake",), "")
 
 
+def test_a_form_the_statistics_count_under_its_species_takes_its_set():
+    """The statistics count Sinistcha-Masterpiece as Sinistcha (and Maushold-
+    Four as Maushold). With no entry of its own, a form takes its species' set.
+    Game 2634478000 turn 4 failed on this: no moves were believed for it, so
+    a Sinistcha knocked out before moving had no choice to average over."""
+    tea = {"abilities": {"0": "Hospitality"}, "baseSpecies": "Sinistcha"}
+    dex = Dex(
+        species={
+            **DEX.species,
+            "sinistcha": {"name": "Sinistcha", **tea},
+            "sinistchamasterpiece": {"name": "Sinistcha-Masterpiece", **tea},
+        },
+        moves={},
+        items=DEX.items,
+    )
+    sets = H.set_usages(
+        {
+            "Sinistcha": {
+                "Raw count": 500,
+                "Abilities": {"hospitality": 500},
+                "Items": {"sitrusberry": 300, "rockyhelmet": 200},
+                "Moves": {
+                    "matchagotcha": 480,
+                    "ragepowder": 450,
+                    "trickroom": 300,
+                    "strengthsap": 250,
+                    "protect": 100,
+                },
+            }
+        }
+    )
+    (sin,) = H.belief_sheet([shown(2, "sinistchamasterpiece")], sets, dex)
+    assert sin == SheetMon(
+        2,
+        "sinistchamasterpiece",
+        "sitrusberry",
+        "hospitality",
+        ("matchagotcha", "ragepowder", "trickroom", "strengthsap"),
+        "",
+    )
+
+
 def test_a_move_used_this_turn_takes_the_place_of_the_least_likely_one():
     pub = shown(1, "incineroar", ["knockoff"])
     (inc,) = H.belief_sheet([pub], SETS, DEX)
