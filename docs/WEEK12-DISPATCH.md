@@ -1,7 +1,7 @@
 # Week 12 — Dispatch Brief (M5 part 4: ironing out Reg M-A and Reg M-B)
 
-**Status:** drafted 11 Nov 2026 from the PO's decisions on the Week 11 report
-(agreed 11 Nov).
+**Status:** done 13 Nov 2026; every box ticked. Report: `docs/WEEK12-REPORT.md`.
+Drafted 11 Nov 2026 from the PO's decisions on the Week 11 report (agreed 11 Nov).
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 
@@ -79,53 +79,53 @@ made sharper (sharpness 4). Their decision still averages about -2.2 points:
 real players choose better than the model expects (Week 9 found this curve
 flattens; sharpening cannot fix it).
 
-- [ ] **Weigh each reply also by how good it is for the opponent**: its value
+- [x] **Weigh each reply also by how good it is for the opponent**: its value
       against your likely choices, from the resolver. One strength setting is
       learned on training games.
-- [ ] **Measure first,** on a sample:
+- [x] **Measure first,** on a sample:
       - how far their decision's average moves towards 0;
       - what happens to your choice;
       - the time it costs.
-- [ ] **If it changes what DEFINITIONS §7 says** about the opponent's likely
+- [x] **If it changes what DEFINITIONS §7 says** about the opponent's likely
       replies, a revision is drafted for the PO's approval before the code
       changes.
-- [ ] Tests first.
+- [x] Tests first.
 
 ### Task 4 — A cheaper spread method
 Week 10 stopped averaging over spreads: two spreads each cost 14 to 19 times the
 time per turn. Spreads are still most of the turns where the board is missed
 ("not found, fully modelled": 30 in Reg M-A among the biggest swings).
 
-- [ ] **Branch on spreads only where they decide something:** the hits where
+- [x] **Branch on spreads only where they decide something:** the hits where
       another likely spread would change whether the target is knocked out.
-- [ ] **Measure:** the cost, the share of boards found and the dice on the
+- [x] **Measure:** the cost, the share of boards found and the dice on the
       biggest swings, beside Week 10's table.
-- [ ] **Stop rule:** if it more than doubles the time per turn for under 3
+- [x] **Stop rule:** if it more than doubles the time per turn for under 3
       points of boards found, stop and report.
-- [ ] Tests first.
+- [x] Tests first.
 
 ### Task 5 — Hidden opponent sets
-- [ ] **The analysis without the opponent's team sheet:**
+- [x] **The analysis without the opponent's team sheet:**
       - their moves, item and ability are beliefs from usage statistics,
         updated by what the game reveals (a move used, an item shown, an
         ability announced);
       - the player's own sheet is known;
       - the win probability model is the one trained with sheets hidden
         (Week 8).
-- [ ] **Check on Reg M-A and M-B games whose sheets we know**, with them hidden:
+- [x] **Check on Reg M-A and M-B games whose sheets we know**, with them hidden:
       how far each part of the split moves, and the boards found.
-- [ ] **The replay report** reads a game without team sheets.
-- [ ] Tests first.
+- [x] **The replay report** reads a game without team sheets.
+- [x] Tests first.
 
 ### Task 6 — The brief's sample again (the PO's computer)
-- [ ] The same 300 Reg M-A and 199 Reg M-B sets, with this week's changes (Tasks
+- [x] The same 300 Reg M-A and 199 Reg M-B sets, with this week's changes (Tasks
       2 to 4), the averaged model, and sharpness 4 or Task 3's setting.
-- [ ] **Report beside Week 11's:** the four parts per format, the turns over 40
+- [x] **Report beside Week 11's:** the four parts per format, the turns over 40
       points by cause, and the biggest swings and choices, each with its
       checks against the logs.
 
 ### Task 7 — Runbook and report
-- [ ] Runbook sections for this week's commands. A report in prose, with a
+- [x] Runbook sections for this week's commands. A report in prose, with a
       surprises section.
 
 ## Out of scope this week
