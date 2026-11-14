@@ -515,3 +515,26 @@ def test_a_session_answers_each_team_preview_until_you_stop():
     # the end of the input ends it too
     said.clear()
     AD.run_session(lambda: next(iter(())), answer, said.append)
+
+
+def test_the_pick_advice_shows_your_nicknames():
+    from wpa.attribution import lead_joint
+
+    tag, log = AD.preview_log(TEAM, THEIRS, "regma", now=1781792080)
+    adv = AD.Advice(
+        tag,
+        0,
+        "p1",
+        0.5,
+        [(AD.Pick((1, 0), (2, 3)), 0.56, 0.2)],
+        [(lead_joint((0, 1)), 0.4)],
+        1.0,
+        True,
+        0.52,
+        "bring",
+        note="Your Golisopod is not in this format's statistics: "
+        "the numbers for it are rough.",
+    )
+    text = AD.advice_text(adv, log)
+    assert "pick Nite and Gholdengo (they lead)" in text  # Nite is the Dragonite
+    assert "the numbers for it are rough" in text

@@ -84,6 +84,7 @@ class Advice:
     # "turn", "preview" (the leads), "bring" (team preview as the app asks it:
     # four to pick, the first two lead) or "replacement" (a forced switch)
     kind: str = "turn"
+    note: str = ""  # a warning shown at the top (`team_check.rough_note`)
 
 
 @dataclass
@@ -344,6 +345,19 @@ def advise_preview(
     return _advice(
         tag, 0, role, pt, tv, mixes[role], mixes[role], mixes[other], 1.0, "preview"
     )
+
+
+def shown_names(log: str) -> dict[str, list[str]]:
+    """Each side's six as the player knows them, in sheet order: the nickname
+    where there is one (End Game, Mia), else the species."""
+    from wpa.sheets import parse_showteam_message
+
+    out: dict[str, list[str]] = {}
+    for line in log.split("\n"):
+        if line.startswith("|showteam|"):
+            role, mons = parse_showteam_message(line)
+            out[role] = [m.name or m.species for m in mons]
+    return out
 
 
 class Pick(NamedTuple):
@@ -614,17 +628,9 @@ def advice_text(
 ) -> str:
     """The advice in words."""
     from wpa.attribution import joint_json
-    from wpa.replay import (
-        HIDDEN_NOTE,
-        move_names,
-        pct,
-        players,
-        say_choice,
-        sheet_names,
-        shown,
-    )
+    from wpa.replay import HIDDEN_NOTE, move_names, pct, players, say_choice, shown
 
-    sheets = sheet_names(log)
+    sheets = shown_names(log)
     names = move_names(log, dex_moves)
     who = players(log)
     other = "p2" if adv.role == "p1" else "p1"
@@ -666,6 +672,8 @@ def advice_text(
     ]
     if adv.hidden:
         lines[-1:] = [HIDDEN_NOTE.split(" Team preview")[0], ""]
+    if adv.note:
+        lines += [adv.note, ""]
     lines.append(intro)
     for n, (j, v, p) in enumerate(adv.choices[:top], 1):
         if kind == "bring":
@@ -721,8 +729,22 @@ def pick_advice(team: str, theirs: Sequence[str], fmt: str, tools, top: int = 5)
     known = set(tools.hidden.for_game(tag, log))
     names = [species_name(s, dex, known) for s in theirs]
     tag, log = preview_log(team, names, fmt)
-    adv = advise_bring(tag, log, fmt, tools, "p1")
+    note = rough_team_note(team, tools.hidden.for_game(tag, log))
+    adv = replace(advise_bring(tag, log, fmt, tools, "p1"), note=note)
     return advice_text(adv, log, dex.moves, top)
+
+
+def rough_team_note(team: str, usage) -> str:
+    """The warning for your Pokemon the format's statistics have not seen, or
+    have seen on under 1% of teams ("" when it has seen them all)."""
+    from wpa import team_check as TC
+    from wpa.replay import parse_team
+    from wpa.team_sheets import to_id
+
+    species = [m["species"] for m in parse_team(team)]
+    by_id = {to_id(s): s for s in species}
+    missing, rare = TC.unseen(list(by_id), usage)
+    return TC.rough_note([by_id[s] for s in missing], [by_id[s] for s in rare])
 
 
 def run_session(
@@ -782,7 +804,12 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     )
     p.add_argument("--format", choices=sorted(TIERS), default="regma")
     p.add_argument("--top", type=int, default=5, help="how many choices to show")
-    p.add_argument("--team", type=Path, default=None, help="your team paste")
+    p.add_argument(
+        "--team",
+        type=Path,
+        default=None,
+        help="your team paste (default: my_team.txt, if it is in this folder)",
+    )
     p.add_argument("--hidden", action="store_true", help="their sheet hidden")
     p.add_argument("--public-models", type=Path, default=Path("models_v4_preview"))
     p.add_argument("--models", type=Path, default=None)
@@ -794,10 +821,16 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
         reconfigure(errors="replace")
     own = None
     try:
-        team = a.team.read_text(encoding="utf-8") if a.team else None
+        from wpa.team_check import TEAM_FILE, default_team
+
+        path = default_team(a.team)
+        team = path.read_text(encoding="utf-8") if path else None
         if a.session or a.vs:
             if not team:
-                raise ReplayError("team preview needs your team paste (--team)")
+                raise ReplayError(
+                    f"team preview needs your team paste (--team, or {TEAM_FILE} "
+                    "in this folder)"
+                )
             if not (a.public_models / "regma").exists():
                 raise ReplayError(
                     "their sheet hidden needs the model trained that way, in "

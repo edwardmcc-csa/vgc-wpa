@@ -331,8 +331,8 @@ def prepare(
             if not team or not player:
                 raise ReplayError(
                     "this game shows no team sheets: give your team with --team "
-                    "(a team paste, as Showdown exports it) and your name with "
-                    "--player"
+                    "(a team paste, as Showdown exports it; or put it in "
+                    "my_team.txt in this folder) and your name with --player"
                 )
             log, hidden = with_sheets(log, side_of(log, player), team), True
         out.append((tag, log, fmt))
@@ -1086,7 +1086,7 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
         type=Path,
         default=None,
         help="your team paste (as Showdown exports it), for a game that shows "
-        "no team sheets",
+        "no team sheets (default: my_team.txt, if it is in this folder)",
     )
     p.add_argument(
         "--hidden",
@@ -1108,7 +1108,10 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
         if a.player:
             for tag, log, _f in games:
                 side_of(log, a.player)  # before the long part, not after
-        team = a.team.read_text(encoding="utf-8") if a.team else None
+        from wpa.team_check import default_team
+
+        path = default_team(a.team)
+        team = path.read_text(encoding="utf-8") if path else None
         games, a.hidden = prepare(games, a.player, team, a.hidden)
         if a.hidden and not (a.public_models / "regma").exists():
             raise ReplayError(

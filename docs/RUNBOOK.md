@@ -1431,7 +1431,8 @@ python -m wpa.advise LINK --player "your Showdown name" --turn 3
 - It takes about half a minute.
 - Without `--turn`, it advises on the last turn the log reaches: a game so far,
   saved as a file.
-- A game without team sheets: add `--team my_team.txt` (Section 21, step 5).
+- A game without team sheets: add `--team my_team.txt` (Section 21, step 5),
+  or leave it out with `my_team.txt` in this folder (Section 25).
   `--hidden` reads their sheet as hidden.
 - `--top 10` shows ten choices instead of five.
 
@@ -1485,6 +1486,32 @@ sides' newcomers come in, against theirs when they have a forced switch too.
 - It does not read the board off your phone yet.
 - "The best" is the best of your 10 likeliest choices against the replies the
   model expects: a coaching number, not a solver's answer.
+
+## 25. Your team (worked ahead, Week 13)
+
+Save your team once and the tool uses it everywhere.
+
+1. **Save it as `my_team.txt` in this folder** (the repo), as Showdown exports
+   it (Teambuilder, then Import/Export), nicknames included. It is never
+   committed (`.gitignore`).
+2. **Check it against the app's Stats screen:**
+   ```
+   python -m wpa.team_check --format regmb
+   ```
+   - One line per Pokemon: its six stats at level 50, from its stat points and
+     nature. They should match the app's Stats screen.
+   - It flags more than 66 stat points in all, or more than 32 in one stat.
+   - `--format regma` checks against Reg M-A's statistics instead.
+   - A paste somewhere else: `python -m wpa.team_check other_team.txt`.
+3. **Then leave out `--team`:** the advice (`--vs`, `--session`) and the replay
+   report (a game without team sheets) use `my_team.txt` when it is in this
+   folder. `--team other_team.txt` still uses that paste instead.
+
+**What changes in the advice**
+- Your Pokemon go by their nicknames (End Game, Mia).
+- When your team has a Pokemon the format's statistics have not seen, or have
+  seen on under 1% of teams, it says so at the top: the numbers for those are
+  rough. A species counts its Mega forms (Raichu-Mega-X is a Raichu).
 
 ---
 
