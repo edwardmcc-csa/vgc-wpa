@@ -546,3 +546,23 @@ def test_without_win_models_the_check_still_gets_every_format():
 
     got = A.wp_models(None, "ABCDEFGHIJ", model=lambda m, f, g: f)
     assert got == {"regma": "regma", "regmb": "regmb", "regmc": "regmc"}
+
+
+def test_a_turn_says_whether_the_cap_coarsened_its_boards():
+    """Week 14 (found in the Reg M-C dry run): over 300 boards the resolver
+    merges them on a coarser hit-point grid (up to 0.4), keeping the first
+    board's hit points in each cell; a miss there can be the grid, not a rule.
+    Each turn records it, and the table counts the misses it touched."""
+    fake = Fake({((HIT,), (HIT,)): [out([mon(0.6)], [mon(0.6)])]})
+    fake.resolution, fake.coarsest = 0.05, 0.4
+    actual = {"p1": [mon(0.8)], "p2": [mon(0.5)]}
+    rec = RC.check_turn(setup(fake, {"p1": HIT, "p2": HIT}, actual), PRIORITY)
+    assert rec["capped"] is True and rec["missed"] == "hp"
+    fake.coarsest = 0.05
+    rec2 = RC.check_turn(setup(fake, {"p1": HIT, "p2": HIT}, actual), PRIORITY)
+    assert rec2["capped"] is False
+    s = RC.summarise([rec, rec2])["regma"]
+    assert (s["capped"], s["capped_hp"]) == (1, 1)
+    text = "\n".join(RC.summary_lines({"run": [rec, rec2]}))
+    line = next(x for x in text.splitlines() if "on the cap's coarser grid" in x)
+    assert line.split()[-1] == "1"

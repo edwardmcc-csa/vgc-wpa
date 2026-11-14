@@ -166,13 +166,17 @@ def check_turn(
     t0 = time.time()
     outs: list = []
     pairs = 0
+    capped = False  # Week 14: the cap merged boards on a coarser grid
+    rv = ts.tv.resolver
     for (x, _p), (y, _q) in itertools.product(mixes["p1"], mixes["p2"]):
         pairs += 1
-        outs += ts.tv.resolver.resolve(
+        outs += rv.resolve(
             copy.deepcopy(dict(ts.tv.sides)),
             copy.deepcopy(ts.tv.fld),
             {"p1": x, "p2": y},
         )
+        grid = getattr(rv, "coarsest", 0.0) or 0.0
+        capped = capped or grid > (getattr(rv, "resolution", None) or 0.0) + 1e-9
     secs = time.time() - t0
     found = any(_close(o.sides, ts.actual, tol) for o in outs)
     partial = sorted(set().union(*(o.partial for o in outs))) if outs else []
@@ -197,6 +201,7 @@ def check_turn(
         "off": off,
         "pairs": pairs,
         "boards": len(outs),
+        "capped": capped,
         "seconds": round(secs, 4),
     }
     if clean is not None:
@@ -306,6 +311,9 @@ def summarise(recs: Iterable[Mapping]) -> dict[str, dict]:
                 "seconds": 0.0,
                 "boards": 0,
                 "hits": [],
+                "capped": 0,
+                "capped_hp": 0,
+                "capped_known": False,  # runs before Week 14 did not record it
             },
         )
         s["games"].add(r.get("tag"))
@@ -326,6 +334,10 @@ def summarise(recs: Iterable[Mapping]) -> dict[str, dict]:
             s["reasons"][x] += 1
         if r.get("missed"):
             s["missed"][r["missed"]] += 1
+        s["capped_known"] = s["capped_known"] or "capped" in r
+        if r.get("capped"):
+            s["capped"] += 1
+            s["capped_hp"] += r.get("missed") == "hp"
         if r.get("off") is not None:
             s["offs"].append(r["off"])
         s["seconds"] += r.get("seconds", 0.0)
@@ -446,6 +458,18 @@ def summary_lines(
                         ),
                     )
                 )
+                if any(s.get("capped_known") for s in ss):
+                    lines.append(
+                        row(
+                            "  on the cap's coarser grid",
+                            (
+                                f"{s.get('capped_hp', 0):,}"
+                                if s.get("capped_known")
+                                else "-"
+                                for s in ss
+                            ),
+                        )
+                    )
         left: Counter = Counter()
         per: list[Counter] = []
         for s in ss:

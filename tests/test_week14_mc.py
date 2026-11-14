@@ -733,3 +733,51 @@ def test_the_calculator_has_the_new_damage_abilities(
     d0 = _max_roll(base, board(), "p1", 0, move, ("p2", 0), fld)
     d1 = _max_roll(swapped, board(), "p1", 0, move, ("p2", 0), fld)
     assert d1 / d0 == pytest.approx(ratio, rel=0.04)
+
+
+@needs_mc
+def test_grassy_glide_has_priority_on_grassy_terrain(tools):
+    """Showdown: +1 on Grassy Terrain for a grounded user (`onModifyPriority`).
+    Found in the dry run of 14 Nov: Rillaboom (on 32% of M-C teams) lost its
+    first move to a slower Houndstone. Not modelled before, in any format."""
+    rv = _rv(tools, p1={0: {"species": "rillaboom", "ability": "grassysurge"}})
+    b = board()
+    b["p1"][0]["species"] = "rillaboom"
+    a = Action(0, "move", move="grassyglide", target=("foe", 0))
+    grassy = R.Field(terrain="grassyterrain", terrain_left=3)
+    assert rv._priority(R._World(1.0, b, grassy, set()), "p1", a) == 1
+    assert rv._priority(R._World(1.0, b, R.Field(), set()), "p1", a) == 0
+    b["p1"][0]["item"] = "airballoon"  # in the air: no
+    assert rv._priority(R._World(1.0, b, grassy, set()), "p1", a) == 0
+
+
+@needs_mc
+def test_a_bind_ends_when_the_one_that_bound_it_is_gone(tools):
+    """Showdown's partiallytrapped: no damage, and over, once its source has
+    fainted or left (found by the M-C dry run: Toxapex's Infestation went on
+    after Toxapex fainted, and knocked out a Basculegion that lived)."""
+    rv = _rv(tools)
+    full = rv.max_hp("p2", 0)
+    for gone, lost in ((False, full // 8), (True, 0)):
+        b = board()
+        b["p2"][0].update(bound=8, bound_by=1)  # Kingambit bound it
+        if gone:
+            b["p1"][1].update(fainted=True, hp_fraction=0.0, active=False)
+        outs = _go(rv, b, (QUIET[0],) if gone else QUIET, LEER)
+        for o in outs:
+            inci = o.sides["p2"][0]
+            assert round((1 - inci["hp_fraction"]) * full) == lost
+            assert ("bound" in inci) != gone
+
+
+def test_the_board_keeps_who_bound_it_from_the_log():
+    from tests.test_board_effects import at_turn_start
+    from tests.test_more_mechanics import _mon, _turns
+
+    log = _turns(
+        "|t:|1\n|move|p2a: Inci|Infestation|p1a: Whim\n"
+        "|-activate|p1a: Whim|move: Infestation|[of] p2a: Inci",
+        "|t:|2\n|move|p2a: Inci|Protect|p2a: Inci",
+    )
+    s2 = at_turn_start(log, 2)
+    assert _mon(s2, 0)["bound"] == 8 and _mon(s2, 0)["bound_by"] == 0

@@ -130,6 +130,7 @@ WEEK13 = (
     "recharge",
     "glaiverush",
     "flashfire",  # Week 14
+    "bound_by",  # Week 14: who bound it (the bind ends when that one is gone)
 )
 # what leaving the field ends (Rage Fist's hits too, in Champions; the Toxic
 # count starts again; Leech Seed, Taunt, Yawn and Disable end)
@@ -502,6 +503,13 @@ class _Board:
             m.pop("types", None)
         elif t == "-activate" and what in BINDING:
             m["bound"] = 8  # an eighth each end of turn (Week 12)
+            # Week 14: who bound it (`[of]`), and a sixth with its Binding Band
+            of = next((x[5:] for x in p[4:] if x.startswith("[of] ")), None)
+            k = self._index(of[:2], of) if of and of[:2] in self.mons else None
+            if of and k is not None:
+                m["bound_by"] = k
+                if self.mons[of[:2]][k]["item"] == "bindingband":
+                    m["bound"] = 6
         elif t == "-end" and "[partiallytrapped]" in p[4:]:
             m.pop("bound", None)
         elif t == "-activate" and what == "skillswap" and len(p) > 5:

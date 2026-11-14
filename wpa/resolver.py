@@ -134,6 +134,7 @@ LEAVING = (
     "recharge",
     "glaiverush",
     "flashfire",  # Week 14
+    "bound_by",
 )
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
@@ -486,6 +487,7 @@ class _World:
                 m.get("glaiverush", 0),
                 m.get("flashfire", 0),
                 m.get("eaten", ""),
+                m.get("bound_by", -1),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -1256,6 +1258,12 @@ class Resolver:
             pr += 1
         elif ab == "triage" and "heal" in (m.get("flags") or []):
             pr += 3
+        if (
+            a.move == "grassyglide"
+            and w.fld.terrain == "grassyterrain"
+            and self._grounded((role, a.user), st, w.fld)
+        ):
+            pr += 1  # Week 14 (found by the M-C dry run): Showdown's onModifyPriority
         return pr
 
     def _orders(self, w: _World, actions) -> list[tuple[list, float]]:
@@ -3241,6 +3249,7 @@ class Resolver:
                 # Band, else an eighth, at each end of turn (Week 12)
                 band = w.sides[role][a.user].get("item") == "bindingband"
                 t["bound"] = 6 if band else 8
+                t["bound_by"] = a.user  # Week 14: it ends when this one is gone
         if new == 0:
             self._faint(w, tgt)
             if t.get("destinybond") and tgt[0] != role:
@@ -3674,6 +3683,9 @@ class Resolver:
                     self._leech(w, r, j)
                 if st["fainted"]:
                     continue
+                if st.get("bound") and self._binder_gone(w, r, st):
+                    st.pop("bound")  # Week 14: Showdown ends it, with no damage
+                    st.pop("bound_by", None)
                 if st.get("bound") and ab != "magicguard":
                     self._lose(w, (r, j), 1 / st["bound"])
                 if st.get("cursed") and ab != "magicguard" and not st["fainted"]:
@@ -3738,6 +3750,16 @@ class Resolver:
         if len(out) == 1:
             return out
         return _merge(out, self.resolution, self.prune)
+
+    @staticmethod
+    def _binder_gone(w: _World, r: str, st: Mapping) -> bool:
+        """The one that bound it (Infestation and the like) has fainted or left
+        the field: Showdown's partiallytrapped ends at the end of the turn."""
+        k = st.get("bound_by")
+        side = w.sides[_other(r)]
+        if not isinstance(k, int) or not 0 <= k < len(side):
+            return False
+        return bool(side[k]["fainted"]) or not side[k]["active"]
 
     def _harvest(self, w: _World) -> list[_World]:
         """Harvest (Week 14): a Berry it ate comes back at the end of the turn,
