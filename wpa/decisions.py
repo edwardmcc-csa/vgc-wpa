@@ -108,6 +108,7 @@ _VOLATILE_LINES = frozenset(
         "-damage",
         "-ability",
         "-singlemove",
+        "-transform",
     }
 )
 # Week 13: hazards and the most layers of each
@@ -122,6 +123,9 @@ WEEK13 = (
     "focusenergy",
     "imprison",
     "destinybond",
+    "attract",
+    "transform",
+    "moves",
 )
 # what leaving the field ends (Rage Fist's hits too, in Champions; the Toxic
 # count starts again; Leech Seed, Taunt, Yawn and Disable end)
@@ -195,6 +199,8 @@ class _Board:
     def __init__(self) -> None:
         self.names: dict[str, list[str]] = {}
         self.species: dict[str, list[str]] = {}
+        # each one's moves, from the sheet (what Transform copies, Week 13)
+        self.movesets: dict[str, list[tuple[str, ...]]] = {}
         self.mons: dict[str, list[dict]] = {}
         self.slots: dict[str, dict[str, int | None]] = {
             r: {"a": None, "b": None} for r in ROLES
@@ -221,6 +227,7 @@ class _Board:
         self.names[role] = [m.name for m in mons]
         self.abilities[role] = [to_id(m.ability) for m in mons]
         self.species[role] = [to_id(m.species) for m in mons]
+        self.movesets[role] = [tuple(to_id(x) for x in m.moves) for m in mons]
         self.mons[role] = [
             {
                 "hp": 0.0,
@@ -501,6 +508,31 @@ class _Board:
             m.pop("healblock", None)
         elif t == "-singlemove" and what == "destinybond":
             m["destinybond"] = 1
+        elif t == "-transform" and len(p) > 3 and p[3][:2] in ROLES:
+            # Week 13 (Imposter): the foe it copied, and whether that one had
+            # Mega Evolved; its moves, stat stages (the log does not print
+            # them), a changed ability and types. The ally is not copied here
+            r2 = p[3][:2]
+            j = self._index(r2, p[3])
+            if j is not None and r2 != p[2][:2]:
+                o = self.mons[r2][j]
+                m["transform"] = [j, int(bool(o["mega"]))]
+                sets = self.movesets.get(r2, [])
+                m["moves"] = list(sets[j]) if j < len(sets) else []
+                m["boosts"] = dict(o["boosts"])
+                for k in ("ability", "types", "typeadd"):
+                    if k in o:
+                        m[k] = list(o[k]) if isinstance(o[k], list) else o[k]
+                    else:
+                        m.pop(k, None)
+        elif t == "-start" and what == "attract":
+            # infatuated (Cute Charm): by whom, on the other side
+            of = next((x[5:] for x in p[4:] if x.startswith("[of] ")), "")
+            src = self._index(of[:2], of) if of[:2] in ROLES else None
+            if src is not None and of[:2] != p[2][:2]:
+                m["attract"] = src
+        elif t == "-end" and what == "attract":
+            m.pop("attract", None)
         elif t == "-end" and what in ("leechseed", "taunt", "yawn"):
             m.pop(
                 {"leechseed": "seeded", "taunt": "taunt", "yawn": "drowsy"}[what], None
@@ -634,6 +666,10 @@ class _Board:
             m.update(moved=False, last_move="", protect_streak=0)
             m["active"] = True
             m["seen"] = True
+            # its gender, as its switch-in shows it (Cute Charm, Week 13): none
+            # shown is none to have (N)
+            sex = [d for d in p[3].split(", ")[1:] if d in ("M", "F")]
+            m["gender"] = sex[0] if sex else "N"
             m["hp"], fainted = _hp(p[4])
             m["fainted"] = m["fainted"] or (fainted and m["hp"] == 0)
             m["status"] = _status(p[4])
@@ -710,6 +746,9 @@ class _Board:
         )
 
     def side(self, role: str) -> list[dict]:
+        # which place each Pokemon on the field is in (Week 13: Imposter copies
+        # the foe opposite)
+        at = {v: k for k, v in self.slots.get(role, {}).items() if v is not None}
         return [
             {
                 "species": sp,
@@ -730,10 +769,14 @@ class _Board:
                 **({"perish": m["perish"]} if m.get("perish") else {}),
                 **({"hits": m["hits"]} if m.get("hits") else {}),
                 **({"sub_up": m["sub_up"]} if m.get("sub_up") else {}),
+                **({"gender": m["gender"]} if m.get("gender") else {}),
+                **({"slot": at[i]} if m["active"] and i in at else {}),
                 **{k: m[k] for k in TRACKED if k in m and k != "seeded"},
                 **({"seeded": self._seeded(role, m)} if "seeded" in m else {}),
             }
-            for sp, m in zip(self.species.get(role, []), self.mons.get(role, []))
+            for i, (sp, m) in enumerate(
+                zip(self.species.get(role, []), self.mons.get(role, []))
+            )
         ]
 
     def _seeded(self, role: str, m: dict) -> int:

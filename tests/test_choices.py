@@ -164,10 +164,13 @@ def test_struggle_is_forced_and_a_transformed_pokemon_uses_borrowed_moves():
     assert (
         _turn2("|t:|2\n|move|p2b: Fini|Struggle|p1a: Whim", "p2").taken[1] == "forced"
     )
+    # Week 13: the moves it copied are its choices, like its own
     copied = (
         "|t:|2\n|-transform|p1a: Whim|p2a: Inci\n|move|p1a: Whim|Fake Out|p2a: Inci"
     )
-    assert _turn2(copied, "p1").taken[0] == "transformed"
+    assert _turn2(copied, "p1").taken[0] == C.Action(
+        0, "move", move="fakeout", target=("foe", 0)
+    )
 
 
 def test_the_check_counts_hidden_targets_apart():
@@ -198,7 +201,12 @@ def test_a_lead_transformed_by_imposter_uses_borrowed_moves_until_it_leaves():
         1,
     )
     t2 = {t.role: t for t in C.turns(lg, DEX) if t.turn == 2}
-    assert t2["p1"].taken[0] == "transformed"
+    whim = C.Action(0, "move", move="fakeout", target=("foe", 0))
+    assert t2["p1"].taken[0] == whim  # Week 13: Inci's Fake Out, a choice of its own
+    s = at_turn_start(lg, 2)
+    opts = C.options(s["our_pokemon"], s["opp_pokemon"], sheets_from_log(lg)["p1"], DEX)
+    assert whim in opts[0]  # offered: Inci's moves, not its own
+    assert not any(a.move == "tailwind" for a in opts[0])
 
 
 def test_a_confusion_self_hit_hides_the_choice():

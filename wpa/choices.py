@@ -102,6 +102,8 @@ def options(
     out: dict[int, list[Action]] = {}
     for i in actives:
         st, mon = ours[i], sheet[i]
+        if st.get("moves"):  # transformed (Week 13): the moves it copied
+            mon = replace(mon, moves=tuple(st["moves"]))
         ally = next((k for k in actives if k != i), None)
         mega_ok = not side_megaed and not st.get("mega") and _has_own_stone(mon, dex)
         acts: list[Action] = []
@@ -319,8 +321,10 @@ def turns(log: str, dex: Dex | None = None) -> list[Turn]:
                         or p[3] == "Struggle"
                     ):
                         taken[idx] = "forced"
-                    elif (role, idx) in transformed:
-                        taken[idx] = "transformed"
+                    elif (role, idx) in transformed and not board.mons[role][idx].get(
+                        "moves"
+                    ):
+                        taken[idx] = "transformed"  # its copied moves unknown
                     elif "[from]" in tags:
                         pass  # called by another effect: not this Pokemon's choice
                     elif "[notarget]" in tags:

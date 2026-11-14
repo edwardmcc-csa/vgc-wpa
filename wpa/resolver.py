@@ -28,6 +28,7 @@ for the turn, so a Speed drop takes effect from the next turn.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -127,6 +128,9 @@ LEAVING = (
     "focusenergy",
     "imprison",
     "destinybond",
+    "attract",
+    "transform",
+    "moves",
 )
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
@@ -403,6 +407,9 @@ class _World:
                 m.get("focusenergy", 0),
                 m.get("imprison", 0),
                 m.get("destinybond", 0),
+                m.get("attract", -1),
+                tuple(m.get("transform") or ()),
+                m.get("slot", ""),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -516,6 +523,7 @@ def _mon_key(st: Mapping) -> tuple:
         st.get("typeadd", ""),
         st.get("roost", 0),
         st.get("ability", ""),
+        tuple(st.get("transform") or ()),
     )
 
 
@@ -575,6 +583,14 @@ class Resolver:
         return sp
 
     def entry(self, role: str, idx: int, st: Mapping) -> dict:
+        c = self._copied(role, idx, st)
+        if c is not None:  # transformed: the form of the one it copied
+            mon = self.sheets[c[0]][c[1]]
+            return (
+                form_of(mon, self.dex)
+                if c[2]
+                else self.dex.species.get(mon.species, {})
+            )
         mon = self.sheets[role][idx]
         if st.get("mega"):
             return form_of(mon, self.dex)
@@ -583,11 +599,37 @@ class Resolver:
     def ability(self, role: str, idx: int, st: Mapping) -> str:
         if st.get("ability"):  # changed this turn or before (Week 13)
             return st["ability"]
-        mon = self.sheets[role][idx]
+        c = self._copied(role, idx, st)
+        mon = self.sheets[c[0]][c[1]] if c is not None else self.sheets[role][idx]
         e = self.entry(role, idx, st)
-        if st.get("mega") and e.get("isMega"):
+        if (c[2] if c is not None else st.get("mega")) and e.get("isMega"):
             return to_id((e.get("abilities") or {}).get("0", mon.ability))
         return mon.ability
+
+    @staticmethod
+    def _copied(role: str, idx: int, st: Mapping) -> tuple[str, int, bool] | None:
+        """Transformed (Imposter, Week 13): the foe it copied (side, sheet
+        position, whether that one had Mega Evolved); None if not."""
+        tf = st.get("transform")
+        if not tf:
+            return None
+        return _other(role), int(tf[0]), bool(tf[1])
+
+    def _as(self, role: str, idx: int, st: Mapping) -> tuple[str, int]:
+        """Whose stats (but HP) it has: the one it copied, or its own."""
+        c = self._copied(role, idx, st)
+        return (c[0], c[1]) if c is not None else (role, idx)
+
+    def _calc_state(self, role: str, idx: int, st: Mapping, down: int = 0) -> dict:
+        """The board state the calculator gets: a transformed Pokemon has the
+        form it copied (a Mega's too) and keeps its own item."""
+        from wpa.features import _board_state
+
+        bs = _board_state(st, down)
+        c = self._copied(role, idx, st)
+        if c is not None:
+            bs["mega"] = c[2]
+        return bs
 
     def types(self, role: str, idx: int, st: Mapping) -> list[str]:
         """Its types now: a change the board or this turn made (Protean,
@@ -784,7 +826,8 @@ class Resolver:
     def _speed_dist(self, w: _World, role: str, idx: int) -> list[tuple[float, float]]:
         """The Speeds this Pokemon may have, each with its chance: from its
         spread belief where there is one, else the likeliest spread's."""
-        d = self.dists.get((role, idx)) if self.speed_beliefs else None
+        who = self._as(role, idx, w.sides[role][idx])  # transformed: the copied's
+        d = self.dists.get(who) if self.speed_beliefs else None
         if not d or len(d) < 2:
             return [(self._speed(w, role, idx), 1.0)]
         by: dict[float, float] = {}
@@ -801,13 +844,12 @@ class Resolver:
         self, w: _World, role: str, idx: int, spread: Spread | None = None
     ) -> float:
         st = w.sides[role][idx]
-        mon = self.sheets[role][idx]
-        sp = spread or self.spread(role, idx)
-        from wpa.features import _board_state
-
+        mon = self._sheet_now(role, idx, st)  # transformed: the copied's
+        sp = spread or self.spread(*self._as(role, idx, st))
         key = (
             role,
             idx,
+            tuple(st.get("transform") or ()),
             sp,
             w.fld.weather,
             w.fld.terrain,
@@ -820,7 +862,7 @@ class Resolver:
         if key not in self._spe:
             req = speed_request(
                 mon,
-                _board_state(st),
+                self._calc_state(role, idx, st),
                 sp,
                 self.dex,
                 {"weather": w.fld.weather, "terrain": w.fld.terrain},
@@ -892,6 +934,7 @@ class Resolver:
         )
         came = []
         for r in ROLES:
+            places = iter("ab")  # the first lead on the left (Week 13)
             for a in actions.get(r, ()):
                 j = a.switch_to
                 if a.kind != "switch" or j is None:
@@ -899,6 +942,7 @@ class Resolver:
                 m = w.sides[r][j]
                 if m["fainted"] or m["active"]:
                     continue
+                m["slot"] = next(places, "")
                 if m["hp_fraction"] <= 0:
                     m["hp_fraction"] = 1.0  # first time in
                 m.update(active=True, boosts={}, moved=False, last_move="")
@@ -930,6 +974,8 @@ class Resolver:
         n.pop("perish", None)
         o.pop("sub", None)  # and a substitute
         n.pop("sub", None)
+        if "slot" in o:  # it comes in where the other was (Week 13)
+            n["slot"] = o.pop("slot")
         if n["hp_fraction"] <= 0:
             n["hp_fraction"] = 1.0  # first time in
         n.update(active=True, boosts={}, moved=False, last_move="", protect_streak=0)
@@ -940,6 +986,8 @@ class Resolver:
         for x in w.sides[_other(role)]:
             if x.get("seeded") == old:
                 x["seeded"] = new
+            if x.get("attract") == old:
+                x.pop("attract")  # its cause left the field
         if entry:
             self._on_entry(w, role, new)
         return True
@@ -993,6 +1041,44 @@ class Resolver:
                 if j != idx and x["active"] and not x["fainted"]:
                     full = self.max_hp(role, j)
                     self._heal(w, role, j, (full // 4) / full)
+        elif ab == "imposter":
+            self._imposter(w, role, idx)
+
+    def _imposter(self, w: _World, role: str, idx: int) -> None:
+        """Imposter (Week 13): it transforms into the foe opposite (Showdown:
+        `foe.active[n - 1 - position]`), copying its form, moves, stat stages,
+        a changed ability and types; not one fainted, behind a substitute or
+        itself transformed. The copied ability does not start. A board that
+        does not say where each one is: marked partly modelled."""
+        st = w.sides[role][idx]
+        o = _other(role)
+        mine = st.get("slot")
+        foes = [x for x in w.sides[o] if x["active"] and not x["fainted"]]
+        if mine not in ("a", "b") or any(x.get("slot") is None for x in foes):
+            w.partial.add("imposter: the foe opposite")
+            return
+        want = "b" if mine == "a" else "a"
+        j = next(
+            (
+                k
+                for k, x in enumerate(w.sides[o])
+                if x.get("slot") == want and x["active"] and not x["fainted"]
+            ),
+            None,
+        )
+        if j is None:
+            return
+        x = w.sides[o][j]
+        if x.get("sub") or x.get("transform"):
+            return
+        st["transform"] = [j, int(bool(x["mega"]))]
+        st["moves"] = list(self.sheets[o][j].moves)
+        st["boosts"] = dict(x["boosts"])
+        for k in ("ability", "types", "typeadd"):
+            if k in x:
+                st[k] = list(x[k]) if isinstance(x[k], list) else x[k]
+            else:
+                st.pop(k, None)
 
     def _intimidate(self, w: _World, role: str, idx: int) -> None:
         st = w.sides[role][idx]
@@ -1257,14 +1343,14 @@ class Resolver:
         100 instead of moving. Then paralysis: 1 time in 8 it cannot move."""
         st = w.sides[role][a.user]
         if "confused" not in st:
-            return self._paralysed_then(w, role, a)
+            return self._attracted_then(w, role, a)
         n = st["confused"] + 1
         snap = 0.0 if n < 2 else (1.0 if n >= 5 else 1 / (6 - n))
         out = []
         if snap > 0:
             free = w.clone(w.p * snap) if snap < 1 else w
             free.sides[role][a.user].pop("confused", None)
-            out += self._paralysed_then(free, role, a)
+            out += self._attracted_then(free, role, a)
             if snap >= 1:
                 return out
             w.p *= 1 - snap
@@ -1272,8 +1358,46 @@ class Resolver:
         hurt = w.clone(w.p * CONFUSED_HIT)
         w.p *= 1 - CONFUSED_HIT
         out += self._hits_itself(hurt, role, a.user)
-        out += self._paralysed_then(w, role, a)
+        out += self._attracted_then(w, role, a)
         return out
+
+    def _attracted_then(self, w: _World, role: str, a: Action) -> list[_World]:
+        """Infatuation (Cute Charm, Week 13), after confusion and before
+        paralysis (Showdown's order): half the time it cannot move. It ends when
+        the Pokemon that caused it has left the field."""
+        st = w.sides[role][a.user]
+        src = st.get("attract")
+        if src is None:
+            return self._paralysed_then(w, role, a)
+        o = w.sides[_other(role)][src]
+        if o["fainted"] or not o["active"]:
+            st.pop("attract")
+            return self._paralysed_then(w, role, a)
+        stuck = w.clone(w.p / 2)
+        w.p /= 2
+        stuck.acted.add((role, a.user))
+        return [stuck, *self._paralysed_then(w, role, a)]
+
+    def _charm(self, w: _World, holder: tuple[str, int], other: tuple[str, int]):
+        """Cute Charm's hit: the attacker can be infatuated (30%,
+        `_chance_abilities`) when the two have opposite genders. Not an ally,
+        nor one already infatuated, nor through Oblivious or Aroma Veil (its own
+        or its ally's). A gender the board does not have (the log never showed
+        it): marked partly modelled."""
+        h, o = w.sides[holder[0]][holder[1]], w.sides[other[0]][other[1]]
+        if holder[0] == other[0] or "attract" in o:
+            return
+        gh, go = h.get("gender", ""), o.get("gender", "")
+        if not gh or not go:
+            w.partial.add("ability:cutecharm")
+            return
+        if {gh, go} != {"M", "F"}:
+            return
+        if self.ability(other[0], other[1], o) in TAUNT_BLOCK or self._ally_has(
+            w, other[0], other[1], {"aromaveil"}
+        ):
+            return
+        w.chances.append(("cutecharm", holder, other))
 
     def _paralysed_then(self, w: _World, role: str, a: Action) -> list[_World]:
         if w.sides[role][a.user]["status"] == "par":
@@ -1346,6 +1470,7 @@ class Resolver:
         st = w.sides[role][a.user]
         protect_used = mv in PROTECT_LIKE
         first_turn = not st["moved"]
+        again = st.get("last_move") == mv  # Ally Switch's chance (`_ally_switch`)
         st["moved"], st["last_move"] = True, mv
         st["last_target"] = a.target  # for Instruct (`_instruct`)
         w.hit, w.dealt, w.subbed, w.chances = set(), 0, set(), []
@@ -1372,6 +1497,8 @@ class Resolver:
             return [w]  # disabled
         if protect_used:
             return self._protect(w, role, a)
+        if mv == "allyswitch":
+            return self._ally_switch(w, role, a, again)
         if "charge" in (m.get("flags") or []):
             if st.get("charging") == mv:
                 st.pop("charging")  # the turn after charging: it goes off
@@ -2009,14 +2136,69 @@ class Resolver:
             return
         w.reorder = (tgt, "again")
 
+    def _ally_switch(
+        self, w: _World, role: str, a: Action, again: bool
+    ) -> list[_World]:
+        """Ally Switch (Week 13): the user and its ally change places, so a
+        move still to come aimed at one's place lands on the other
+        (`_reordered`). It fails with no ally beside it. Used the turn before,
+        it works a third of the time (Showdown's counter starts at 3; a third
+        use in a row, a ninth, is taken as a third)."""
+        ally = [
+            j
+            for j, x in enumerate(w.sides[role])
+            if j != a.user and x["active"] and not x["fainted"]
+        ]
+        if not ally:
+            return [w]
+
+        def places(b: _World) -> _World:
+            x, y = b.sides[role][a.user], b.sides[role][ally[0]]
+            if "slot" in x and "slot" in y:
+                x["slot"], y["slot"] = y["slot"], x["slot"]
+            b.reorder = ((role, a.user), "swap")
+            return b
+
+        if not again:
+            return [places(w)]
+        ok = places(w.clone(w.p / 3))
+        w.p *= 2 / 3
+        return [ok, w]
+
+    def _swapped(self, w: _World, role: str, idx: int, tail: tuple) -> tuple:
+        """The moves still to come after `idx` and its ally changed places:
+        the foes' moves aimed at one's place now at the other. Its ally's own
+        move aimed at it would be aimed at its own place: Showdown then draws a
+        target, not modelled (marked)."""
+        ally = next(
+            j
+            for j, x in enumerate(w.sides[role])
+            if j != idx and x["active"] and not x["fainted"]
+        )
+        pair = {idx: ally, ally: idx}
+        out = []
+        for r, act in tail:
+            t = act.target
+            if t is not None and r != role and t[0] == "foe":
+                who = self._current(w, (role, t[1]))
+                if who[1] in pair:
+                    act = dataclasses.replace(act, target=("foe", pair[who[1]]))
+            elif t is not None and r == role and t[0] == "ally" and t[1] in pair:
+                w.partial.add("ally switch: the ally's move aimed at it")
+            out.append((r, act))
+        return tuple(out)
+
     def _reordered(self, w: _World, tail: tuple) -> tuple:
         """Quash sends the target's move to the end of the turn (and it stays
         after the rest when they are sorted again); After You brings it next;
-        Instruct adds its last move again, next (`_instruct`).
+        Instruct adds its last move again, next (`_instruct`); Ally Switch
+        changes the places the moves still to come are aimed at (`_swapped`).
         A target with no move still to come (it has moved, or switched): the
         move does nothing."""
         assert w.reorder is not None
         (role, idx), where = w.reorder
+        if where == "swap":
+            return self._swapped(w, role, idx, tail)
         if where == "again":  # Instruct: an extra action, straight away
             x = w.sides[role][idx]
             again = Action(
@@ -2372,12 +2554,10 @@ class Resolver:
     ) -> dict:
         """The calculator's answer for one hit; `spreads`: the attacker's and
         the target's, when not the likeliest (Task 4)."""
-        from wpa.features import _board_state
-
-        sp_a = spreads[0] or self.spread(role, a.user)
-        sp_d = spreads[1] or self.spread(*tgt)
         st = w.sides[role][a.user]
         t = w.sides[tgt[0]][tgt[1]]
+        sp_a = spreads[0] or self.spread(*self._as(role, a.user, st))
+        sp_d = spreads[1] or self.spread(*self._as(tgt[0], tgt[1], t))
         f, down = self._damage_field(w, role, a, tgt)
         key = (
             role,
@@ -2399,10 +2579,10 @@ class Resolver:
             return self._dmg[key]
         req = damage_request(
             self._sheet_now(role, a.user, st),
-            _board_state(st, down[role]),
+            self._calc_state(role, a.user, st, down[role]),
             sp_a,
             self._sheet_now(tgt[0], tgt[1], t),
-            _board_state(t, down[tgt[0]]),
+            self._calc_state(tgt[0], tgt[1], t, down[tgt[0]]),
             sp_d,
             a.move,
             self.dex,
@@ -2417,6 +2597,7 @@ class Resolver:
                 s.get("types")
                 or s.get("typeadd")
                 or s.get("roost")
+                or s.get("transform")
                 or (side == "attacker" and self.ability(who[0], who[1], s) in PROTEAN)
             ):
                 req[side]["types"] = self.types(who[0], who[1], s)
@@ -2424,8 +2605,18 @@ class Resolver:
         return self._dmg[key]
 
     def _sheet_now(self, role: str, idx: int, st: Mapping) -> SheetMon:
-        """Its sheet, with an ability changed in the game (Week 13)."""
+        """Its sheet, with an ability changed in the game (Week 13); when
+        transformed, the sheet of the one it copied (its item comes from the
+        board)."""
         mon = self.sheets[role][idx]
+        c = self._copied(role, idx, st)
+        if c is not None:
+            mon = self.sheets[c[0]][c[1]]
+            if st.get("ability") and st["ability"] != mon.ability:
+                import dataclasses
+
+                return dataclasses.replace(mon, ability=st["ability"])
+            return mon
         if st.get("ability") and st["ability"] != mon.ability:
             import dataclasses
 
@@ -2536,8 +2727,13 @@ class Resolver:
             return sum(p for p, d in dist if round(d * scale) >= hp)
 
         p0 = ko(base)
-        sides = {"att": self._likely_spreads(role, a.user), "def": []}
-        sides["def"] = self._likely_spreads(*tgt)
+        st = w.sides[role][a.user]
+        sides = {"att": self._likely_spreads(*self._as(role, a.user, st)), "def": []}
+        if self._copied(tgt[0], tgt[1], t) is not None:
+            # transformed: its own hit points; the stats of the one it copied
+            sides["def"] = [(self.spread(*self._as(tgt[0], tgt[1], t)), 1.0)]
+        else:
+            sides["def"] = self._likely_spreads(*tgt)
         decides = {}
         if self.spread_damage:
             decides = {side: len(opts) > 1 for side, opts in sides.items()}
@@ -2777,7 +2973,7 @@ class Resolver:
             if ab == "spicyspray":
                 self._inflict(w, (role, a.user), "brn", a.move)
             elif ab == "cutecharm" and contact:
-                w.partial.add(f"ability:{ab}")  # infatuation: not modelled
+                self._charm(w, tgt, (role, a.user))
             elif ab == "cursedbody" or (contact and ab in CONTACT_CHANCE):
                 w.chances.append((ab, tgt, (role, a.user)))
             if contact and self.ability(role, a.user, st) == "poisontouch":
@@ -2912,6 +3108,9 @@ class Resolver:
         st = w.sides[who[0]][who[1]]
         st.update(hp_fraction=0.0, fainted=True, active=False, boosts={}, status="")
         st.pop("perish", None)
+        for x in w.sides[_other(who[0])]:
+            if x.get("attract") == who[1]:
+                x.pop("attract")  # its cause left the field
         if w.winner is None and not _left(w, who[0]):
             w.winner = _other(who[0])
 
@@ -3015,7 +3214,8 @@ class Resolver:
         it to sleep 11%, paralyses it 10% or poisons it 9% (not a Grass type,
         nor with Overcoat or Safety Goggles); Poison Touch poisons what it hit
         30% (not through Shield Dust or Covert Cloak); Cursed Body disables the
-        move that hit it 30%."""
+        move that hit it 30%; Cute Charm infatuates the attacker 30% (`_charm`;
+        a Mental Herb ends it at once)."""
         out = [w]
         for ab, holder, other in w.chances:
             nxt: list[_World] = []
@@ -3044,6 +3244,12 @@ class Resolver:
                     branches = [("psn", 0.3)]
                 elif ab == "cursedbody":
                     branches = [("disable", 0.3)]
+                elif ab == "cutecharm":
+                    h = b.sides[holder[0]][holder[1]]
+                    if h["fainted"] or not h["active"] or "attract" in o:
+                        nxt.append(b)  # it ends at once with its cause gone
+                        continue
+                    branches = [("attract", 0.3)]
                 else:
                     branches = [(CONTACT_STATUS[ab], 0.3)]
                 rest = 1.0 - sum(q for _s, q in branches)
@@ -3051,6 +3257,10 @@ class Resolver:
                     yes = b.clone(b.p * q)
                     if what == "disable":
                         self._disable(yes, other)
+                    elif what == "attract":
+                        x = yes.sides[other[0]][other[1]]
+                        if not self._mental_herb(x):
+                            x["attract"] = holder[1]
                     else:
                         self._inflict(yes, other, what, a.move)
                     nxt.append(yes)

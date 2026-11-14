@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-from tests.test_more_mechanics import _mon, _turns, needs_showdown
 from tests.test_board_effects import at_turn_start
-from tests.test_resolver import ROOT, SHEETS, SPREADS, board
+from tests.test_more_mechanics import _mon, _turns, needs_showdown
+from tests.test_resolver import ROOT, SHEETS, SPREADS, board, p_of
 from tests.test_week12_mechanics import P1_QUIET, _bench
 from wpa import resolver as R
 from wpa.choices import Action
@@ -570,3 +570,244 @@ def test_leech_seed_heals_no_one_when_no_one_took_the_seeders_place(tools):
         assert "leech seed heals the Pokemon in its place" not in o.partial
         assert o.sides["p2"][2]["hp_fraction"] == 1.0
         assert o.sides["p1"][0]["hp_fraction"] == pytest.approx(7 / 8, abs=0.01)
+
+
+# --------------------------------------------------------------------------
+# Left at 62efc9e: Ally Switch, Cute Charm, Transform (Imposter)
+# --------------------------------------------------------------------------
+
+BLITZ_AT_GARCHOMP = (
+    Action(0, "move", move="flareblitz", target=("foe", 0)),
+    Action(1, "move", move="protect"),
+)
+SWITCH_PLACES = (
+    Action(0, "move", move="swordsdance"),
+    Action(1, "move", move="allyswitch"),
+)
+
+
+@needs_showdown
+def test_ally_switch_puts_the_user_where_the_foes_move_was_aimed(tools):
+    """Game 2635795983 turn 1 (Cofagrigus): +2 priority, the two change places,
+    and a move aimed at the ally's place lands on the user."""
+    rv = _with(tools)
+    outs = _go(rv, board(), SWITCH_PLACES, BLITZ_AT_GARCHOMP)
+    assert outs and _no_partial(outs)
+    for o in outs:
+        assert o.sides["p1"][0]["hp_fraction"] == 1.0  # Garchomp: untouched
+        assert o.sides["p1"][1]["hp_fraction"] < 1.0  # Kingambit took it
+
+
+@needs_showdown
+def test_a_second_ally_switch_in_a_row_works_a_third_of_the_time(tools):
+    rv = _with(tools)
+    b = board()
+    b["p1"][1]["last_move"] = "allyswitch"
+    outs = _go(rv, b, SWITCH_PLACES, BLITZ_AT_GARCHOMP)
+    assert _no_partial(outs)
+    took = p_of(outs, lambda o: o.sides["p1"][1]["hp_fraction"] < 1.0)
+    assert took == pytest.approx(1 / 3, abs=0.01)
+    assert p_of(outs, lambda o: o.sides["p1"][0]["hp_fraction"] < 1.0) == (
+        pytest.approx(2 / 3, abs=0.01)
+    )
+
+
+@needs_showdown
+def test_ally_switch_with_no_ally_beside_it_fails(tools):
+    rv = _with(tools)
+    b = board()
+    b["p1"][0].update(fainted=True, active=False, hp_fraction=0.0)
+    at_kingambit = (
+        Action(0, "move", move="flareblitz", target=("foe", 1)),
+        Action(1, "move", move="protect"),
+    )
+    lone = (Action(1, "move", move="allyswitch"),)
+    outs = _go(rv, b, lone, at_kingambit)
+    assert _no_partial(outs)
+    assert all(o.sides["p1"][1]["hp_fraction"] < 1.0 for o in outs)
+
+
+def test_the_board_keeps_each_pokemons_gender_and_who_infatuated_it():
+    """Cute Charm (3 turns marked at 62efc9e) needs both genders: the log shows
+    each at its switch-in. Infatuation ends when the one who caused it leaves
+    the field (the log's silent end line), or when the Pokemon itself leaves."""
+    log = _turns(
+        "|t:|1\n|move|p2a: Inci|Fake Out|p1a: Whim\n|-damage|p1a: Whim|90/100\n"
+        "|-start|p2a: Inci|Attract|[from] ability: Cute Charm|[of] p1a: Whim",
+        "|t:|2\n|switch|p1b: Back|Back, L50, F|100/100",
+        "|t:|3\n|switch|p1a: Bench|Bench, L50, M|100/100\n"
+        "|-end|p2a: Inci|Attract|[silent]\n"
+        "|move|p2b: Fini|Moonblast|p1b: Back\n|-damage|p1b: Back|60/100\n"
+        "|-start|p2b: Fini|Attract|[from] ability: Cute Charm|[of] p1b: Back",
+        "|t:|4\n|switch|p2b: Rime|Rime, L50|100/100",
+    )
+    s2 = at_turn_start(log, 2)
+    assert _theirs(s2, 0)["attract"] == 0  # Whim, p1's first
+    s3 = at_turn_start(log, 3)
+    assert _mon(s3, 2)["gender"] == "F"
+    assert _mon(s3, 0)["gender"] == "N"  # its switch-in showed none: it has none
+    s4 = at_turn_start(log, 4)
+    assert "attract" not in _theirs(s4, 0)
+    assert _theirs(s4, 1)["attract"] == 2 and _mon(s4, 3)["gender"] == "M"
+    s5 = at_turn_start(log, 5)
+    assert "attract" not in _theirs(s5, 1)  # Fini left
+
+
+def _charmed(tools, gender_p2="F", gender_p1="M"):
+    """Incineroar with Cute Charm; Garchomp hits it with Dragon Claw."""
+    rv = _with(tools, p2={0: {"ability": "cutecharm"}})
+    b = board()
+    if gender_p2:
+        b["p2"][0]["gender"] = gender_p2
+    if gender_p1:
+        b["p1"][0]["gender"] = gender_p1
+    claw = (
+        Action(0, "move", move="dragonclaw", target=("foe", 0)),
+        Action(1, "move", move="protect"),
+    )
+    return rv, b, claw
+
+
+@needs_showdown
+def test_cute_charm_infatuates_a_contact_attacker_of_the_other_gender_30_percent(tools):
+    rv, b, claw = _charmed(tools)
+    outs = _go(rv, b, claw, SD_PROTECT)
+    assert _no_partial(outs)
+    assert p_of(outs, lambda o: o.sides["p1"][0].get("attract") == 0) == (
+        pytest.approx(0.3, abs=0.001)
+    )
+
+
+@needs_showdown
+def test_cute_charm_needs_two_genders_and_marks_a_gender_the_log_never_showed(tools):
+    rv, b, claw = _charmed(tools, gender_p2="M")
+    outs = _go(rv, b, claw, SD_PROTECT)
+    assert _no_partial(outs)
+    assert not any("attract" in o.sides["p1"][0] for o in outs)
+    rv, b, claw = _charmed(tools, gender_p1="")
+    outs = _go(rv, b, claw, SD_PROTECT)
+    assert set().union(*(o.partial for o in outs)) == {"ability:cutecharm"}
+
+
+@needs_showdown
+def test_an_infatuated_pokemon_cannot_move_half_the_time(tools):
+    rv, b, claw = _charmed(tools)
+    b["p1"][0]["attract"] = 0
+    outs = _go(rv, b, claw, SD_PROTECT)
+    assert _no_partial(outs)
+    hit = p_of(outs, lambda o: o.sides["p2"][0]["hp_fraction"] < 1.0)
+    assert hit == pytest.approx(0.5, abs=0.001)
+
+
+@needs_showdown
+def test_infatuation_ends_when_the_one_who_caused_it_leaves(tools):
+    rv, b = _bench(tools)
+    b["p1"][0]["attract"] = 0  # by Incineroar, who switches out first
+    out = (Action(0, "switch", switch_to=2), Action(1, "move", move="protect"))
+    claw = (
+        Action(0, "move", move="dragonclaw", target=("foe", 0)),
+        Action(1, "move", move="protect"),
+    )
+    outs = _go(rv, b, claw, out)
+    assert _no_partial(outs)
+    for o in outs:
+        assert "attract" not in o.sides["p1"][0]
+        assert o.sides["p2"][2]["hp_fraction"] < 1.0  # it came in and was hit
+
+
+def test_the_board_keeps_what_a_transformed_pokemon_copied_until_it_leaves():
+    """Imposter (Ditto: 9 turns marked at 62efc9e): it copies the foe opposite,
+    its moves, its stat stages (the log does not print them) and its form; and
+    the board says which place each Pokemon on the field is in."""
+    log = _turns(
+        "|t:|1\n|move|p2a: Inci|Swords Dance|p2a: Inci\n|-boost|p2a: Inci|atk|2\n"
+        "|switch|p1b: Back|Back, L50|100/100\n"
+        "|-transform|p1b: Back|p2a: Inci|[from] ability: Imposter",
+        "|t:|2\n|move|p2a: Inci|Fake Out|p1a: Whim\n|-damage|p1a: Whim|90/100",
+        "|t:|3\n|switch|p1b: Rock|Rock, L50|100/100",
+    )
+    s2 = at_turn_start(log, 2)
+    back = _mon(s2, 2)
+    assert list(back["transform"]) == [0, 0]  # Inci, not Mega Evolved
+    assert list(back["moves"]) == ["fakeout"] and back["boosts"] == {"atk": 2}
+    assert back["slot"] == "b" and _mon(s2, 0)["slot"] == "a"
+    assert "slot" not in _mon(s2, 1)  # Rock, on the bench
+    s4 = at_turn_start(log, 4)
+    assert not {"transform", "moves", "slot"} & set(_mon(s4, 2))
+
+
+DITTO = {"species": "ditto", "ability": "imposter", "moves": ("transform",)}
+BOTH_DANCE = (
+    Action(0, "move", move="swordsdance"),
+    Action(1, "move", move="swordsdance"),
+)
+
+
+@needs_showdown
+def test_a_transformed_pokemon_hits_as_the_one_it_copied(tools):
+    """A Ditto copying Incineroar: its Flare Blitz does what Incineroar's does
+    (its stats, but HP, its types and ability; its own item)."""
+    import dataclasses
+
+    dex, moves, calc = tools
+    rv = _with(tools, p1={1: DITTO})
+    b = board()
+    b["p1"][1].update(species="ditto", transform=[0, 0])
+    blitz = (
+        Action(0, "move", move="protect"),
+        Action(1, "move", move="flareblitz", target=("foe", 1)),
+    )
+    outs = _go(rv, b, blitz, BOTH_DANCE)
+    assert _no_partial(outs)
+    assert rv.types("p1", 1, b["p1"][1]) == ["Fire", "Dark"]
+    assert rv.ability("p1", 1, b["p1"][1]) == "blaze"
+    inci = dataclasses.replace(SHEETS["p2"][0], position=2)
+    real = R.Resolver(
+        dex,
+        moves,
+        calc,
+        {"p1": (SHEETS["p1"][0], inci), "p2": SHEETS["p2"]},
+        {**SPREADS, ("p1", 1): SPREADS[("p2", 0)]},
+    )
+    b2 = board()
+    b2["p1"][1]["species"] = "incineroar"
+    want = _go(real, b2, blitz, BOTH_DANCE)
+
+    def whim(outs):
+        d = {}
+        for o in outs:
+            k = round(o.sides["p2"][1]["hp_fraction"], 4)
+            d[k] = round(d.get(k, 0.0) + o.prob, 6)
+        return d
+
+    assert whim(outs) == whim(want)
+
+
+@needs_showdown
+def test_imposter_copies_the_foe_opposite_when_it_comes_in(tools):
+    rv = _with(tools)
+    sheets = {"p1": SHEETS["p1"] + (SHEETS["p1"][0],), "p2": SHEETS["p2"]}
+    import dataclasses
+
+    sheets["p1"] = sheets["p1"][:2] + (
+        dataclasses.replace(SHEETS["p1"][0], position=3, **DITTO),
+    )
+    dex, moves, calc = tools
+    rv = R.Resolver(dex, moves, calc, sheets, SPREADS)
+    b = board()
+    for r in ("p1", "p2"):
+        b[r][0]["slot"], b[r][1]["slot"] = "a", "b"
+    b["p1"].append(dict(b["p1"][0], species="ditto", active=False))
+    b["p1"][2].pop("slot")
+    sw = (Action(0, "move", move="protect"), Action(1, "switch", switch_to=2))
+    outs = _go(rv, b, sw, BOTH_DANCE)
+    assert _no_partial(outs)
+    for o in outs:
+        d = o.sides["p1"][2]
+        assert d["slot"] == "b" and list(d["transform"]) == [0, 0]  # Incineroar
+        assert list(d["moves"]) == list(SHEETS["p2"][0].moves)
+    for r in ("p1", "p2"):  # a board that does not say where each one is
+        for x in b[r]:
+            x.pop("slot", None)
+    outs = _go(rv, b, sw, BOTH_DANCE)
+    assert set().union(*(o.partial for o in outs)) == {"imposter: the foe opposite"}
