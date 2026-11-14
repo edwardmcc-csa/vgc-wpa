@@ -110,6 +110,8 @@ _VOLATILE_LINES = frozenset(
         "-singlemove",
     }
 )
+# Week 13: hazards and the most layers of each
+HAZARD_LAYERS = {"stealthrock": 1, "spikes": 3, "toxicspikes": 2, "stickyweb": 1}
 # Week 13: what the board keeps besides, each ended by leaving the field
 WEEK13 = (
     "ability",
@@ -210,6 +212,9 @@ class _Board:
         self._last: list[str] | None = None  # the line before (a substitute paid for)
         self._mover: int | None = None  # sheet position of the last Pokemon to move
         self._mover_at: tuple[str, str] | None = None  # its side and place (a, b)
+        # Week 13: hazards on each side (layers); the timers keep only what
+        # has a length
+        self.hazards: dict[str, dict[str, int]] = {r: {} for r in ROLES}
 
     def sheet(self, line: str) -> None:
         role, mons = parse_showteam_message(line)
@@ -542,6 +547,14 @@ class _Board:
 
     def handle(self, p: list[str]) -> None:
         last, self._last = self._last, p
+        if len(p) > 3 and p[1] in ("-sidestart", "-sideend") and p[2][:2] in ROLES:
+            hz = to_id(p[3].removeprefix("move: "))
+            if hz in HAZARD_LAYERS:
+                side = self.hazards[p[2][:2]]
+                if p[1] == "-sidestart":
+                    side[hz] = min(HAZARD_LAYERS[hz], side.get(hz, 0) + 1)
+                else:
+                    side.pop(hz, None)
         if len(p) > 3 and p[1] in ("-start", "-end", "-activate"):
             # a substitute (Week 10): up, and whether it has been hit (the log
             # never shows how many hit points it has left)
@@ -689,6 +702,13 @@ class _Board:
                 self.mons[role][idx].update(active=True, seen=True)
                 self.slots[role][slot] = idx
 
+    def hazard_spans(self) -> tuple[tuple[str, str, int, int], ...]:
+        """The hazards as timer spans (no length: 99 turns), with their layers
+        as the longest: what `wpa.resolver.field_from_timers` reads."""
+        return tuple(
+            (hz, r, 99, n) for r in ROLES for hz, n in sorted(self.hazards[r].items())
+        )
+
     def side(self, role: str) -> list[dict]:
         return [
             {
@@ -800,6 +820,7 @@ def build_game(log: str, table: Durations) -> Game:
 
     def snap(role: str, point: int, moment: str) -> None:
         timers, counters = walker.now()
+        timers = tuple(timers) + board.hazard_spans()
         raw[role].append(
             (
                 point,

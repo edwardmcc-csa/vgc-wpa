@@ -152,7 +152,10 @@ RETYPE = {"soak", "trickortreat", "forestscurse", "reflecttype", "magicpowder"}
 # Week 13 Task 2: moves that change abilities (Showdown's onTryHit and setAbility)
 ABILITY_MOVES = {"skillswap", "entrainment", "simplebeam"}
 # moves Gravity stops (`data/conditions.ts`, gravity)
-HAZARDS = ("stealthrock", "spikes", "toxicspikes", "stickyweb")
+HAZARDS = {"stealthrock": 1, "spikes": 3, "toxicspikes": 2, "stickyweb": 1}
+# Stealth Rock's damage: an eighth times the Rock type's effect on it
+ROCK_WEAK = {"Fire", "Ice", "Flying", "Bug"}
+ROCK_RESIST = {"Fighting", "Ground", "Steel"}
 GRAVITY_STOPS = {
     "bounce",
     "fly",
@@ -258,9 +261,11 @@ def field_from_timers(joined, role: str) -> Field:
         elif eid == "gravity":
             f.gravity = lo
     for r, spans in ((role, joined.ours), (other, joined.theirs)):
-        for eid, target, lo, _hi in spans:
+        for eid, target, lo, hi in spans:
             if target == "side" and eid in SIDE_TIMED:
                 f.sides[r][eid] = lo
+            elif target == "side" and eid in HAZARDS:
+                f.sides[r][eid] = hi  # its layers (the board's, Week 13)
     return f
 
 
@@ -910,6 +915,8 @@ class Resolver:
             n["hp_fraction"] = 1.0  # first time in
         n.update(active=True, boosts={}, moved=False, last_move="", protect_streak=0)
         w.replaced[(role, old)] = (role, new)
+        if entry:
+            self._hazards(w, role, new)
         # Leech Seed drains into the seeder's place: whoever comes in there
         for x in w.sides[_other(role)]:
             if x.get("seeded") == old:
@@ -917,6 +924,38 @@ class Resolver:
         if entry:
             self._on_entry(w, role, new)
         return True
+
+    def _hazards(self, w: _World, role: str, idx: int) -> None:
+        """The hazards on its side as it comes in (Week 13): Stealth Rock (an
+        eighth, times the Rock type's effect), Spikes (an eighth, a sixth, a
+        quarter), Toxic Spikes (poison; badly with two layers) and Sticky Web
+        (-1 Speed); the last three only on the ground. Heavy-Duty Boots stop
+        all of them; Magic Guard the damage."""
+        side = w.fld.sides[role]
+        st = w.sides[role][idx]
+        if not any(k in side for k in HAZARDS) or st.get("item") == "heavydutyboots":
+            return
+        types = set(self.types(role, idx, st))
+        guard = self.ability(role, idx, st) == "magicguard"
+        if side.get("stealthrock") and not guard:
+            eff = 2 ** (len(types & ROCK_WEAK) - len(types & ROCK_RESIST))
+            self._lose(w, (role, idx), eff / 8)
+        if st["fainted"] or not self._grounded((role, idx), st, w.fld):
+            return
+        if side.get("spikes") and not guard:
+            self._lose(w, (role, idx), {1: 1 / 8, 2: 1 / 6, 3: 1 / 4}[side["spikes"]])
+        if side.get("toxicspikes") and not st["fainted"]:
+            if "Poison" in types:
+                side.pop("toxicspikes")  # a grounded Poison type takes them away
+            elif "Steel" not in types and not st["status"]:
+                self._inflict(
+                    w,
+                    (role, idx),
+                    "tox" if side["toxicspikes"] > 1 else "psn",
+                    "toxicspikes",
+                )
+        if side.get("stickyweb") and not st["fainted"]:
+            self._boost(st, {"spe": -1})
 
     def _on_entry(self, w: _World, role: str, idx: int) -> None:
         st = w.sides[role][idx]
@@ -1624,6 +1663,10 @@ class Resolver:
                     w.helped.add((role, j))
             return [w]
         sc = m.get("sideCondition")
+        if sc in HAZARDS:  # on the foes' side, a layer more (Week 13)
+            side = w.fld.sides[_other(role)]
+            side[sc] = min(HAZARDS[sc], side.get(sc, 0) + 1)
+            return [w]
         if sc in SIDE_TIMED:
             if sc == "auroraveil" and w.fld.weather != "snowscape":
                 return [w]
@@ -3091,8 +3134,12 @@ class Resolver:
             fld.trickroom -= 1
         if fld.gravity:
             fld.gravity -= 1
-        for r in ROLES:
-            fld.sides[r] = {k: v - 1 for k, v in fld.sides[r].items() if v - 1 > 0}
+        for r in ROLES:  # hazards stay; the rest count down
+            fld.sides[r] = {
+                k: (v if k in HAZARDS else v - 1)
+                for k, v in fld.sides[r].items()
+                if k in HAZARDS or v - 1 > 0
+            }
         w.protected, w.guards, w.flinched, w.acted = set(), set(), set(), set()
         w.redirect, w.helped, w.replaced = {}, set(), {}
         w.hit, w.dealt, w.subbed = set(), 0, set()

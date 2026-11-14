@@ -437,3 +437,52 @@ def test_no_weather_damage_on_the_turn_the_weather_ends(tools):
     for o in _go(rv, b, SD2, SD_PROTECT, last):
         assert o.sides["p2"][0]["hp_fraction"] == 1.0
         assert o.field.weather == ""
+
+
+# --------------------------------------------------------------------------
+# Hazards: Stealth Rock, Spikes, Toxic Spikes, Sticky Web
+# --------------------------------------------------------------------------
+
+
+@needs_showdown
+def test_stealth_rock_goes_on_the_foes_side_and_hurts_whoever_comes_in(tools):
+    rv, b = _bench(tools)
+    p1 = (Action(0, "move", move="stealthrock"), Action(1, "move", move="protect"))
+    outs = rv.resolve(b, R.Field(), {"p1": p1, "p2": SD_PROTECT})
+    assert _no_partial(outs)
+    assert {o.field.sides["p2"].get("stealthrock") for o in outs} == {1}
+    # under rocks, Sinistcha (Grass/Ghost: neutral) loses an eighth coming in
+    rocks = R.Field()
+    rocks.sides["p2"]["stealthrock"] = 1
+    out = (Action(0, "move", move="protect"), Action(1, "switch", switch_to=2))
+    for o in rv.resolve(b, rocks, {"p1": P1_QUIET, "p2": out}):
+        assert o.sides["p2"][2]["hp_fraction"] == pytest.approx(7 / 8, abs=0.01)
+        assert o.field.sides["p2"]["stealthrock"] == 1  # it stays
+
+
+def test_the_board_keeps_the_hazards_on_each_side():
+    """The timers do not keep hazards (they have no length): the board adds
+    them, so the resolver starts with them."""
+    from tests.test_decisions import EMPTY
+    from wpa import decisions as D
+
+    log = _turns(
+        "|t:|1\n|move|p2a: Inci|Stealth Rock|p1a: Whim\n"
+        "|-sidestart|p1: A|move: Stealth Rock\n"
+        "|move|p2b: Fini|Spikes|p1a: Whim\n|-sidestart|p1: A|Spikes\n"
+        "|move|p1b: Rock|Spikes|p2a: Inci\n|-sidestart|p2: B|Spikes",
+        "|t:|2\n|move|p2b: Fini|Spikes|p1a: Whim\n|-sidestart|p1: A|Spikes\n"
+        "|-sideend|p2: B|Spikes|[from] move: Tidy Up",
+    )
+    g = D.build_game(log, EMPTY)
+    by_turn = {
+        s["turn"]: i
+        for i, s in enumerate(g.states["p1"])
+        if s["moment"] == "turn_start"
+    }
+    f2 = R.field_from_timers(g.joined["p1"][by_turn[2]], "p1")
+    assert f2.sides["p1"] == {"stealthrock": 1, "spikes": 1}
+    assert f2.sides["p2"] == {"spikes": 1}
+    f3 = R.field_from_timers(g.joined["p1"][by_turn[3]], "p1")
+    assert f3.sides["p1"] == {"stealthrock": 1, "spikes": 2}
+    assert f3.sides["p2"] == {}
