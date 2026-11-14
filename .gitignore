@@ -19,6 +19,7 @@ splits.json
 features/
 models/
 logs_shards/
+logs_mc/
 features_v2/
 models_v2/
 claims_v2/
