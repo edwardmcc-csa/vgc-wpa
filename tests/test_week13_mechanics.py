@@ -387,3 +387,53 @@ def test_the_board_keeps_abilities_changed_and_the_new_volatiles():
     whim = _mon(s5, 0)  # it left the field: all of it ends
     assert not {"ability", "saltcure", "imprison"} & set(whim)
     assert "destinybond" not in _theirs(s5, 0)  # Inci moved again
+
+
+# --------------------------------------------------------------------------
+# Found diagnosing 300 HP-only misses at 52e0496
+# --------------------------------------------------------------------------
+
+
+def test_a_pokemon_that_mega_evolved_and_could_not_move_chose_a_mega_move():
+    """Game 2629496303 turn 4: Tyranitar Mega Evolved (its Sand Stream ended
+    the snow) and was frozen, so its move was hidden; averaged over its
+    moves without Mega Evolution, the snow stayed and Blizzard never
+    missed."""
+    from tests.test_hidden_choices import CH, MEGA, OPTS, PRIORITY
+    from wpa import attribution as A
+
+    mix = A.taken_mixture({0: "cant"}, set(), OPTS, CH, PRIORITY, megas={0})
+    assert {j[0] for j, _p in mix} == {MEGA}
+    mix = A.taken_mixture({0: "cant"}, set(), OPTS, CH, PRIORITY)
+    assert MEGA not in {j[0] for j, _p in mix}
+
+
+def test_the_turn_records_who_mega_evolved():
+    from tests.test_board_effects import game
+    from wpa import choices as C
+
+    log = game(
+        "|t:|1\n|detailschange|p2a: Inci|Inci-Mega, L50\n"
+        "|-mega|p2a: Inci|Inci|Incinite\n"
+        "|cant|p2a: Inci|frz\n|upkeep",
+        "|t:|2\n|turn|2",
+    )
+    (t,) = [t for t in C.turns(log) if t.turn == 1 and t.role == "p2"]
+    assert t.megas == {0} and t.taken[0] == "cant"
+
+
+@needs_showdown
+def test_no_weather_damage_on_the_turn_the_weather_ends(tools):
+    """Showdown counts the weather down first and skips its residual on the
+    turn it ends (game 2630300340 turn 5: no Sandstorm damage with the
+    weather's last turn)."""
+    rv = _with(tools)
+    b = board()  # Garchomp and Kingambit are immune; Incineroar is not
+    sand = R.Field(weather="sandstorm", weather_left=2)
+    for o in _go(rv, b, SD2, SD_PROTECT, sand):
+        assert o.sides["p2"][0]["hp_fraction"] == pytest.approx(15 / 16, abs=0.01)
+        assert o.field.weather == "sandstorm"
+    last = R.Field(weather="sandstorm", weather_left=1)
+    for o in _go(rv, b, SD2, SD_PROTECT, last):
+        assert o.sides["p2"][0]["hp_fraction"] == 1.0
+        assert o.field.weather == ""

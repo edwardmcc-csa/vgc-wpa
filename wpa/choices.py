@@ -191,6 +191,9 @@ class Turn:
     taken: dict[int, Action | str] = field(default_factory=dict)
     # Pokemon whose move the log shows but not its target
     hidden: set[int] = field(default_factory=set)
+    # Pokemon the log shows Mega Evolving this turn (Week 13: a Mega Evolution
+    # shows even when the move does not)
+    megas: set[int] = field(default_factory=set)
 
 
 def _target(
@@ -288,6 +291,8 @@ def turns(log: str, dex: Dex | None = None) -> list[Turn]:
                 idx = board._index(role, p[2])
                 if idx is not None:
                     megas.add((role, idx))
+                    if now is not None and role in now:
+                        now[role].megas.add(idx)
             elif t == "-anim" and len(p) > 4:
                 idx = board._index(role, p[2])
                 act = taken.get(idx) if idx is not None else None

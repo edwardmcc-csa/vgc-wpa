@@ -155,7 +155,14 @@ def check_turn(
     mixes = {}
     for r in ROLES:
         t = ts.turns[r]
-        mixes[r] = taken_mixture(t.taken, t.hidden, ts.opts[r], ts.chances[r], priority)
+        mixes[r] = taken_mixture(
+            t.taken,
+            t.hidden,
+            ts.opts[r],
+            ts.chances[r],
+            priority,
+            getattr(t, "megas", ()),
+        )
     t0 = time.time()
     outs: list = []
     pairs = 0

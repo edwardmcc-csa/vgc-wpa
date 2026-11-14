@@ -3001,6 +3001,10 @@ class Resolver:
     def _end_of_turn(self, w: _World) -> list[_World]:
         fld = w.fld
         moody: list[tuple[str, int]] = []
+        if fld.weather and fld.weather_left == 1:
+            # Showdown counts the weather down first: on its last turn it ends
+            # before its damage (Week 13)
+            fld.weather, fld.weather_left = "", 0
         for r in ROLES:
             for j, st in enumerate(w.sides[r]):
                 if not st["active"] or st["fainted"]:

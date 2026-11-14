@@ -30,7 +30,7 @@ from __future__ import annotations
 import copy
 import json
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -290,6 +290,7 @@ def taken_mixture(
     opts: Mapping[int, Sequence[Action]],
     chances: Mapping[int, Sequence[float]],
     priority: Mapping[str, int] | None = None,
+    megas: Collection[int] = (),
 ) -> Mix:
     """The choice a side took: what the log shows, and where it shows nothing
     (or a move but not its target) the model's chances over the options.
@@ -297,7 +298,8 @@ def taken_mixture(
     With `priority` (each move's priority), only over the choices the log allows
     (Week 11): a switch or a Mega Evolution always shows, before any move, so a
     hidden choice is neither; a Pokemon knocked out before moving ("fainted")
-    chose no move with raised priority, which would have gone first."""
+    chose no move with raised priority, which would have gone first. A
+    Pokemon in `megas` Mega Evolved (the log shows it): a Mega move."""
     per: dict[int, list[tuple[Action, float]]] = {}
     for idx, o in opts.items():
         a = taken.get(idx)
@@ -312,7 +314,7 @@ def taken_mixture(
                 (x, p)
                 for x, p in pairs
                 if x.kind == "move"
-                and not x.mega
+                and x.mega == (idx in megas)
                 and not (a == "fainted" and priority.get(x.move, 0) > 0)
             ]
             pairs = allowed or pairs
@@ -1892,7 +1894,12 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     for r in ("p1", "p2"):
         t, opts, ch = ts.turns[r], ts.opts[r], ts.chances[r]
         taken = taken_mixture(
-            t.taken, t.hidden, opts, ch, _priorities(tools.dexes[ts.base["format"]])
+            t.taken,
+            t.hidden,
+            opts,
+            ch,
+            _priorities(tools.dexes[ts.base["format"]]),
+            getattr(t, "megas", ()),
         )
         full = mixture({i: list(zip(opts[i], ch[i])) for i in opts})
         seed = f"{ts.base['tag']} {ts.turn} {r}"
