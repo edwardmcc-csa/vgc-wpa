@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ssl
 import time
 import urllib.request
 from collections.abc import Callable, Sequence
@@ -67,15 +68,26 @@ class Pace:
         self.next = t + self.gap
 
 
+def _context() -> ssl.SSLContext:
+    """Mozilla's certificate authorities (certifi) when installed, else the
+    computer's own. On the PO's computer the Windows store failed Smogon's
+    certificate chain as expired (14 Nov); certifi's does not."""
+    try:
+        import certifi
+    except ImportError:  # pragma: no cover - certifi comes with requests
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
 def _get_json(url: str):  # pragma: no cover - the network
     req = urllib.request.Request(url, headers={"User-Agent": AGENT})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=30, context=_context()) as r:
         return json.loads(r.read())
 
 
 def _get_bytes(url: str) -> bytes:  # pragma: no cover - the network
     req = urllib.request.Request(url, headers={"User-Agent": AGENT})
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=120, context=_context()) as r:
         return r.read()
 
 

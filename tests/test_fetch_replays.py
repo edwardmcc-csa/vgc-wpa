@@ -184,3 +184,15 @@ def test_a_line_cut_off_by_a_stopped_run_is_dropped_and_fetched_again(tmp_path):
     _run(tmp_path, fake)
     saved = _saved(tmp_path)
     assert len(saved) == 20 == len({x["id"] for x in saved})
+
+
+def test_the_connection_trusts_mozillas_certificate_authorities():
+    """Your computer's Windows store failed Smogon's certificate as expired
+    (14 Nov); certifi's bundle (installed with requests) is used instead."""
+    certifi = pytest.importorskip("certifi")
+    ctx = F._context()
+    assert ctx.verify_mode.name == "CERT_REQUIRED" and ctx.check_hostname
+    import ssl
+
+    want = ssl.create_default_context(cafile=certifi.where()).cert_store_stats()
+    assert ctx.cert_store_stats() == want
