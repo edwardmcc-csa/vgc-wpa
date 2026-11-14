@@ -1,6 +1,6 @@
 # DEFINITIONS
 
-**Status:** approved by the product owner. Revision 11 — §7 weighs each plausible action by its worth to the one choosing, at the strength learned on training games (PO, 13 Nov 2026). Revision 10 — §3 splits "your decision" into your choice and the position, and §4's average becomes the typical choice (PO, 10 Nov 2026). Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
+**Status:** approved by the product owner. Revision 12 — §15 adds Regulation M-C as a third format, and each format's rules come from one pinned copy of Showdown's code (PO, 14 Nov 2026). Revision 11 — §7 weighs each plausible action by its worth to the one choosing, at the strength learned on training games (PO, 13 Nov 2026). Revision 10 — §3 splits "your decision" into your choice and the position, and §4's average becomes the typical choice (PO, 10 Nov 2026). Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
 **Applies to:** milestones M4, M4b, M5, M7.
 
 This document is the contract. If code and this document disagree, the code is wrong.
@@ -246,17 +246,18 @@ This section defines what must be captured. It does not define how spreads are e
 
 ---
 
-## 15. Two formats (added rev 7)
+## 15. Formats (added rev 7; Reg M-C added rev 12)
 
-**Decision (product owner):** Regulation M-A and Regulation M-B are **two formats**, not one format with a missing field. They differ in what a team sheet reveals (nature is shown in every M-B sheet and in none of M-A, `docs/SHEET-FIELDS.md`), and the PO treats the rule sets as distinct.
+**Decision (product owner):** Regulation M-A, Regulation M-B and Regulation M-C are **three formats**, not one format with missing fields. They differ in what a team sheet reveals (nature is shown in every M-B and M-C sheet and in none of M-A, `docs/SHEET-FIELDS.md`), and the PO treats the rule sets as distinct.
 
 **Consequences:**
 
-- **Every set belongs to exactly one format.** A set never spans formats. Format is identified from the battle tag (`gen9championsvgc2026regma...` or `...regmb...`).
+- **Every set belongs to exactly one format.** A set never spans formats. Format is identified from the battle tag (`gen9championsvgc2026regma...`, `...regmb...` or `...regmc...`).
 - **Models are fitted, calibrated and evaluated per format.** Every metric in §1–§14 is reported per format. A pooled number may be shown as a secondary figure and never as the headline.
-- **Splits (§13) are made inside each format.** The set rule is unchanged; the format is an additional stratum, so each format has its own train, validation and test sets.
-- **Spread inference differs by format.** Nature is an observation in M-B and a hidden quantity in M-A. M4b must not carry a nature assumption from one format into the other.
-- **Data volume is unequal and must be reported.** At the time of this revision the corpus holds 84,738 M-A battles and 4,167 M-B battles (about 5%). Any M-B result must state its sample size alongside it. A model that only works where data is plentiful must say so.
-- **Format stays configuration (§12.5).** Adding a third format is a configuration change, not a code change.
+- **Splits (§13) are made inside each format.** The set rule is unchanged; the format is an additional stratum, so each format has its own train, validation and test sets. **Adding a format never moves a set of another format:** M-A's and M-B's train, validation and test sets stay exactly as they are.
+- **Spread inference differs by format.** Nature is an observation in M-B and M-C and a hidden quantity in M-A. No nature assumption is carried from one format into another.
+- **Each format's rules come from one pinned copy of Showdown's code.** M-A and M-B from the June 2026 copy (`pokemon-showdown`), M-C from the November 2026 copy (`pokemon-showdown-mc`): Showdown's current code no longer has M-A's rules. The resolver, the dex and the timers of a format all read the same copy.
+- **Data volume is unequal and must be reported.** At revision 7 the corpus held 84,738 M-A battles and 4,167 M-B battles; M-C's count is reported when its games are in. Any result on a smaller format must state its sample size alongside it. A model that only works where data is plentiful must say so.
+- **Format stays configuration (§12.5).** Adding a format is a configuration change, not a code change.
 
 This section does not change §12.2's stale expectation about Terastallisation; `docs/TERA-COVERAGE.md` is the current finding (the format disables it). Correcting §12.2 and §12.3 is a separate edit for the PO to approve.
