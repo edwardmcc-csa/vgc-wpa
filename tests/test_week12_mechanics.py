@@ -413,3 +413,143 @@ def test_moody_raises_one_stat_and_lowers_another_at_random(tools):
     for key, prob in got.items():
         assert sorted(v for _k, v in key) == [-1, 2]
         assert prob == pytest.approx(1 / 20)
+
+
+# Moves the resolver check left partly modelled among the biggest swings
+# (Week 12, Reg M-A: Trick 2, Quash 1): Quash and After You change the order,
+# Trick and Switcheroo swap items (`data/moves.ts`).
+
+KOWTOW = Action(1, "move", move="kowtowcleave", target=("foe", 0))
+FLARE = (
+    Action(0, "move", move="flareblitz", target=("foe", 1)),
+    Action(1, "move", move="protect"),
+)
+
+
+def _kingambit_hit(outs):
+    """The chance Kingambit took a hit, and the moves left partly modelled."""
+    hit = sum(o.prob for o in outs if o.sides["p1"][1]["hp_fraction"] < 1)
+    return hit, set().union(*(o.partial for o in outs))
+
+
+@needs_showdown
+def test_quash_sends_the_targets_move_to_the_end_of_the_turn(tools):
+    """Incineroar (10%) is faster than Kingambit, so its Flare Blitz lands
+    first. Quashed, it moves last: Kingambit knocks it out before it moves."""
+    dex, moves, calc = tools
+    rv = R.Resolver(dex, moves, calc, SHEETS, SPREADS)
+    quash = (Action(0, "move", move="quash", target=("foe", 0)), KOWTOW)
+    hit, partial = _kingambit_hit(
+        rv.resolve(board(0.1), R.Field(), {"p1": quash, "p2": FLARE})
+    )
+    assert hit < 0.05 and "move:quash" not in partial
+    plain = (Action(0, "move", move="protect"), KOWTOW)
+    hit, _ = _kingambit_hit(
+        rv.resolve(board(0.1), R.Field(), {"p1": plain, "p2": FLARE})
+    )
+    assert hit > 0.9
+
+
+@needs_showdown
+def test_quash_on_a_pokemon_that_has_moved_does_nothing(tools):
+    """Kingambit is the slowest: by the time it uses Quash, Incineroar has
+    moved (Showdown: `willMove` finds no action, the move fails)."""
+    dex, moves, calc = tools
+    rv = R.Resolver(dex, moves, calc, SHEETS, SPREADS)
+    late = (
+        Action(0, "move", move="protect"),
+        Action(1, "move", move="quash", target=("foe", 0)),
+    )
+    hit, partial = _kingambit_hit(
+        rv.resolve(board(), R.Field(), {"p1": late, "p2": FLARE})
+    )
+    assert hit > 0.9 and "move:quash" not in partial
+
+
+@needs_showdown
+def test_after_you_lets_the_target_move_next(tools):
+    dex, moves, calc = tools
+    rv = R.Resolver(dex, moves, calc, SHEETS, SPREADS)
+    after = (Action(0, "move", move="afteryou", target=("ally", 1)), KOWTOW)
+    hit, partial = _kingambit_hit(
+        rv.resolve(board(0.1), R.Field(), {"p1": after, "p2": FLARE})
+    )
+    assert hit < 0.05 and "move:afteryou" not in partial
+
+
+TRICK = (
+    Action(0, "move", move="trick", target=("foe", 0)),
+    Action(1, "move", move="protect"),
+)
+
+
+def _items(outs, who):
+    return {(o.sides[who[0]][who[1]]["item"]) for o in outs}
+
+
+@needs_showdown
+@pytest.mark.parametrize(
+    "mine, theirs, ability, swapped",
+    [
+        ("choicescarf", "sitrusberry", "intimidate", True),
+        ("choicescarf", "", "intimidate", True),  # one item is enough
+        ("", "", "intimidate", False),  # nothing to swap: it fails
+        ("choicescarf", "sitrusberry", "stickyhold", False),
+        ("garchompite", "sitrusberry", "intimidate", False),  # a Mega Stone
+    ],
+)
+def test_trick_swaps_the_two_items(tools, mine, theirs, ability, swapped):
+    dex, moves, calc = tools
+    sheets = _with(_with(SHEETS, "p1", 0, item=mine), "p2", 0, ability=ability)
+    rv = R.Resolver(dex, moves, calc, sheets, SPREADS)
+    b = board()
+    b["p1"][0]["item"], b["p2"][0]["item"] = mine, theirs
+    outs = rv.resolve(b, R.Field(), {"p1": TRICK, "p2": P2_QUIET})
+    assert not set().union(*(o.partial for o in outs)) & {"move:trick"}
+    want = (theirs, mine) if swapped else (mine, theirs)
+    assert _items(outs, ("p1", 0)) == {want[0]}
+    assert _items(outs, ("p2", 0)) == {want[1]}
+
+
+def _lost(outs, who=("p2", 0)):
+    return sum(o.prob * (1 - o.sides[who[0]][who[1]]["hp_fraction"]) for o in outs)
+
+
+@needs_showdown
+def test_instruct_has_the_target_use_its_last_move_again_at_once(tools):
+    """Instruct (12 Reg M-A and 17 Reg M-B turns partly modelled in the check):
+    the target uses the move it used last, at the same target, straight away
+    (Showdown: `prioritizeAction`), besides its own move."""
+    dex, moves, calc = tools
+    rv = R.Resolver(dex, moves, calc, SHEETS, SPREADS)
+    claw = Action(0, "move", move="dragonclaw", target=("foe", 0))
+    again = (claw, Action(1, "move", move="instruct", target=("ally", 0)))
+    once = (claw, Action(1, "move", move="protect"))
+    twice = rv.resolve(board(), R.Field(), {"p1": again, "p2": P2_QUIET})
+    assert "move:instruct" not in set().union(*(o.partial for o in twice))
+    one = _lost(rv.resolve(board(), R.Field(), {"p1": once, "p2": P2_QUIET}))
+    assert 1.8 * one < _lost(twice) < 2.2 * one
+
+
+@needs_showdown
+@pytest.mark.parametrize(
+    "last, attack", [("", 2), ("swordsdance", 4), ("solarbeam", 2)]
+)
+def test_instruct_repeats_last_turns_move_unless_it_charges_or_there_is_none(
+    tools, last, attack
+):
+    """Under Trick Room, Kingambit instructs Incineroar before it moves: the
+    move it used last turn is repeated (Swords Dance, then its own: +4), not a
+    charging move (the failinstruct and charge flags), and nothing when it has
+    used none."""
+    dex, moves, calc = tools
+    rv = R.Resolver(dex, moves, calc, SHEETS, SPREADS)
+    b = board()
+    b["p2"][0]["last_move"] = last
+    act = (
+        Action(0, "move", move="protect"),
+        Action(1, "move", move="instruct", target=("foe", 0)),
+    )
+    outs = rv.resolve(b, R.Field(trickroom=3), {"p1": act, "p2": P2_QUIET})
+    assert {o.sides["p2"][0]["boosts"].get("atk", 0) for o in outs} == {attack}
+    assert "move:instruct" not in set().union(*(o.partial for o in outs))

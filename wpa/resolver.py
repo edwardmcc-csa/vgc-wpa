@@ -130,6 +130,11 @@ CONTACT_STATUS = {"flamebody": "brn", "static": "par", "poisonpoint": "psn"}
 WEATHER_HEAL = {"moonlight", "morningsun", "synthesis"}
 # status moves with a target, done in `_use`'s loop (after Week 11)
 ON_TARGET = {"healpulse", "floralhealing", "psychup", "strengthsap"}
+# the user and the target swap items (`data/moves.ts`)
+SWAP_ITEMS = {"trick", "switcheroo"}
+# the target's move this turn: last (Quash: its action's order becomes 201) or
+# next (After You: Showdown's `prioritizeAction`); nothing if it has moved
+REORDER = {"quash": "last", "afteryou": "next"}
 # Week 12 Task 2: type changes. Protean and Libero (once per switch-in);
 # the status moves that change a target's types; the moves that cost their
 # user a type (it fails without it)
@@ -273,6 +278,11 @@ class _World:
     # this action only: abilities that act by chance on its hits, done after
     # its secondary effects (`_chance_abilities`): (ability, holder, other)
     chances: list = field(default_factory=list)
+    # this action only: a Pokemon Quash or After You moved in the order
+    reorder: tuple | None = None
+    # this turn: the Pokemon Quash sent to the end (they stay there when the
+    # moves still to come are sorted again)
+    last: set = field(default_factory=set)
 
     def clone(self, p: float | None = None) -> _World:
         f = self.fld
@@ -304,6 +314,8 @@ class _World:
             self.winner,
             self.requeue,
             list(self.chances),
+            self.reorder,
+            set(self.last),
         )
 
     def key(self, resolution: float | None, coarsen: int = 0) -> tuple:
@@ -620,6 +632,9 @@ class Resolver:
                                 if x.requeue is not None:
                                     t = self._requeued(x, tail)
                                     x.requeue = None
+                                elif x.reorder is not None:
+                                    t = self._reordered(x, tail)
+                                    x.reorder = None
                                 elif t and self._speed_sig(x) != sig:
                                     t = self._resorted(x, t)
                                 # merged, and capped, as they arrive: a step
@@ -669,11 +684,12 @@ class Resolver:
         """The moves still to come, sorted again by their priority and Speed as
         they are now (Generation 8 on: Showdown's `runAction` sorts the queue
         after each action, so a Tailwind or a Speed drop acts at once). Ties
-        keep their order."""
+        keep their order; a Pokemon Quash sent to the end stays there."""
         sign = 1 if w.fld.trickroom else -1
         keyed = sorted(
             enumerate(tail),
             key=lambda it: (
+                (it[1][0], it[1][1].user) in w.last,  # Quashed: after the rest
                 -self._priority(w, it[1][0], it[1][1]),
                 sign * self._speed(w, it[1][0], it[1][1].user),
                 it[0],
@@ -1223,6 +1239,7 @@ class Resolver:
         protect_used = mv in PROTECT_LIKE
         first_turn = not st["moved"]
         st["moved"], st["last_move"] = True, mv
+        st["last_target"] = a.target  # for Instruct (`_instruct`)
         w.hit, w.dealt, w.subbed, w.chances = set(), 0, set(), []
         if not protect_used:
             st["protect_streak"] = 0
@@ -1602,6 +1619,9 @@ class Resolver:
             or vol in ("confusion", "encore", "leechseed", "taunt", "yawn", "disable")
             or mv in ON_TARGET
             or mv in RETYPE
+            or mv in SWAP_ITEMS
+            or mv in REORDER
+            or mv == "instruct"
         )
         if not handled:
             w.partial.add(f"move:{mv}")
@@ -1655,6 +1675,12 @@ class Resolver:
                     self._on_target(hit, role, a, tgt)
                 if mv in RETYPE:
                     self._retype(hit, role, a, tgt)
+                if mv in SWAP_ITEMS:
+                    self._swap_items(hit, (role, a.user), tgt)
+                if mv in REORDER and tgt not in hit.acted:
+                    hit.reorder = (tgt, REORDER[mv])
+                if mv == "instruct":
+                    self._instruct(hit, tgt)
                 if drops and not self._drop(hit, tgt, drops):
                     if tgt[0] != role:
                         failed.add(id(hit))  # Parting Shot: no drop, no switch
@@ -1679,6 +1705,75 @@ class Resolver:
                 x for b in out for x in (self._drag(b, targets[0]) if targets else [b])
             ]
         return out
+
+    def _swap_items(
+        self, w: _World, user: tuple[str, int], tgt: tuple[str, int]
+    ) -> None:
+        """Trick and Switcheroo: the two swap items. Nothing happens when
+        neither holds one, against Sticky Hold, or when either holds a Mega
+        Stone (Showdown's TakeItem refuses it). A Choice Scarf moved changes
+        the order at once (`_resorted`)."""
+        me, you = w.sides[user[0]][user[1]], w.sides[tgt[0]][tgt[1]]
+        mine, yours = me.get("item") or "", you.get("item") or ""
+        if you["fainted"] or not (mine or yours):
+            return
+        if self.ability(tgt[0], tgt[1], you) == "stickyhold":
+            return
+        if any(
+            (self.dex.items.get(i) or {}).get("megaStone") for i in (mine, yours) if i
+        ):
+            return
+        me["item"], you["item"] = yours, mine
+
+    def _instruct(self, w: _World, tgt: tuple[str, int]) -> None:
+        """Instruct: the target uses the move it used last again, at the same
+        target, straight away (Showdown: `prioritizeAction`), besides its own
+        move. Not a move with the failinstruct, charge or recharge flag, nor
+        while it charges; nothing when it has used none. A one-target move it
+        used last turn: its target is not on the board, so marked partly
+        modelled."""
+        x = w.sides[tgt[0]][tgt[1]]
+        last = x.get("last_move") or ""
+        m = self.move(last) if last else None
+        if x["fainted"] or not x["active"] or not m or x.get("charging"):
+            return
+        if set(m.get("flags") or ()) & {"failinstruct", "charge", "recharge"}:
+            return
+        if "last_target" not in x and m.get("target") in (
+            "normal",
+            "any",
+            "adjacentFoe",
+            "adjacentAlly",
+            "adjacentAllyOrSelf",
+        ):
+            w.partial.add("instruct: the target of last turn's move")
+            return
+        w.reorder = (tgt, "again")
+
+    def _reordered(self, w: _World, tail: tuple) -> tuple:
+        """Quash sends the target's move to the end of the turn (and it stays
+        after the rest when they are sorted again); After You brings it next;
+        Instruct adds its last move again, next (`_instruct`).
+        A target with no move still to come (it has moved, or switched): the
+        move does nothing."""
+        assert w.reorder is not None
+        (role, idx), where = w.reorder
+        if where == "again":  # Instruct: an extra action, straight away
+            x = w.sides[role][idx]
+            again = Action(
+                idx, "move", move=x["last_move"], target=x.get("last_target")
+            )
+            return ((role, again), *tail)
+        i = next(
+            (k for k, (r, a) in enumerate(tail) if r == role and a.user == idx), None
+        )
+        if i is None:
+            return tail
+        mine, rest = tail[i], tail[:i] + tail[i + 1 :]
+        if where == "next":
+            return (mine, *rest)
+        w.last.add((role, idx))
+        return self._resorted(w, (*rest, mine))
 
     def _confuse(self, w: _World, tgt: tuple[str, int]) -> None:
         """Confused from now: its next try is the first (Own Tempo, and Misty
