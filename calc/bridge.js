@@ -97,6 +97,7 @@ function field(f) {
     terrain: f.terrain || undefined,
     isFairyAura: !!f.fairyaura,
     isDarkAura: !!f.darkaura,
+    isGravity: !!f.gravity,
     defenderSide: {
       isReflect: !!f.reflect,
       isLightScreen: !!f.lightscreen,

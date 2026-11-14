@@ -118,6 +118,15 @@ LEAVING = (
     "protean",
     "roost",
     "bound",
+    # Week 13
+    "ability",
+    "cursed",
+    "stockpile",
+    "saltcure",
+    "healblock",
+    "focusenergy",
+    "imprison",
+    "destinybond",
 )
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
@@ -139,7 +148,23 @@ REORDER = {"quash": "last", "afteryou": "next"}
 # the status moves that change a target's types; the moves that cost their
 # user a type (it fails without it)
 PROTEAN = {"protean", "libero"}
-RETYPE = {"soak", "trickortreat", "forestscurse", "reflecttype"}
+RETYPE = {"soak", "trickortreat", "forestscurse", "reflecttype", "magicpowder"}
+# Week 13 Task 2: moves that change abilities (Showdown's onTryHit and setAbility)
+ABILITY_MOVES = {"skillswap", "entrainment", "simplebeam"}
+# moves Gravity stops (`data/conditions.ts`, gravity)
+HAZARDS = ("stealthrock", "spikes", "toxicspikes", "stickyweb")
+GRAVITY_STOPS = {
+    "bounce",
+    "fly",
+    "flyingpress",
+    "floatyfall",
+    "highjumpkick",
+    "jumpkick",
+    "magnetrise",
+    "skydrop",
+    "splash",
+    "telekinesis",
+}
 LOSES_TYPE = {"burnup": "Fire", "doubleshock": "Electric"}
 # Week 12 Task 4: spreads only where they decide something. A spread is likely
 # with this much of the belief, at most this many per Pokemon; a hit branches on
@@ -201,6 +226,7 @@ class Field:
     sides: dict[str, dict[str, int]] = field(
         default_factory=lambda: {"p1": {}, "p2": {}}
     )
+    gravity: int = 0  # Week 13 (last: Field is also built by position)
 
     def key(self) -> tuple:
         return (
@@ -209,6 +235,7 @@ class Field:
             self.terrain,
             self.terrain_left,
             self.trickroom,
+            self.gravity,
             tuple(tuple(sorted(self.sides[r].items())) for r in ROLES),
         )
 
@@ -228,6 +255,8 @@ def field_from_timers(joined, role: str) -> Field:
             f.terrain, f.terrain_left = eid, lo
         elif eid == "trickroom":
             f.trickroom = lo
+        elif eid == "gravity":
+            f.gravity = lo
     for r, spans in ((role, joined.ours), (other, joined.theirs)):
         for eid, target, lo, _hi in spans:
             if target == "side" and eid in SIDE_TIMED:
@@ -299,6 +328,7 @@ class _World:
                 f.terrain_left,
                 f.trickroom,
                 {r: dict(v) for r, v in f.sides.items()},
+                f.gravity,
             ),
             set(self.partial),
             set(self.protected),
@@ -358,6 +388,14 @@ class _World:
                 m.get("protean", 0),
                 m.get("roost", 0),
                 m.get("bound", 0),
+                m.get("ability", ""),
+                m.get("cursed", 0),
+                m.get("stockpile", 0),
+                m.get("saltcure", 0),
+                m.get("healblock", 0),
+                m.get("focusenergy", 0),
+                m.get("imprison", 0),
+                m.get("destinybond", 0),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -470,6 +508,7 @@ def _mon_key(st: Mapping) -> tuple:
         tuple(st.get("types") or ()),
         st.get("typeadd", ""),
         st.get("roost", 0),
+        st.get("ability", ""),
     )
 
 
@@ -531,6 +570,8 @@ class Resolver:
         return self.dex.species.get(mon.species, {})
 
     def ability(self, role: str, idx: int, st: Mapping) -> str:
+        if st.get("ability"):  # changed this turn or before (Week 13)
+            return st["ability"]
         mon = self.sheets[role][idx]
         e = self.entry(role, idx, st)
         if st.get("mega") and e.get("isMega"):
@@ -1253,11 +1294,22 @@ class Resolver:
         if not protect_used:
             st["protect_streak"] = 0
         w.acted.add((role, a.user))
+        bonded = st.pop("destinybond", None)  # it ends when the Pokemon moves again
         if not m:
             w.partial.add(f"move:{mv}")
             return [w]
         if st.get("taunt") and m.get("category") == "Status":
             return [w]  # taunted: it cannot use a status move
+        if w.fld.gravity and mv in GRAVITY_STOPS:
+            return [w]  # Gravity (Week 13)
+        if st.get("healblock") and "heal" in (m.get("flags") or []):
+            return [w]  # Heal Block
+        if self._imprisoned(w, role, mv):
+            return [w]
+        if mv == "destinybond":
+            if not bonded:  # not twice in a row
+                st["destinybond"] = 1
+            return [w]
         if st.get("disabled") == mv:
             return [w]  # disabled
         if protect_used:
@@ -1428,7 +1480,7 @@ class Resolver:
         if (
             w.fld.terrain == "psychicterrain"
             and self._priority(w, role, a) > 0
-            and self._grounded(tgt, w.sides[tgt[0]][tgt[1]])
+            and self._grounded(tgt, w.sides[tgt[0]][tgt[1]], w.fld)
         ):
             return True
         return False
@@ -1455,9 +1507,10 @@ class Resolver:
         if x["fainted"]:
             return
         now = self.types(tgt[0], tgt[1], x)
-        if a.move == "soak":
-            if now != ["Water"]:
-                x["types"] = ["Water"]
+        if a.move in ("soak", "magicpowder"):
+            new = "Water" if a.move == "soak" else "Psychic"
+            if now != [new]:
+                x["types"] = [new]
                 x.pop("typeadd", None)
         elif a.move in ("trickortreat", "forestscurse"):
             add = "Ghost" if a.move == "trickortreat" else "Grass"
@@ -1489,7 +1542,9 @@ class Resolver:
             return False
         return self.ability(role, a.user, w.sides[role][a.user]) not in MOLD
 
-    def _grounded(self, who: tuple[str, int], st: Mapping) -> bool:
+    def _grounded(self, who: tuple[str, int], st: Mapping, fld=None) -> bool:
+        if fld is not None and fld.gravity:
+            return True
         return (
             "Flying" not in self.types(who[0], who[1], st)
             and self.ability(who[0], who[1], st) != "levitate"
@@ -1538,6 +1593,9 @@ class Resolver:
         st = w.sides[role][a.user]
         if mv == "roost":
             st["roost"] = 1  # no Flying type until the end of the turn
+        done = self._own_status(w, role, a, st)
+        if done is not None:
+            return done
         if mv == "perishsong":
             # every Pokemon on the field not already counting; through Protect,
             # not through Soundproof. 4 now, so 3 shows after this turn
@@ -1642,6 +1700,9 @@ class Resolver:
             or mv in SWAP_ITEMS
             or mv in REORDER
             or mv == "instruct"
+            or mv in ABILITY_MOVES
+            or mv in ("powerswap", "curse")
+            or vol == "healblock"
         )
         if not handled:
             w.partial.add(f"move:{mv}")
@@ -1702,6 +1763,14 @@ class Resolver:
                     hit.reorder = (tgt, REORDER[mv])
                 if mv == "instruct":
                     self._instruct(hit, tgt)
+                if mv in ABILITY_MOVES:
+                    self._ability_move(hit, role, a, tgt)
+                if mv == "powerswap":
+                    self._power_swap(hit, (role, a.user), tgt)
+                if mv == "curse":
+                    self._curse(hit, role, a, tgt)
+                if vol == "healblock":
+                    hit.sides[tgt[0]][tgt[1]]["healblock"] = 1
                 if drops and not self._drop(hit, tgt, drops):
                     if tgt[0] != role:
                         failed.add(id(hit))  # Parting Shot: no drop, no switch
@@ -1726,6 +1795,113 @@ class Resolver:
                 x for b in out for x in (self._drag(b, targets[0]) if targets else [b])
             ]
         return out
+
+    # ------------------------------------------------------- Week 13 Task 2
+
+    def _own_status(
+        self, w: _World, role: str, a: Action, st: dict
+    ) -> list[_World] | None:
+        """The status moves done on the user or the field alone (Week 13): the
+        boards after it, or None for another move. Curse by a non-Ghost
+        (+1 Attack and Defense, -1 Speed), Gravity (5 turns), Stockpile (+1
+        Defense and Special Defense, three at most), Focus Energy (+2
+        critical-hit stages), Imprison, and Tidy Up (+1 Attack and Speed; every
+        substitute and hazard gone)."""
+        mv = a.move
+        if mv == "curse" and "Ghost" not in self.types(role, a.user, st):
+            self._boost(st, {"atk": 1, "def": 1, "spe": -1})
+            return [w]
+        if mv == "gravity":
+            w.fld.gravity = w.fld.gravity or 5
+            return [w]
+        if mv == "stockpile":
+            n = st.get("stockpile", 0)
+            if n < 3:
+                st["stockpile"] = n + 1
+                self._boost(st, {"def": 1, "spd": 1})
+            return [w]
+        if mv in ("focusenergy", "imprison"):
+            st.setdefault(mv, 1)
+            return [w]
+        if mv == "tidyup":
+            for r in ROLES:
+                for x in w.sides[r]:
+                    x.pop("sub", None)
+                for hz in HAZARDS:
+                    w.fld.sides[r].pop(hz, None)
+            self._boost(st, {"atk": 1, "spe": 1})
+            return [w]
+        return None
+
+    def _imprisoned(self, w: _World, role: str, mv: str) -> bool:
+        """A foe with Imprison up knows this move: it fails."""
+        o = _other(role)
+        return any(
+            x.get("imprison")
+            and x["active"]
+            and not x["fainted"]
+            and mv in (self.sheets[o][k].moves or ())
+            for k, x in enumerate(w.sides[o])
+        )
+
+    def _ability_move(self, w: _World, role: str, a: Action, tgt) -> None:
+        """Skill Swap (the two trade abilities), Entrainment (the target takes
+        the user's) and Simple Beam (the target's becomes Simple), with
+        Showdown's failures; a new ability starts at once (Intimidate goes
+        off: game 2618889364)."""
+        me = w.sides[role][a.user]
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"]:
+            return
+        mine = self.ability(role, a.user, me)
+        yours = self.ability(tgt[0], tgt[1], x)
+
+        def flags(ab: str) -> dict:
+            return (self.dex.abilities.get(ab) or {}).get("flags") or {}
+
+        if a.move == "skillswap":
+            if flags(mine).get("failskillswap") or flags(yours).get("failskillswap"):
+                return
+            me["ability"], x["ability"] = yours, mine
+            self._on_entry(w, role, a.user)
+            self._on_entry(w, tgt[0], tgt[1])
+            return
+        if a.move == "entrainment":
+            if (
+                yours == mine
+                or flags(yours).get("cantsuppress")
+                or yours == "truant"
+                or flags(mine).get("noentrain")
+            ):
+                return
+            x["ability"] = mine
+        else:  # Simple Beam
+            if flags(yours).get("cantsuppress") or yours in ("simple", "truant"):
+                return
+            x["ability"] = "simple"
+        self._on_entry(w, *tgt)
+
+    def _power_swap(self, w: _World, user, tgt) -> None:
+        """Power Swap: the two trade Attack and Special Attack changes."""
+        me, you = w.sides[user[0]][user[1]], w.sides[tgt[0]][tgt[1]]
+        if you["fainted"]:
+            return
+        for k in ("atk", "spa"):
+            a, b = me["boosts"].pop(k, 0), you["boosts"].pop(k, 0)
+            if b:
+                me["boosts"][k] = b
+            if a:
+                you["boosts"][k] = a
+
+    def _curse(self, w: _World, role: str, a: Action, tgt) -> None:
+        """A Ghost's Curse: half its hit points for a curse on the target (a
+        quarter at each end of turn); it fails on one already cursed."""
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"] or x.get("cursed"):
+            return
+        full = self.max_hp(role, a.user)
+        self._lose(w, (role, a.user), (full // 2) / full)
+        x["cursed"] = 1
 
     def _swap_items(
         self, w: _World, user: tuple[str, int], tgt: tuple[str, int]
@@ -1804,7 +1980,7 @@ class Resolver:
             return
         if self.ability(tgt[0], tgt[1], x) == "owntempo":
             return
-        if w.fld.terrain == "mistyterrain" and self._grounded(tgt, x):
+        if w.fld.terrain == "mistyterrain" and self._grounded(tgt, x, w.fld):
             return
         x["confused"] = 0
 
@@ -1922,6 +2098,8 @@ class Resolver:
             mult *= 0.8
         if st.get("item") == "widelens":
             mult *= 1.1
+        if w.fld.gravity:
+            mult *= 5 / 3
         if t.get("item") == "brightpowder":
             mult *= 0.9
         return max(0.0, min(1.0, acc / 100 * mult))
@@ -1979,7 +2157,7 @@ class Resolver:
 
     def _heal(self, w: _World, role: str, idx: int, frac: float) -> None:
         st = w.sides[role][idx]
-        if not st["fainted"]:
+        if not st["fainted"] and not st.get("healblock"):
             st["hp_fraction"] = min(1.0, st["hp_fraction"] + frac)
 
     def _bench(self, w: _World, role: str) -> list[int]:
@@ -2080,6 +2258,8 @@ class Resolver:
             stage += 1
         if st.get("item") in {"scopelens", "razorclaw"}:
             stage += 1
+        if st.get("focusenergy"):
+            stage += 2
         return [1 / 24, 1 / 8, 1 / 2][stage] if stage < 3 else 1.0
 
     def _damage_field(self, w: _World, role: str, a: Action, tgt) -> tuple[dict, dict]:
@@ -2094,6 +2274,7 @@ class Resolver:
             # (an ally's spread move too: found by the resolver check)
             f[s] = bool(w.fld.sides[tgt[0]].get(s)) and tgt != (role, a.user)
         f["helpinghand"] = (role, a.user) in w.helped
+        f["gravity"] = bool(w.fld.gravity)
         # abilities on the field that change damage (found by the resolver
         # check, Week 12): Fairy and Dark Aura, whoever holds them; Friend Guard
         # on the target's ally; Battery, Power Spot and the like on the user's
@@ -2152,10 +2333,10 @@ class Resolver:
         if key in self._dmg:
             return self._dmg[key]
         req = damage_request(
-            self.sheets[role][a.user],
+            self._sheet_now(role, a.user, st),
             _board_state(st, down[role]),
             sp_a,
-            self.sheets[tgt[0]][tgt[1]],
+            self._sheet_now(tgt[0], tgt[1], t),
             _board_state(t, down[tgt[0]]),
             sp_d,
             a.move,
@@ -2176,6 +2357,15 @@ class Resolver:
                 req[side]["types"] = self.types(who[0], who[1], s)
         self._dmg[key] = self.calc.run([req])[0]
         return self._dmg[key]
+
+    def _sheet_now(self, role: str, idx: int, st: Mapping) -> SheetMon:
+        """Its sheet, with an ability changed in the game (Week 13)."""
+        mon = self.sheets[role][idx]
+        if st.get("ability") and st["ability"] != mon.ability:
+            import dataclasses
+
+            return dataclasses.replace(mon, ability=st["ability"])
+        return mon
 
     def _ally_has(self, w: _World, role: str, idx: int, abilities) -> str:
         """The ability among `abilities` that its active ally has, or ""."""
@@ -2491,6 +2681,8 @@ class Resolver:
                 t["bound"] = 6 if band else 8
         if new == 0:
             self._faint(w, tgt)
+            if t.get("destinybond") and tgt[0] != role:
+                self._faint(w, (role, a.user))  # Destiny Bond (Week 13)
         else:
             self._sitrus(t, new, max_hp)
         # contact punishment
@@ -2576,7 +2768,11 @@ class Resolver:
     def _sitrus(st: dict, hp: int, max_hp: int) -> None:
         """Sitrus Berry: a quarter back once the holder is at half or less, from
         any damage (Week 13: it was eaten only after a hit)."""
-        if st.get("item") == "sitrusberry" and hp <= max_hp / 2:
+        if (
+            st.get("item") == "sitrusberry"
+            and hp <= max_hp / 2
+            and not st.get("healblock")
+        ):
             st["hp_fraction"] = min(1.0, (hp + max_hp // 4) / max_hp)
             st["item"], st["rev_item"] = "", "sitrusberry"
 
@@ -2662,7 +2858,7 @@ class Resolver:
         max_hp = self.max_hp(role, a.user)
         ab = self.ability(role, a.user, st)
         if dealt > 0:
-            if m.get("drain"):
+            if m.get("drain") and not st.get("healblock"):
                 n, d = m["drain"]
                 heal = dealt * n / d * (1.3 if st.get("item") == "bigroot" else 1)
                 st["hp_fraction"] = min(1.0, st["hp_fraction"] + round(heal) / max_hp)
@@ -2739,6 +2935,8 @@ class Resolver:
                             yes.flinched.add(tgt)
                     elif vol == "confusion":
                         self._confuse(yes, tgt)
+                    elif vol in ("saltcure", "healblock"):
+                        yt[vol] = 1  # Salt Cure, Psychic Noise (Week 13)
                     elif vol:
                         yes.partial.add(vol)
                 nxt.append(yes)
@@ -2846,6 +3044,12 @@ class Resolver:
                     continue
                 if st.get("bound") and ab != "magicguard":
                     self._lose(w, (r, j), 1 / st["bound"])
+                if st.get("cursed") and ab != "magicguard" and not st["fainted"]:
+                    self._lose(w, (r, j), 1 / 4)
+                if st.get("saltcure") and ab != "magicguard" and not st["fainted"]:
+                    self._lose(
+                        w, (r, j), 1 / 4 if types & {"Water", "Steel"} else 1 / 8
+                    )
                 if (
                     fld.weather in ("sunnyday", "desolateland")
                     and ab == "solarpower"
@@ -2881,6 +3085,8 @@ class Resolver:
                 fld.terrain, fld.terrain_left = "", 0
         if fld.trickroom:
             fld.trickroom -= 1
+        if fld.gravity:
+            fld.gravity -= 1
         for r in ROLES:
             fld.sides[r] = {k: v - 1 for k, v in fld.sides[r].items() if v - 1 > 0}
         w.protected, w.guards, w.flinched, w.acted = set(), set(), set(), set()

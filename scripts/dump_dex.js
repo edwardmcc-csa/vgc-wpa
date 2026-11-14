@@ -46,5 +46,5 @@ for (const it of dex.items.all()) {
 	items[it.id] = { name: it.name, megaStone: it.megaStone || null };
 }
 const abilities = {};
-for (const a of dex.abilities.all()) abilities[a.id] = { name: a.name };
+for (const a of dex.abilities.all()) abilities[a.id] = { name: a.name, flags: a.flags };
 console.log(JSON.stringify({ mod: modName, species, moves, items, abilities }));

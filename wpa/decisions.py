@@ -106,7 +106,20 @@ _VOLATILE_LINES = frozenset(
         "-prepare",
         "-enditem",
         "-damage",
+        "-ability",
+        "-singlemove",
     }
+)
+# Week 13: what the board keeps besides, each ended by leaving the field
+WEEK13 = (
+    "ability",
+    "cursed",
+    "stockpile",
+    "saltcure",
+    "healblock",
+    "focusenergy",
+    "imprison",
+    "destinybond",
 )
 # what leaving the field ends (Rage Fist's hits too, in Champions; the Toxic
 # count starts again; Leech Seed, Taunt, Yawn and Disable end)
@@ -124,6 +137,7 @@ LEAVING = (
     "typeadd",
     "protean",
     "bound",
+    *WEEK13,
 )
 # what `side` passes on when present
 TRACKED = (
@@ -141,6 +155,7 @@ TRACKED = (
     "typeadd",
     "protean",
     "bound",
+    *WEEK13,
 )
 # the moves that bind (an eighth at each end of turn, for 4 or 5 turns)
 BINDING = {
@@ -452,6 +467,35 @@ class _Board:
             m["bound"] = 8  # an eighth each end of turn (Week 12)
         elif t == "-end" and "[partiallytrapped]" in p[4:]:
             m.pop("bound", None)
+        elif t == "-activate" and what == "skillswap" and len(p) > 5:
+            # Week 13: the user takes the target's ability, the target the user's
+            of = next((x[5:] for x in p[6:] if x.startswith("[of] ")), None)
+            other = self._mon(of) if of else None
+            if p[4]:
+                m["ability"] = to_id(p[4])
+            if other is not None and p[5]:
+                other["ability"] = to_id(p[5])
+        elif t == "-ability" and any(
+            x in ("[from] move: Entrainment", "[from] move: Simple Beam") for x in p[4:]
+        ):
+            m["ability"] = to_id(p[3])
+        elif t == "-start" and what == "curse":
+            m["cursed"] = 1
+        elif t == "-start" and what.startswith("stockpile") and what[9:].isdigit():
+            m["stockpile"] = int(what[9:])
+        elif t == "-end" and what == "stockpile":
+            m.pop("stockpile", None)
+        elif t == "-start" and what in (
+            "saltcure",
+            "healblock",
+            "focusenergy",
+            "imprison",
+        ):
+            m[what] = 1
+        elif t == "-end" and what == "healblock":
+            m.pop("healblock", None)
+        elif t == "-singlemove" and what == "destinybond":
+            m["destinybond"] = 1
         elif t == "-end" and what in ("leechseed", "taunt", "yawn"):
             m.pop(
                 {"leechseed": "seeded", "taunt": "taunt", "yawn": "drowsy"}[what], None
@@ -467,6 +511,8 @@ class _Board:
         self._mover_at = (p[2][:2], p[2][2:3])
         if m.get("charging") == move and "[still]" not in p[4:]:
             m.pop("charging", None)  # the charged move goes off
+        if move != "destinybond":
+            m.pop("destinybond", None)  # it ends when the Pokemon moves again
         called = any(x.startswith("[from]") and "lockedmove" not in x for x in p[4:])
         # the real-data check: Fake Out only before moving, and Choice locks
         self._fakeout = None

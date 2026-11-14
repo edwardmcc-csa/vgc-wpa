@@ -763,6 +763,8 @@ def damage_request(
             "friendguard": f.get("friendguard"),
             "helpinghand": f.get("helpinghand"),
             **{k: f.get(k) for k in ("fairyaura", "darkaura", *sorted(ALLY_BOOSTS))},
+            # Week 13: only when up, so every other request stays as it was
+            **({"gravity": True} if f.get("gravity") else {}),
         },
     )
 
