@@ -1,0 +1,239 @@
+"""Week 14 Task 4: the rules Reg M-C adds to the resolver, each against
+Showdown's Champions data in the November copy (`pokemon-showdown-mc`), with
+M-C's dex and moves; rules that act in every format are also checked there.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import shutil
+
+import pytest
+
+from tests.test_resolver import ROOT, SHEETS, SPREADS, board, mon, p_of
+from wpa import resolver as R
+from wpa.choices import Action
+from wpa.team_sheets import SheetMon
+
+MC = ROOT / "pokemon-showdown-mc"
+needs_mc = pytest.mark.skipif(
+    shutil.which("node") is None or not (MC / "dist" / "sim" / "dex.js").exists(),
+    reason="needs Node and the built Reg M-C copy of Showdown's code",
+)
+
+RILLABOOM = SheetMon(3, "rillaboom", "", "grassysurge", ("fakeout", "woodhammer"), "")
+INDEEDEE = SheetMon(3, "indeedeef", "", "psychicsurge", ("followme", "protect"), "")
+QUIET = (Action(0, "move", move="protect"), Action(1, "move", move="protect"))
+DANCE = (Action(0, "move", move="swordsdance"), Action(1, "move", move="swordsdance"))
+
+
+@pytest.fixture(scope="module")
+def tools():
+    from wpa import damage as DM
+    from wpa.team_sheets import load_dexes
+
+    dex = load_dexes(ROOT / "pokemon-showdown")["regmc"]
+    moves = R.load_moves(MC, "champions")
+    c = DM.Calc()
+    yield dex, moves, c
+    c.close()
+
+
+def _rv(tools, p1=None, p2=None, bench=None, spreads=None):
+    """A resolver on the test sheets (some Pokemon replaced), with `bench`
+    as p2's third."""
+    dex, moves, calc = tools
+    sheets = {r: list(SHEETS[r]) for r in SHEETS}
+    for r, swaps in (("p1", p1 or {}), ("p2", p2 or {})):
+        for i, kw in swaps.items():
+            sheets[r][i] = dataclasses.replace(sheets[r][i], **kw)
+    if bench is not None:
+        sheets["p2"].append(bench)
+    return R.Resolver(
+        dex, moves, calc, {r: tuple(v) for r, v in sheets.items()}, spreads or SPREADS
+    )
+
+
+def _go(rv, b, p1, p2, fld=None):
+    return rv.resolve(b, fld or R.Field(), {"p1": p1, "p2": p2})
+
+
+def _no_partial(outs):
+    return set().union(*(o.partial for o in outs)) == set()
+
+
+# --------------------------------------------------------------------------
+# Terrain Seeds (Grassy Seed on 13% of October's best-of-three teams, Psychic
+# Seed 10%, Electric Seed 4%)
+# --------------------------------------------------------------------------
+
+
+@needs_mc
+def test_a_seed_is_used_when_its_terrain_starts(tools):
+    """Rillaboom comes in (Grassy Surge): every Pokemon on the field holding a
+    Grassy Seed gets +1 Defense and the seed is used up (Showdown:
+    onTerrainChange)."""
+    rv = _rv(tools, bench=RILLABOOM)
+    b = board()
+    b["p1"][0]["item"] = "grassyseed"  # Garchomp
+    b["p1"][1]["item"] = "psychicseed"  # Kingambit: not this terrain
+    b["p2"].append(dict(mon("rillaboom"), active=False))
+    sw = (Action(0, "switch", switch_to=2), Action(1, "move", move="protect"))
+    outs = _go(rv, b, QUIET, sw)
+    assert outs and _no_partial(outs)
+    for o in outs:
+        g, k = o.sides["p1"]
+        assert g["boosts"] == {"def": 1} and g["item"] == ""
+        assert g["rev_item"] == "grassyseed"
+        assert k["boosts"] == {} and k["item"] == "psychicseed"
+        assert o.field.terrain == "grassyterrain"
+
+
+@needs_mc
+def test_a_seed_is_used_on_coming_in_to_its_terrain(tools):
+    sheets_p2_2 = dataclasses.replace(RILLABOOM, ability="overgrow")
+    rv = _rv(tools, bench=sheets_p2_2)
+    b = board()
+    b["p2"].append(dict(mon("rillaboom"), active=False, item="psychicseed"))
+    sw = (Action(0, "switch", switch_to=2), Action(1, "move", move="protect"))
+    fld = R.Field(terrain="psychicterrain", terrain_left=3)
+    outs = _go(rv, b, QUIET, sw, fld)
+    assert _no_partial(outs)
+    for o in outs:
+        r = o.sides["p2"][2]
+        assert r["active"] and r["boosts"] == {"spd": 1} and r["item"] == ""
+
+
+@needs_mc
+def test_a_seed_used_up_turns_on_unburden(tools):
+    """Sneasler (Unburden, 36% of teams) with a Grassy Seed: Speed doubles
+    once the seed is used, so it moves before a faster foe it was slower
+    than."""
+    rv = _rv(
+        tools,
+        p1={1: {"species": "sneasler", "ability": "unburden", "item": "grassyseed"}},
+    )
+    b = board()
+    b["p1"][1].update(species="sneasler", item="grassyseed")
+    fld = R.Field(terrain="grassyterrain", terrain_left=3)
+    slow = rv._speed(R._World(1.0, b, fld, set()), "p1", 1)
+    b["p1"][1].update(item="", rev_item="grassyseed")
+    fast = rv._speed(R._World(1.0, b, fld, set()), "p1", 1)
+    assert fast == pytest.approx(2 * slow, rel=0.01)
+
+
+# --------------------------------------------------------------------------
+# Abilities a hit sets off (in every format; neither modelled nor marked before)
+# --------------------------------------------------------------------------
+
+LEER = (Action(0, "move", move="leer"), Action(1, "move", move="leer"))
+
+
+def _hit_by(tools, move, ability, hp=0.5, at=0):
+    """Garchomp (p1, first) uses `move` at Incineroar (p2, first; or
+    Whimsicott, `at` 1), whose ability is `ability`; both use Leer, Kingambit
+    protects. Only abilities Champions has: the calculator knows no other."""
+    rv = _rv(tools, p2={at: {"ability": ability}})
+    b = board()
+    b["p2"][at]["hp_fraction"] = hp
+    p1 = (Action(0, "move", move=move, target=("foe", at)), QUIET[1])
+    return rv, _go(rv, b, p1, LEER)
+
+
+@needs_mc
+@pytest.mark.parametrize(
+    "ability, move, heal, boosts",
+    [
+        ("voltabsorb", "thunderbolt", True, {}),
+        ("voltabsorb", "thunderwave", True, {}),  # a status move too
+        ("waterabsorb", "hydropump", True, {}),  # before its accuracy check
+        ("eartheater", "earthquake", True, {}),
+        ("sapsipper", "woodhammer", False, {"atk": 1}),
+        ("sapsipper", "spore", False, {"atk": 1}),
+        ("motordrive", "thunderbolt", False, {"spe": 1}),
+        ("lightningrod", "thunderbolt", False, {"spa": 1}),
+    ],
+)
+def test_an_ability_that_takes_in_a_move_heals_or_raises_a_stat(
+    tools, ability, move, heal, boosts
+):
+    rv, outs = _hit_by(tools, move, ability)
+    assert outs and _no_partial(outs)
+    full = rv.max_hp("p2", 0)
+    want = 0.5 + (full // 4) / full if heal else 0.5  # a quarter, rounded down
+    for o in outs:
+        inci = o.sides["p2"][0]
+        assert inci["hp_fraction"] == pytest.approx(want, abs=0.002)
+        assert inci["boosts"] == boosts and inci["status"] == ""
+        assert o.sides["p1"][0]["hp_fraction"] == 1.0  # no recoil either
+
+
+@needs_mc
+@pytest.mark.parametrize(
+    "ability, move, boosts",
+    [
+        ("justified", "darkpulse", {"atk": 1}),
+        ("rattled", "darkpulse", {"spe": 1}),
+        ("thermalexchange", "firepunch", {"atk": 1}),
+        ("stamina", "dragonclaw", {"def": 1}),
+        ("weakarmor", "dragonclaw", {"def": -1, "spe": 2}),
+    ],
+)
+def test_an_ability_a_damaging_hit_sets_off_changes_its_stages(
+    tools, ability, move, boosts
+):
+    _rv0, outs = _hit_by(tools, move, ability, hp=1.0)
+    hit = [o for o in outs if 0 < o.sides["p2"][0]["hp_fraction"] < 1.0]
+    assert hit and _no_partial(outs)
+    for o in hit:
+        assert o.sides["p2"][0]["boosts"] == boosts
+
+
+@needs_mc
+def test_thermal_exchange_cannot_be_burned(tools):
+    rv, outs = _hit_by(tools, "willowisp", "thermalexchange", hp=1.0, at=1)
+    assert outs and not any(o.sides["p2"][1]["status"] for o in outs)
+
+
+@needs_mc
+def test_moxie_raises_attack_on_a_knock_out(tools):
+    """Salamence (Moxie): +1 Attack when its move knocks a Pokemon out."""
+    rv = _rv(tools, p1={0: {"ability": "moxie"}})
+    b = board()
+    b["p2"][0]["hp_fraction"] = 0.05
+    p1 = (Action(0, "move", move="dragonclaw", target=("foe", 0)), QUIET[1])
+    outs = _go(rv, b, p1, LEER)
+    assert _no_partial(outs)
+    ko = [o for o in outs if o.sides["p2"][0]["fainted"]]
+    assert ko and all(o.sides["p1"][0]["boosts"].get("atk") == 1 for o in ko)
+
+
+@needs_mc
+def test_seed_sower_sets_grassy_terrain_when_hit(tools):
+    """Arboliva (Seed Sower, Reg M-C)."""
+    _rv0, outs = _hit_by(tools, "dragonclaw", "seedsower", hp=1.0)
+    for o in outs:
+        hit = o.sides["p2"][0]["hp_fraction"] < 1.0
+        assert (o.field.terrain == "grassyterrain") == hit
+
+
+@needs_mc
+@pytest.mark.parametrize(
+    "ability, move, at",
+    [
+        ("limber", "thunderwave", 0),
+        ("insomnia", "spore", 0),
+        ("purifyingsalt", "willowisp", 1),
+        ("leafguard", "willowisp", 1),  # in the sun
+        ("magmaarmor", "willowisp", 1),  # not burn: a control, below
+    ],
+)
+def test_an_ability_that_keeps_a_status_off(tools, ability, move, at):
+    """Not modelled in any format before (found writing Thermal Exchange)."""
+    rv = _rv(tools, p2={at: {"ability": ability}})
+    b = board()
+    p1 = (Action(0, "move", move=move, target=("foe", at)), QUIET[1])
+    sun = R.Field(weather="sunnyday", weather_left=3)
+    outs = _go(rv, b, p1, LEER, sun if ability == "leafguard" else None)
+    got = p_of(outs, lambda o: o.sides["p2"][at]["status"] != "")
+    assert got == (pytest.approx(0.85, abs=0.001) if ability == "magmaarmor" else 0)

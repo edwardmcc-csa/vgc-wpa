@@ -158,6 +158,56 @@ SUB_LEFT = (0.25, 0.5, 0.75)
 # Week 13 Task 2: moves that change abilities (Showdown's onTryHit and setAbility)
 ABILITY_MOVES = {"skillswap", "entrainment", "simplebeam"}
 # moves Gravity stops (`data/conditions.ts`, gravity)
+# Week 14: abilities that take in a move aimed at them (Showdown's
+# abilities.ts, onTryHit): the move does nothing else; a quarter of the
+# holder's hit points back, or stages. Flash Fire's boost to its own Fire
+# moves is not followed (marked).
+ABSORB: dict[str, tuple[str, float, dict[str, int]]] = {
+    "voltabsorb": ("Electric", 0.25, {}),
+    "waterabsorb": ("Water", 0.25, {}),
+    "dryskin": ("Water", 0.25, {}),
+    "eartheater": ("Ground", 0.25, {}),
+    "lightningrod": ("Electric", 0.0, {"spa": 1}),
+    "stormdrain": ("Water", 0.0, {"spa": 1}),
+    "sapsipper": ("Grass", 0.0, {"atk": 1}),
+    "motordrive": ("Electric", 0.0, {"spe": 1}),
+    "wellbakedbody": ("Fire", 0.0, {"def": 2}),
+    "flashfire": ("Fire", 0.0, {}),
+}
+# ... and the ones a damaging hit sets off (onDamagingHit): the move's types
+# (None: any) or category, and the stages
+ON_HIT: dict[str, tuple[set[str] | None, str | None, dict[str, int]]] = {
+    "justified": ({"Dark"}, None, {"atk": 1}),
+    "rattled": ({"Bug", "Ghost", "Dark"}, None, {"spe": 1}),
+    "thermalexchange": ({"Fire"}, None, {"atk": 1}),
+    "steamengine": ({"Fire", "Water"}, None, {"spe": 6}),
+    "watercompaction": ({"Water"}, None, {"def": 2}),
+    "stamina": (None, None, {"def": 1}),
+    "weakarmor": (None, "Physical", {"def": -1, "spe": 2}),
+}
+# the attacker's stages when its move knocks a Pokemon out
+KO_BOOST = {
+    "moxie": {"atk": 1},
+    "chillingneigh": {"atk": 1},
+    "asoneglastrier": {"atk": 1},
+    "grimneigh": {"spa": 1},
+    "asonespectrier": {"spa": 1},
+}
+# Normal moves another type takes over (the -ate abilities)
+ATE = {
+    "aerilate": "Flying",
+    "pixilate": "Fairy",
+    "refrigerate": "Ice",
+    "galvanize": "Electric",
+}
+# Week 14 (Reg M-C): a terrain's Seed, used when that terrain starts or on
+# coming in to it (Showdown's items.ts: onTerrainChange, onStart)
+SEEDS = {
+    "electricseed": ("electricterrain", {"def": 1}),
+    "grassyseed": ("grassyterrain", {"def": 1}),
+    "mistyseed": ("mistyterrain", {"spd": 1}),
+    "psychicseed": ("psychicterrain", {"spd": 1}),
+}
 HAZARDS = {"stealthrock": 1, "spikes": 3, "toxicspikes": 2, "stickyweb": 1}
 # Stealth Rock's damage: an eighth times the Rock type's effect on it
 ROCK_WEAK = {"Fire", "Ice", "Flying", "Bug"}
@@ -200,6 +250,17 @@ STATUS_TYPE_IMMUNE = {
     "tox": {"Poison", "Steel"},
     "frz": {"Ice"},
 }
+# Week 14: abilities that keep a status off (Showdown's abilities.ts, onSetStatus)
+STATUS_ABILITY_IMMUNE = {
+    "brn": {"waterveil", "waterbubble", "thermalexchange"},
+    "par": {"limber"},
+    "slp": {"insomnia", "vitalspirit", "sweetveil"},
+    "psn": {"immunity", "pastelveil"},
+    "tox": {"immunity", "pastelveil"},
+    "frz": {"magmaarmor"},
+}
+NO_STATUS = {"purifyingsalt", "comatose"}
+ALLY_STATUS_IMMUNE = {"sweetveil": {"slp"}, "pastelveil": {"psn", "tox"}}
 MULTIHIT_2_5 = ((2, 0.35), (3, 0.35), (4, 0.15), (5, 0.15))
 
 
@@ -1043,6 +1104,7 @@ class Resolver:
                     self._heal(w, role, j, (full // 4) / full)
         elif ab == "imposter":
             self._imposter(w, role, idx)
+        self._terrain_seed(w, w.sides[role][idx])  # after its ability (priority -1)
 
     def _imposter(self, w: _World, role: str, idx: int) -> None:
         """Imposter (Week 13): it transforms into the foe opposite (Showdown:
@@ -1112,6 +1174,19 @@ class Resolver:
             return
         w.fld.terrain = terrain
         w.fld.terrain_left = 8 if item == "terrainextender" else 5
+        for r in ROLES:
+            for x in w.sides[r]:
+                if x["active"] and not x["fainted"]:
+                    self._terrain_seed(w, x)
+
+    def _terrain_seed(self, w: _World, st: dict) -> None:
+        """A Seed for the terrain now up: its stage, and it is used up (Week
+        14). Unburden then counts the item gone."""
+        use = SEEDS.get(st.get("item") or "")
+        if use is None or w.fld.terrain != use[0]:
+            return
+        st["item"], st["rev_item"] = "", st["item"]
+        self._boost(st, use[1])
 
     def _boost(self, st: dict, changes: Mapping[str, int], herb: bool = True) -> None:
         """Stat stages changed, turned around by Contrary (Staraptor-Mega in
@@ -1754,7 +1829,7 @@ class Resolver:
         """Lightning Rod or Storm Drain draws a single-target Electric or Water
         move from any other Pokemon on the field (Stalwart, Propeller Tail and
         Snipe Shot ignore it)."""
-        want = RODS.get(m.get("type", ""))
+        want = RODS.get(self._move_type(w, role, a, m))
         if want is None or m.get("target") not in SINGLE:
             return None
         user = w.sides[role][a.user]
@@ -1919,6 +1994,12 @@ class Resolver:
                     or self._behind_sub(b, role, a, m, tgt)
                     or self._good_as_gold(b, role, a, m, tgt)
                 ):
+                    failed.add(id(b))
+                    nxt.append(b)
+                    continue
+                ab = self._absorbs(b, role, a, m, tgt)
+                if ab:
+                    self._take_in(b, tgt, ab)  # Thunder Wave into Volt Absorb
                     failed.add(id(b))
                     nxt.append(b)
                     continue
@@ -2394,6 +2475,18 @@ class Resolver:
             return
         if move == "thunderwave" and "Ground" in types:
             return
+        ab = self.ability(tgt[0], tgt[1], t)
+        if (
+            ab in NO_STATUS
+            or ab in STATUS_ABILITY_IMMUNE.get(status, set())
+            or (ab == "leafguard" and w.fld.weather in ("sunnyday", "desolateland"))
+            or any(
+                status in ALLY_STATUS_IMMUNE[x]
+                for x in [self._ally_has(w, tgt[0], tgt[1], set(ALLY_STATUS_IMMUNE))]
+                if x
+            )
+        ):
+            return  # Week 14: its ability, or its ally's, keeps it off
         if status == "slp" and w.fld.terrain == "electricterrain":
             return
         if w.fld.terrain == "mistyterrain":
@@ -2863,8 +2956,9 @@ class Resolver:
                 ):
                     nxt.append(b)
                     continue
-                if self._absorbs(b, role, a, m, tgt):
-                    self._boost(tt, {"spa": 1})
+                ab = self._absorbs(b, role, a, m, tgt)
+                if ab:
+                    self._take_in(b, tgt, ab)  # before the accuracy check
                     nxt.append(b)
                     continue
                 acc = self._accuracy(b, role, a, m, tgt)
@@ -2920,12 +3014,39 @@ class Resolver:
             g[0] += pd
         return [(p, dmg) for p, dmg in groups.values()]
 
-    def _absorbs(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> bool:
-        want = RODS.get(m.get("type", ""))
-        if want is None or tgt == (role, a.user):
-            return False
+    def _absorbs(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> str:
+        """The target's ability that takes in this move (ABSORB), or "". Not
+        through Mold Breaker and the like."""
+        if tgt == (role, a.user):
+            return ""
         st = w.sides[tgt[0]][tgt[1]]
-        return self.ability(tgt[0], tgt[1], st) == want
+        ab = self.ability(tgt[0], tgt[1], st)
+        if ab not in ABSORB or ABSORB[ab][0] != self._move_type(w, role, a, m):
+            return ""
+        if self.ability(role, a.user, w.sides[role][a.user]) in MOLD:
+            return ""
+        return ab
+
+    def _take_in(self, w: _World, tgt, ab: str) -> None:
+        """An ABSORB ability takes in the move: a quarter of its hit points
+        (rounded down, as Showdown's heal), or its stages."""
+        _type, heal, boosts = ABSORB[ab]
+        if heal:
+            full = self.max_hp(*tgt)
+            self._heal(w, tgt[0], tgt[1], (full // 4) / full)
+        if boosts:
+            self._boost(w.sides[tgt[0]][tgt[1]], boosts)
+        if ab == "flashfire":
+            w.partial.add("ability:flashfire")  # its Fire boost: not followed
+
+    def _move_type(self, w: _World, role: str, a: Action, m: Mapping) -> str:
+        """The move's type as it is used: a Normal move under an -ate ability
+        takes that ability's type."""
+        t = m.get("type", "")
+        ab = self.ability(role, a.user, w.sides[role][a.user])
+        if t == "Normal" and ab in ATE:
+            return ATE[ab]
+        return t
 
     def _sucker_ok(self, w: _World, role: str, a: Action) -> bool:
         tgt = self._targets(w, role, a, self.move(a.move))
@@ -2975,8 +3096,14 @@ class Resolver:
             self._faint(w, tgt)
             if t.get("destinybond") and tgt[0] != role:
                 self._faint(w, (role, a.user))  # Destiny Bond (Week 13)
+            u = w.sides[role][a.user]
+            gain = KO_BOOST.get(self.ability(role, a.user, u))
+            if gain and dealt > 0 and not u["fainted"]:
+                self._boost(u, gain)  # Moxie and the like (Week 14)
         else:
             self._sitrus(t, new, max_hp)
+            if dealt > 0 and tgt != (role, a.user):
+                self._on_hit(w, role, a, m, tgt)
         # contact punishment
         if dealt > 0 and "contact" in (m.get("flags") or []):
             st = w.sides[role][a.user]
@@ -3009,6 +3136,29 @@ class Resolver:
                 w.chances.append((ab, tgt, (role, a.user)))
             if contact and self.ability(role, a.user, st) == "poisontouch":
                 w.chances.append(("poisontouch", (role, a.user), tgt))
+
+    def _on_hit(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> None:
+        """What the target's ability does when a damaging hit leaves it standing
+        (Week 14; Showdown's onDamagingHit): ON_HIT's stages, and Seed Sower's
+        Grassy Terrain. Mold Breaker passes the breakable ones by."""
+        t = w.sides[tgt[0]][tgt[1]]
+        ab = self.ability(tgt[0], tgt[1], t)
+        user = w.sides[role][a.user]
+        breakable = (self.dex.abilities.get(ab) or {}).get("flags") or {}
+        if self.ability(role, a.user, user) in MOLD and breakable.get("breakable"):
+            return
+        if ab == "seedsower":
+            self._set_terrain(w, "grassyterrain", t.get("item") or "")
+            return
+        spec = ON_HIT.get(ab)
+        if spec is None:
+            return
+        types, category, boosts = spec
+        if types is not None and self._move_type(w, role, a, m) not in types:
+            return
+        if category is not None and m.get("category") != category:
+            return
+        self._boost(t, boosts)
 
     def _leech(self, w: _World, r: str, j: int) -> None:
         """Leech Seed at the end of the turn: an eighth of the seeded Pokemon's
