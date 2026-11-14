@@ -417,3 +417,319 @@ def test_the_board_keeps_a_recharge_and_glaive_rush_from_the_log():
     assert _mon(s2, 0)["recharge"] == 1 and _mon(s2, 1)["glaiverush"] == 1
     s3 = at_turn_start(log, 3)
     assert "recharge" not in _mon(s3, 0) and "glaiverush" not in _mon(s3, 1)
+
+
+# --------------------------------------------------------------------------
+# What the first 6,129 Reg M-C best-of-three games (14 Nov) show is common:
+# Emergency Exit on 13% of teams (Golisopod), Flash Fire on 4%; and the rest
+# of the brief's list, rarer
+# --------------------------------------------------------------------------
+
+
+def _exit_rv(tools, chooser=True, p1=None, p2=None, p1_bench=False):
+    """p2's first (Incineroar) with Emergency Exit and Sinistcha on p2's
+    bench (third); with `p1_bench` on p1's too. The forced-switch model is a
+    stand-in that names the one on the bench, and notes who asked."""
+    dex, moves, calc = tools
+    sin = SheetMon(3, "sinistcha", "", "hospitality", ("matchagotcha",), "")
+    sheets = {r: list(SHEETS[r]) for r in SHEETS}
+    if p2 is None:
+        p2 = {0: {"ability": "emergencyexit"}}
+    for r, swaps in (("p1", p1 or {}), ("p2", p2)):
+        for i, kw in swaps.items():
+            sheets[r][i] = dataclasses.replace(sheets[r][i], **kw)
+    sheets["p2"].append(sin)
+    if p1_bench:
+        sheets["p1"].append(sin)
+    asked: list[str] = []
+
+    def choose(sides, fld, role, bench):
+        asked.append(role)
+        return [1.0 / len(bench)] * len(bench)
+
+    rv = R.Resolver(
+        dex,
+        moves,
+        calc,
+        {r: tuple(v) for r, v in sheets.items()},
+        SPREADS,
+        switch_in=choose if chooser else None,
+    )
+    b = board()
+    b["p2"].append(dict(mon("sinistcha"), active=False))
+    if p1_bench:
+        b["p1"].append(dict(mon("sinistcha"), active=False))
+    return rv, b, asked
+
+
+@needs_mc
+def test_emergency_exit_switches_out_once_a_hit_takes_it_to_half(tools):
+    """Showdown's Champions rules: after the move, a Pokemon a hit took from
+    above half to half or less switches out (`onEmergencyExit`); its player
+    picks who comes in (the forced-switch model, as after Eject Button). The
+    move it chose this turn is lost: Incineroar's Leer never comes."""
+    rv, b, asked = _exit_rv(tools)
+    b["p2"][0]["hp_fraction"] = 0.6
+    p1 = (Action(0, "move", move="dragonclaw", target=("foe", 0)), QUIET[1])
+    outs = _go(rv, b, p1, LEER)
+    assert outs and _no_partial(outs) and set(asked) == {"p2"}
+    for o in outs:
+        inci, sin = o.sides["p2"][0], o.sides["p2"][2]
+        assert inci["hp_fraction"] <= 0.5 and not inci["active"] and sin["active"]
+        assert o.sides["p1"][0]["boosts"] == {"def": -1}  # Whimsicott's Leer only
+
+
+@needs_mc
+def test_emergency_exit_without_the_forced_switch_model_is_marked(tools):
+    rv, b, _asked = _exit_rv(tools, chooser=False)
+    b["p2"][0]["hp_fraction"] = 0.6
+    p1 = (Action(0, "move", move="dragonclaw", target=("foe", 0)), QUIET[1])
+    outs = _go(rv, b, p1, LEER)
+    assert set().union(*(o.partial for o in outs)) == {"emergency exit"}
+
+
+@needs_mc
+def test_emergency_exit_not_when_it_was_at_half_already(tools):
+    rv, b, asked = _exit_rv(tools)
+    b["p2"][0]["hp_fraction"] = 0.45
+    p1 = (Action(0, "move", move="dragonclaw", target=("foe", 0)), QUIET[1])
+    outs = _go(rv, b, p1, LEER)
+    assert not asked
+    for o in outs:
+        inci = o.sides["p2"][0]
+        assert inci["fainted"] or inci["active"]
+
+
+@needs_mc
+def test_emergency_exit_at_the_end_of_the_turn(tools):
+    """A burn takes it from 55% to below half: it switches out before the next
+    turn (Showdown: the residual Pokemon's Emergency Exit)."""
+    rv, b, asked = _exit_rv(tools)
+    b["p2"][0].update(hp_fraction=0.55, status="brn")
+    outs = _go(rv, b, QUIET, LEER)
+    assert outs and _no_partial(outs) and set(asked) == {"p2"}
+    for o in outs:
+        assert not o.sides["p2"][0]["active"] and o.sides["p2"][2]["active"]
+
+
+@needs_mc
+def test_emergency_exit_from_the_users_own_life_orb(tools):
+    rv, b, asked = _exit_rv(
+        tools, p1={0: {"ability": "emergencyexit"}}, p2={}, p1_bench=True
+    )
+    b["p1"][0].update(hp_fraction=0.55, item="lifeorb")
+    p1 = (Action(0, "move", move="dragonclaw", target=("foe", 0)), QUIET[1])
+    outs = _go(rv, b, p1, LEER)
+    assert outs and _no_partial(outs) and set(asked) == {"p1"}
+    for o in outs:
+        assert not o.sides["p1"][0]["active"] and o.sides["p1"][2]["active"]
+
+
+@needs_mc
+def test_flash_fire_takes_in_a_fire_move_then_powers_its_own(tools):
+    """Flash Fire: immune to Fire, and its own Fire moves x1.5 from then on
+    (Showdown: the `flashfire` volatile; the calculator's abilityOn)."""
+    rv, outs = _hit_by(tools, "flamethrower", "flashfire")
+    assert outs and _no_partial(outs)
+    for o in outs:
+        inci = o.sides["p2"][0]
+        assert inci["hp_fraction"] == 0.5 and inci.get("flashfire") == 1
+    plain, lit = board(), board()
+    lit["p2"][0]["flashfire"] = 1
+    a = Action(0, "move", move="flareblitz", target=("foe", 0))
+    m = rv.move("flareblitz")
+    w0 = R._World(1.0, plain, R.Field(), set())
+    w1 = R._World(1.0, lit, R.Field(), set())
+    d0 = max(d for _p, d in rv._rolls(w0, "p2", a, m, ("p1", 0), False))
+    d1 = max(d for _p, d in rv._rolls(w1, "p2", a, m, ("p1", 0), False))
+    assert d1 / d0 == pytest.approx(1.5, rel=0.03)
+
+
+def test_the_board_keeps_flash_fire_and_an_eaten_berry_from_the_log():
+    from tests.test_board_effects import at_turn_start
+    from tests.test_more_mechanics import _mon, _turns
+
+    log = _turns(
+        "|t:|1\n|move|p2a: Inci|Flamethrower|p1a: Whim\n"
+        "|-start|p1a: Whim|ability: Flash Fire\n"
+        "|-enditem|p1b: Rock|Sitrus Berry|[eat]",
+        "|t:|2\n|switch|p1a: Back|Back, L50|100/100",
+        "|t:|3\n|move|p2a: Inci|Knock Off|p1a: Back\n"
+        "|-enditem|p1a: Back|Sitrus Berry|[from] move: Knock Off|[of] p2a: Inci",
+    )
+    s2 = at_turn_start(log, 2)
+    assert _mon(s2, 0)["flashfire"] == 1 and _mon(s2, 1)["eaten"] == "sitrusberry"
+    s3 = at_turn_start(log, 3)
+    assert "flashfire" not in _mon(s3, 0)  # it left the field
+    assert _mon(s3, 1)["eaten"] == "sitrusberry"  # that stays (Harvest's lastItem)
+    s4 = at_turn_start(log, 4)
+    assert "eaten" not in _mon(s4, 2)  # knocked off: not eaten
+
+
+@needs_mc
+def test_stakeout_doubles_damage_on_one_that_came_in_this_turn(tools):
+    sin = SheetMon(3, "sinistcha", "", "hospitality", ("matchagotcha",), "")
+    sw = (Action(0, "switch", switch_to=2), Action(1, "move", move="protect"))
+    p1 = (Action(0, "move", move="dragonpulse", target=("foe", 0)), QUIET[1])
+    lost = {}
+    for ab in ("stakeout", "roughskin"):
+        rv = _rv(tools, p1={0: {"ability": ab}}, bench=sin)
+        b = board()
+        b["p2"].append(dict(mon("sinistcha"), active=False))
+        outs = _go(rv, b, p1, sw)
+        assert _no_partial(outs) and not any(o.sides["p2"][2]["fainted"] for o in outs)
+        lost[ab] = sum(o.prob * (1 - o.sides["p2"][2]["hp_fraction"]) for o in outs)
+    assert lost["stakeout"] / lost["roughskin"] == pytest.approx(2.0, rel=0.05)
+
+
+@needs_mc
+@pytest.mark.parametrize("move", ["gigadrain", "drainpunch"])
+def test_liquid_ooze_hurts_a_drainer_instead(tools, move):
+    """Showdown: the heal a draining move would give is taken as damage."""
+    rv = _rv(tools, p2={0: {"ability": "liquidooze"}})
+    b = board()
+    b["p1"][0]["hp_fraction"] = 0.6
+    p1 = (Action(0, "move", move=move, target=("foe", 0)), QUIET[1])
+    outs = _go(rv, b, p1, LEER)
+    assert outs and _no_partial(outs)
+    full_t, full_u = rv.max_hp("p2", 0), rv.max_hp("p1", 0)
+    for o in outs:
+        dealt = round((1.0 - o.sides["p2"][0]["hp_fraction"]) * full_t)
+        lost = (0.6 - o.sides["p1"][0]["hp_fraction"]) * full_u
+        assert dealt > 0 and lost == pytest.approx(round(dealt / 2), abs=1.5)
+
+
+@needs_mc
+def test_liquid_ooze_turns_leech_seed_on_the_seeder(tools):
+    rv = _rv(tools, p2={0: {"ability": "liquidooze"}})
+    b = board()
+    b["p2"][0]["seeded"] = 0  # Garchomp's place
+    b["p1"][0]["hp_fraction"] = 0.6
+    outs = _go(rv, b, QUIET, LEER)
+    full_t, full_u = rv.max_hp("p2", 0), rv.max_hp("p1", 0)
+    for o in outs:
+        lost = (0.6 - o.sides["p1"][0]["hp_fraction"]) * full_u
+        assert lost == pytest.approx(full_t // 8, abs=1.5)
+
+
+@needs_mc
+def test_strength_sap_on_liquid_ooze_hurts_the_user(tools):
+    rv = _rv(tools, p1={0: {"ability": "liquidooze"}})
+    b = board()
+    b["p2"][1]["hp_fraction"] = 0.5
+    p2 = (
+        Action(0, "move", move="leer"),
+        Action(1, "move", move="strengthsap", target=("foe", 0)),
+    )
+    p1 = (Action(0, "move", move="leer"), QUIET[1])  # Garchomp does not protect
+    outs = _go(rv, b, p1, p2)
+    assert outs and _no_partial(outs)
+    for o in outs:
+        whim = o.sides["p2"][1]
+        assert whim["fainted"] or whim["hp_fraction"] < 0.5
+
+
+@needs_mc
+@pytest.mark.parametrize(
+    "ability, move, dragged",
+    [
+        ("guarddog", "roar", False),
+        ("guarddog", "dragontail", False),
+        ("suctioncups", "roar", False),
+        ("intimidate", "roar", True),  # a control
+        # Dragon Tail dragged no one before this week, and said nothing
+        ("intimidate", "dragontail", True),
+    ],
+)
+def test_guard_dog_and_suction_cups_cannot_be_forced_out(tools, ability, move, dragged):
+    rv, b = _bench3(tools, p2={0: {"ability": ability}})
+    p1 = (Action(0, "move", move=move, target=("foe", 0)), QUIET[1])
+    outs = _go(rv, b, p1, LEER)
+    hit = [o for o in outs if move == "roar" or o.sides["p2"][0]["hp_fraction"] < 1]
+    assert hit
+    for o in hit:
+        assert o.sides["p2"][0]["active"] != dragged
+        assert o.sides["p2"][2]["active"] == dragged
+
+
+@needs_mc
+def test_a_red_card_is_used_up_on_a_guard_dog_that_stays(tools):
+    dex, moves, calc = tools
+    sin = SheetMon(3, "sinistcha", "", "hospitality", ("matchagotcha",), "")
+    sheets = {"p1": SHEETS["p1"] + (sin,), "p2": SHEETS["p2"]}
+    sheets["p1"] = (dataclasses.replace(sheets["p1"][0], ability="guarddog"),) + sheets[
+        "p1"
+    ][1:]
+    rv = R.Resolver(dex, moves, calc, sheets, SPREADS)
+    b = board()
+    b["p1"].append(dict(mon("sinistcha"), active=False))
+    b["p2"][0]["item"] = "redcard"
+    p1 = (Action(0, "move", move="dragonclaw", target=("foe", 0)), QUIET[1])
+    for o in _go(rv, b, p1, LEER):
+        hit = o.sides["p2"][0]["hp_fraction"] < 1.0
+        assert o.sides["p1"][0]["active"] and not o.sides["p1"][2]["active"]
+        assert (o.sides["p2"][0]["item"] == "") == hit
+
+
+@needs_mc
+def test_harvest_brings_an_eaten_berry_back_half_the_time_always_in_sun(tools):
+    rv = _rv(tools, p2={0: {"ability": "harvest"}})
+
+    def eaten(hp=0.9, how="sitrusberry"):
+        b = board()
+        b["p2"][0].update(item="", rev_item="sitrusberry", hp_fraction=hp)
+        if how:
+            b["p2"][0]["eaten"] = how
+        return b
+
+    def back(outs):
+        return p_of(outs, lambda o: o.sides["p2"][0]["item"] == "sitrusberry")
+
+    sun = R.Field(weather="sunnyday", weather_left=3)
+    assert back(_go(rv, eaten(), QUIET, LEER)) == pytest.approx(0.5)
+    assert back(_go(rv, eaten(), QUIET, LEER, sun)) == pytest.approx(1.0)
+    assert back(_go(rv, eaten(how=""), QUIET, LEER, sun)) == 0  # knocked off
+    full = rv.max_hp("p2", 0)
+    for o in _go(rv, eaten(hp=0.4), QUIET, LEER, sun):
+        inci = o.sides["p2"][0]  # back, and eaten again at once
+        assert inci["item"] == "" and inci["eaten"] == "sitrusberry"
+        want = (round(0.4 * full) + full // 4) / full
+        assert inci["hp_fraction"] == pytest.approx(want, abs=0.002)
+
+
+# --------------------------------------------------------------------------
+# The calculator's part (checked, not changed): Aura Guard, Punk Rock, Grass
+# Pelt, Steely Spirit on the ally
+# --------------------------------------------------------------------------
+
+
+def _max_roll(rv, b, role, user, move, tgt, fld=None):
+    a = Action(user, "move", move=move, target=("foe", tgt[1]))
+    w = R._World(1.0, b, fld or R.Field(), set())
+    return max(d for _p, d in rv._rolls(w, role, a, rv.move(move), tgt, False))
+
+
+@needs_mc
+@pytest.mark.parametrize(
+    "side, at, ability, move, ratio, terrain",
+    [
+        ("defender", 0, "auraguard", "dragonclaw", 0.5, None),  # contact: half
+        ("defender", 0, "auraguard", "dragonpulse", 1.0, None),  # no contact
+        ("attacker", 0, "punkrock", "hypervoice", 1.3, None),
+        ("defender", 0, "punkrock", "hypervoice", 0.5, None),
+        ("defender", 0, "grasspelt", "dragonclaw", 1 / 1.5, "grassyterrain"),
+        ("ally", 1, "steelyspirit", "ironhead", 1.5, None),
+    ],
+)
+def test_the_calculator_has_the_new_damage_abilities(
+    tools, side, at, ability, move, ratio, terrain
+):
+    """Garchomp (p1, first) at Incineroar (p2, first): the ability on the
+    defender, the attacker, or the attacker's ally (Kingambit)."""
+    where = {"defender": ("p2", 0), "attacker": ("p1", 0), "ally": ("p1", 1)}[side]
+    fld = R.Field(terrain=terrain, terrain_left=3) if terrain else None
+    base = _rv(tools)
+    swapped = _rv(tools, **{where[0]: {where[1]: {"ability": ability}}})
+    d0 = _max_roll(base, board(), "p1", 0, move, ("p2", 0), fld)
+    d1 = _max_roll(swapped, board(), "p1", 0, move, ("p2", 0), fld)
+    assert d1 / d0 == pytest.approx(ratio, rel=0.04)

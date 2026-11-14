@@ -129,6 +129,7 @@ WEEK13 = (
     "moves",
     "recharge",
     "glaiverush",
+    "flashfire",  # Week 14
 )
 # what leaving the field ends (Rage Fist's hits too, in Champions; the Toxic
 # count starts again; Leech Seed, Taunt, Yawn and Disable end)
@@ -165,6 +166,7 @@ TRACKED = (
     "protean",
     "bound",
     *WEEK13,
+    "eaten",  # Week 14: the Berry it ate, for Harvest (leaving does not end it)
 )
 # the moves that bind (an eighth at each end of turn, for 4 or 5 turns)
 BINDING = {
@@ -326,10 +328,14 @@ class _Board:
                 x["status"] = ""
         elif t == "-enditem":
             m["item"] = ""
+            if len(p) > 3 and "[eat]" in p[4:]:
+                m["eaten"] = to_id(p[3])  # Week 14: Harvest can bring it back
         elif t == "-item" and len(p) > 3:
             if to_id(p[3]) != m["item"]:
                 m["last_move"] = ""  # a new Choice item locks from the next move
             m["item"] = to_id(p[3])
+            if "[from] ability: Harvest" in p[4:]:
+                m.pop("eaten", None)
         for x in touched:  # keep only the stages that are not zero
             x["boosts"] = {k: v for k, v in x["boosts"].items() if v}
         return True
@@ -464,6 +470,8 @@ class _Board:
             m.pop("charging", None)  # it went off at once
         elif t == "-start" and what == "encore":
             m["encore"] = m.get("last_move") or ""
+        elif t == "-start" and what == "abilityflashfire":
+            m["flashfire"] = 1  # its Fire moves x1.5 until it leaves (Week 14)
         elif t == "-end" and what == "encore":
             m.pop("encore", None)
         elif t == "-start" and what == "leechseed":

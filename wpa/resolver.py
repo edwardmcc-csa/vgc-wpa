@@ -133,6 +133,7 @@ LEAVING = (
     "moves",
     "recharge",
     "glaiverush",
+    "flashfire",  # Week 14
 )
 # what each status-move effect after Week 11 checks on its target
 TAUNT_BLOCK = {"oblivious", "aromaveil"}
@@ -227,6 +228,11 @@ GRAVITY_STOPS = {
     "telekinesis",
 }
 LOSES_TYPE = {"burnup": "Fire", "doubleshock": "Electric"}
+# Week 14 (Reg M-C): a Pokemon with one of these switches out once its hit
+# points fall from above half to half or less (Showdown's onEmergencyExit);
+# one with these cannot be forced out (onDragOut)
+EXIT = {"emergencyexit", "wimpout"}
+NO_DRAG = {"guarddog", "suctioncups"}
 # Week 12 Task 4: spreads only where they decide something. A spread is likely
 # with this much of the belief, at most this many per Pokemon; a hit branches on
 # them when one changes the chance of a knock-out by this much
@@ -386,6 +392,8 @@ class _World:
     # this turn: the Pokemon Quash sent to the end (they stay there when the
     # moves still to come are sorted again)
     last: set = field(default_factory=set)
+    # this action only: the damage dealt to each target (Liquid Ooze, Week 14)
+    dealt_to: dict = field(default_factory=dict)
 
     def clone(self, p: float | None = None) -> _World:
         f = self.fld
@@ -420,6 +428,7 @@ class _World:
             list(self.chances),
             self.reorder,
             set(self.last),
+            dict(self.dealt_to),
         )
 
     def key(self, resolution: float | None, coarsen: int = 0) -> tuple:
@@ -475,6 +484,8 @@ class _World:
                 m.get("slot", ""),
                 m.get("recharge", 0),
                 m.get("glaiverush", 0),
+                m.get("flashfire", 0),
+                m.get("eaten", ""),
             )
             for r in ROLES
             for m in self.sides[r]
@@ -1558,6 +1569,7 @@ class Resolver:
         st["moved"], st["last_move"] = True, mv
         st["last_target"] = a.target  # for Instruct (`_instruct`)
         w.hit, w.dealt, w.subbed, w.chances = set(), 0, set(), []
+        w.dealt_to = {}
         if not protect_used:
             st["protect_streak"] = 0
         w.acted.add((role, a.user))
@@ -2097,8 +2109,11 @@ class Resolver:
         if m.get("forceSwitch"):
             # no target left (it fell earlier in the turn): the move fails, the
             # board stays
+            mold = self.ability(role, a.user, w.sides[role][a.user]) in MOLD
             out = [
-                x for b in out for x in (self._drag(b, targets[0]) if targets else [b])
+                x
+                for b in out
+                for x in (self._drag(b, targets[0], mold) if targets else [b])
             ]
         return out
 
@@ -2437,7 +2452,11 @@ class Resolver:
             atk = self._stats(tgt[0], tgt[1], ("atk",))[0]
             atk *= (2 + stage) / 2 if stage >= 0 else 2 / (2 - stage)
             self._drop(w, tgt, {"atk": -1})
-            self._heal(w, role, a.user, int(atk) / self.max_hp(role, a.user))
+            gain = int(atk) / self.max_hp(role, a.user)
+            if self.ability(tgt[0], tgt[1], x) != "liquidooze":
+                self._heal(w, role, a.user, gain)
+            elif self.ability(role, a.user, st) != "magicguard":
+                self._lose(w, (role, a.user), gain)  # Liquid Ooze (Week 14)
 
     def _disable(self, w: _World, tgt: tuple[str, int]) -> None:
         """Disable: the target's last move, until it leaves the field (the log
@@ -2656,11 +2675,13 @@ class Resolver:
             return self._drag(w, (role, a.user))
         return [w]
 
-    def _drag(self, w: _World, tgt) -> list[_World]:
+    def _drag(self, w: _World, tgt, mold: bool = False) -> list[_World]:
         bench = self._bench(w, tgt[0])
         t = w.sides[tgt[0]][tgt[1]]
         if t["fainted"] or not t["active"] or not bench:
             return [w]
+        if self.ability(tgt[0], tgt[1], t) in NO_DRAG and not mold:
+            return [w]  # Guard Dog, Suction Cups (Week 14; Mold Breaker ignores them)
         out = []
         for j in bench:
             b = w.clone(w.p / len(bench))
@@ -2720,6 +2741,16 @@ class Resolver:
         mine = self._ally_has(w, role, a.user, ALLY_BOOSTS)
         for boost in sorted(ALLY_BOOSTS):
             f[boost] = boost == mine
+        # Week 14: the attacker's ability on now (the calculator's abilityOn):
+        # Flash Fire once it has taken in a Fire move; Stakeout at a Pokemon
+        # that came in this turn (Showdown: activeTurns 0)
+        st = w.sides[role][a.user]
+        ab = self.ability(role, a.user, st)
+        f["ability_on"] = (
+            ab == "flashfire"
+            and bool(st.get("flashfire"))
+            and self._move_type(w, role, a, self.move(a.move)) == "Fire"
+        ) or (ab == "stakeout" and tgt in w.replaced.values())
         down = {r: sum(bool(x["fainted"]) for x in w.sides[r]) for r in ROLES}
         return f, down
 
@@ -2771,6 +2802,8 @@ class Resolver:
             crit=crit,
             field=f,
         )
+        if f.get("ability_on"):
+            req["attacker"]["ability_on"] = True  # Flash Fire, Stakeout (Week 14)
         # Week 12: the types each has now, when changed (and always for a
         # Protean or Libero user: the calculator gives those STAB on any move)
         for side, s, who in (("attacker", st, (role, a.user)), ("defender", t, tgt)):
@@ -3003,6 +3036,7 @@ class Resolver:
                 return out
         targets = self._targets(w, role, a, m)
         spread = len(targets) > 1
+        exits = self._exit_hp(w)  # Emergency Exit's hit points before the move
         out = [w]
         for tgt in targets:
             nxt = []
@@ -3020,11 +3054,6 @@ class Resolver:
                     self._take_in(b, tgt, ab)  # before the accuracy check
                     nxt.append(b)
                     continue
-                if (
-                    self.ability(role, a.user, b.sides[role][a.user]) == "stakeout"
-                    and tgt in b.replaced.values()
-                ):
-                    b.partial.add("ability:stakeout")  # its double: not passed
                 acc = self._accuracy(b, role, a, m, tgt)
                 if acc < 1:
                     miss = b.clone(b.p * (1 - acc))
@@ -3040,6 +3069,17 @@ class Resolver:
         out = [x for b in out for x in self._chance_abilities(b, a)]
         out = [x for b in out for x in self._red_card(b, role, a, m)]
         out = [x for b in out for x in self._eject_button(b, role)]
+        if m.get("forceSwitch"):
+            # Dragon Tail, Circle Throw (Week 14: not modelled before, and not
+            # marked): a target the hit left standing is dragged out, the one
+            # that comes in drawn at random; not through a substitute
+            mold = self.ability(role, a.user, w.sides[role][a.user]) in MOLD
+            for tgt in targets:
+                out = [
+                    x
+                    for b in out
+                    for x in (self._drag(b, tgt, mold) if tgt in b.hit else [b])
+                ]
         if m.get("selfSwitch"):
             out = [
                 x
@@ -3050,6 +3090,44 @@ class Resolver:
                     else [b]
                 )
             ]
+        out = [x for b in out for x in self._emergency_exit(b, exits)]
+        return out
+
+    def _exit_hp(self, w: _World) -> dict[tuple[str, int], int]:
+        """Week 14 (Reg M-C): the hit points of each Pokemon on the field with
+        Emergency Exit or Wimp Out, before a move or the end of the turn."""
+        return {
+            (r, j): round(x["hp_fraction"] * self.max_hp(r, j))
+            for r in ROLES
+            for j, x in enumerate(w.sides[r])
+            if x["active"] and not x["fainted"] and self.ability(r, j, x) in EXIT
+        }
+
+    def _emergency_exit(self, w: _World, before: Mapping) -> list[_World]:
+        """Showdown's Champions rules: one whose hit points fell from above half
+        to half or less (`before`: `_exit_hp`) switches out, if one is left on
+        its bench; its player picks who comes in, as after Eject Button (the
+        forced-switch model; each alike, marked, without it). One that already
+        left (Eject Button, a pivot move, a drag) does not."""
+        out = [w]
+        for (r, j), hp0 in before.items():
+            nxt = []
+            for b in out:
+                x = b.sides[r][j]
+                full = self.max_hp(r, j)
+                hp = round(x["hp_fraction"] * full)
+                if (
+                    b.winner is None
+                    and x["active"]
+                    and not x["fainted"]
+                    and 0 < hp <= full // 2 < hp0
+                    and self.ability(r, j, x) in EXIT
+                    and self._bench(b, r)
+                ):
+                    nxt += self._self_switch(b, r, j, why="emergency exit")
+                else:
+                    nxt.append(b)
+            out = nxt
         return out
 
     def _grouped(
@@ -3102,7 +3180,9 @@ class Resolver:
         if boosts:
             self._boost(w.sides[tgt[0]][tgt[1]], boosts)
         if ab == "flashfire":
-            w.partial.add("ability:flashfire")  # its Fire boost: not followed
+            # its own Fire moves x1.5 until it leaves (Week 14: the calculator's
+            # abilityOn, `_damage_field`)
+            w.sides[tgt[0]][tgt[1]]["flashfire"] = 1
 
     def _move_type(self, w: _World, role: str, a: Action, m: Mapping) -> str:
         """The move's type as it is used: a Normal move under an -ate ability
@@ -3133,6 +3213,7 @@ class Resolver:
             if t["sub"] <= 0:
                 t.pop("sub")
             w.dealt += took
+            w.dealt_to[tgt] = w.dealt_to.get(tgt, 0) + took
             if dmg > 0:
                 w.subbed.add(tgt)
             return
@@ -3149,17 +3230,12 @@ class Resolver:
         dealt = hp - new
         t["hp_fraction"] = new / max_hp
         w.dealt += dealt
+        w.dealt_to[tgt] = w.dealt_to.get(tgt, 0) + dealt
         if dmg > 0:
             w.hit.add(tgt)
             t["hits"] = t.get("hits", 0) + 1  # Rage Fist counts it
             if t.get("item") == "airballoon":  # it pops (Week 14)
                 t["item"], t["rev_item"] = "", "airballoon"
-            if (
-                self.ability(tgt[0], tgt[1], t) in {"emergencyexit", "wimpout"}
-                and 0 < new <= max_hp // 2 < hp
-                and self._bench(w, tgt[0])
-            ):
-                w.partial.add("ability:emergencyexit")  # it would switch out
             if m.get("volatileStatus") == "partiallytrapped" and not t.get("bound"):
                 # bound (Infestation and the like): a sixth with Binding
                 # Band, else an eighth, at each end of turn (Week 12)
@@ -3247,7 +3323,10 @@ class Resolver:
         before = st["hp_fraction"]
         self._lose(w, (r, j), 1 / 8)
         lost = (before - st["hp_fraction"]) * self.max_hp(r, j)
-        if seeder["active"]:
+        if seeder["active"] and self.ability(r, j, st) == "liquidooze":
+            if self.ability(o, k, seeder) != "magicguard":  # Week 14
+                self._lose(w, (o, k), lost / self.max_hp(o, k))
+        elif seeder["active"]:
             self._heal(w, o, k, lost / self.max_hp(o, k))
         # else: it left and no one came into its place (a switch moves the
         # pointer to whoever does, `_switch`): no one is healed (Week 13)
@@ -3290,6 +3369,7 @@ class Resolver:
         ):
             st["hp_fraction"] = min(1.0, (hp + max_hp // 4) / max_hp)
             st["item"], st["rev_item"] = "", "sitrusberry"
+            st["eaten"] = "sitrusberry"  # for Harvest (Week 14)
 
     def _perish(self, w: _World) -> None:
         """Perish Song counts down after the other end-of-turn effects, in Speed
@@ -3378,8 +3458,18 @@ class Resolver:
         if dealt > 0:
             if m.get("drain") and not st.get("healblock"):
                 n, d = m["drain"]
-                heal = dealt * n / d * (1.3 if st.get("item") == "bigroot" else 1)
+                root = 1.3 if st.get("item") == "bigroot" else 1
+                # Liquid Ooze (Week 14): what it would heal from that target
+                # hurts it instead (Showdown's onSourceTryHeal)
+                ooze = sum(
+                    v
+                    for (r2, j2), v in w.dealt_to.items()
+                    if self.ability(r2, j2, w.sides[r2][j2]) == "liquidooze"
+                )
+                heal = (dealt - ooze) * n / d * root
                 st["hp_fraction"] = min(1.0, st["hp_fraction"] + round(heal) / max_hp)
+                if ooze and ab != "magicguard":
+                    self._lose(w, (role, a.user), round(ooze * n / d * root) / max_hp)
             if m.get("recoil") and ab not in {"rockhead", "magicguard"}:
                 n, d = m["recoil"]
                 self._lose(w, (role, a.user), max(1, round(dealt * n / d)) / max_hp)
@@ -3538,6 +3628,7 @@ class Resolver:
     def _end_of_turn(self, w: _World) -> list[_World]:
         fld = w.fld
         moody: list[tuple[str, int]] = []
+        exits = self._exit_hp(w)  # Emergency Exit after the residual (Week 14)
         if fld.weather and fld.weather_left == 1:
             # Showdown counts the weather down first: on its last turn it ends
             # before its damage (Week 13)
@@ -3636,16 +3727,46 @@ class Resolver:
             }
         w.protected, w.guards, w.flinched, w.acted = set(), set(), set(), set()
         w.redirect, w.helped, w.replaced = {}, set(), {}
-        w.hit, w.dealt, w.subbed = set(), 0, set()
+        w.hit, w.dealt, w.subbed, w.dealt_to = set(), 0, set(), {}
         for r in ROLES:
             for x in w.sides[r]:
                 x.pop("roost", None)
-        if not moody:
-            return [w]
-        out = [w]
+        out = self._harvest(w)
         for r, j in moody:
             out = [x for b in out for x in self._moody(b, r, j)]
+        out = [x for b in out for x in self._emergency_exit(b, exits)]
+        if len(out) == 1:
+            return out
         return _merge(out, self.resolution, self.prune)
+
+    def _harvest(self, w: _World) -> list[_World]:
+        """Harvest (Week 14): a Berry it ate comes back at the end of the turn,
+        half the time, always in the sun; one at half its hit points or less is
+        eaten again at once (Showdown: onResidual, then Update)."""
+        out = [w]
+        for r in ROLES:
+            for j in range(len(w.sides[r])):
+                nxt = []
+                for b in out:
+                    y = b.sides[r][j]
+                    if not (
+                        y["active"]
+                        and not y["fainted"]
+                        and not y["item"]
+                        and y.get("eaten")
+                        and self.ability(r, j, y) == "harvest"
+                    ):
+                        nxt.append(b)
+                        continue
+                    if b.fld.weather not in ("sunnyday", "desolateland"):
+                        nxt.append(b.clone(b.p / 2))  # not this turn
+                        b.p /= 2
+                    y["item"] = y.pop("eaten")
+                    full = self.max_hp(r, j)
+                    self._sitrus(y, round(y["hp_fraction"] * full), full)
+                    nxt.append(b)
+                out = nxt
+        return out
 
     def _moody(self, w: _World, r: str, j: int) -> list[_World]:
         """Moody (Showdown, Generation 8 on): one of the five stats not at +6

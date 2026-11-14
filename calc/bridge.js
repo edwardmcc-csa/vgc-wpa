@@ -86,8 +86,28 @@ function mon(m, attacking) {
     p.typesNow = m.types.slice();
     p.types = m.types.slice();
   }
+  // an ability that is on now (Week 14: Flash Fire after taking in a Fire
+  // move, Stakeout at one that came in this turn; Unburden for Speed)
+  if (m.ability_on) p.abilityOn = true;
   return p;
 }
+
+// Week 14: the calculator's Champions rules leave out the power an ally's
+// ability adds (Showdown's onAllyBasePower): Steely Spirit, Steel moves x1.5;
+// Battery, special moves, and Power Spot, every move, 5325/4096. As Showdown
+// chains them (4096 is x1).
+function allyPower(f, move) {
+  f = f || {};
+  let mod = 4096;
+  const chain = x => { mod = Math.floor((mod * x + 2048) / 4096); };
+  if (f.steelyspirit && move.type === 'Steel') chain(6144);
+  if (f.battery && move.category === 'Special') chain(5325);
+  if (f.powerspot) chain(5325);
+  return mod;
+}
+
+// Showdown's modify: a value times a 4096-based modifier, rounded half down
+const modify = (v, mod) => Math.floor((v * mod + 2047) / 4096);
 
 function field(f) {
   f = f || {};
@@ -155,7 +175,6 @@ function answer(req) {
   }
   if (req.op === 'speed') {
     const p = mon(req.mon, false);
-    if (req.mon.ability_on) p.abilityOn = true;
     return {speed: getFinalSpeed(gen, p, field(req.field), new Side({isTailwind: !!req.tailwind}))};
   }
   const attacker = mon(req.attacker, true);
@@ -176,13 +195,21 @@ function answer(req) {
   // a power the game so far decides (Last Respects, Rage Fist), worked out by
   // the caller (Week 10)
   if (req.bp) options.overrides = {...(options.overrides || {}), basePower: req.bp};
+  // an ally's power (above): on the move's power, as in Showdown; on the
+  // damage for a power the calculator works out itself (Gyro Ball, Heavy Slam)
+  const ally = allyPower(req.field, probe);
+  const power = req.bp || probe.bp;
+  if (ally !== 4096 && power > 0) {
+    options.overrides = {...(options.overrides || {}), basePower: modify(power, ally)};
+  }
+  const after = ally !== 4096 && !(power > 0) ? d => modify(d, ally) : d => d;
   const move = new Move(gen, moveName, options);
   const result = calculate(gen, attacker, defender, move, field(req.field));
   const several = Array.isArray(result.damage) && Array.isArray(result.damage[0]);
   return {
-    rolls: totals(result.damage),
+    rolls: totals(result.damage).map(after),
     hits: several ? result.damage.length : 1,
-    first_hit: several ? result.damage[0].slice() : undefined,
+    first_hit: several ? result.damage[0].map(after) : undefined,
     max_hp: defender.maxHP(),
     cur_hp: defender.curHP(),
     species: [attacker.name, defender.name],
