@@ -228,6 +228,7 @@ def _point(tag: str, log: str, fmt: str, tools, role: str, at: str) -> _Point:
         else None,
         spread_hits=tools.spread_hits,
         spread_damage=tools.spread_damage,
+        switch_in=A.pivot_chooser(tools, view, rv_spreads, dex, odds),
         speed_beliefs=tools.speed_beliefs,
     )
     return _Point(

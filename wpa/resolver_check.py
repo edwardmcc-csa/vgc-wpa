@@ -614,9 +614,9 @@ def child_command(a: argparse.Namespace, dest: Path, root: Path) -> list[str]:
 
     # code from before Week 13 has no --spread-damage: run it as it was
     try:
-        knows = "--spread-damage" in (Path(dest) / "wpa" / "resolver_check.py").read_text(
-            encoding="utf-8"
-        )
+        knows = "--spread-damage" in (
+            Path(dest) / "wpa" / "resolver_check.py"
+        ).read_text(encoding="utf-8")
     except OSError:
         knows = False
     a = argparse.Namespace(**{**vars(a), "spread_damage": a.spread_damage and knows})
@@ -698,6 +698,9 @@ def _init(a: argparse.Namespace) -> None:  # pragma: no cover - runs on the corp
     ns = argparse.Namespace(
         **vars(a), models=None, groups="ABCDEFGHIJ", top=6, draws=6, alternatives=10
     )
+    # Week 13: who comes in after a pivot the log does not show (the
+    # forced-switch model), as in the analysis
+    ns.replace = getattr(a, "replace", None) or Path(a.policy).with_name("replace.json")
     tools = A._tools(ns)
     _W.update(
         tools=tools,

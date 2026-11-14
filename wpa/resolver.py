@@ -30,7 +30,7 @@ from __future__ import annotations
 import copy
 import json
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import permutations, product
@@ -149,6 +149,8 @@ REORDER = {"quash": "last", "afteryou": "next"}
 # user a type (it fails without it)
 PROTEAN = {"protean", "libero"}
 RETYPE = {"soak", "trickortreat", "forestscurse", "reflecttype", "magicpowder"}
+# what is left of a substitute the log shows hit, each as likely (Week 13)
+SUB_LEFT = (0.25, 0.5, 0.75)
 # Week 13 Task 2: moves that change abilities (Showdown's onTryHit and setAbility)
 ABILITY_MOVES = {"skillswap", "entrainment", "simplebeam"}
 # moves Gravity stops (`data/conditions.ts`, gravity)
@@ -535,6 +537,7 @@ class Resolver:
         spread_hits: bool = False,
         speed_beliefs: bool | None = None,
         spread_damage: bool = False,
+        switch_in: Callable | None = None,
     ) -> None:
         self.dex, self.moves, self.calc = dex, moves, calc
         self.sheets, self.spreads = sheets, spreads
@@ -548,6 +551,9 @@ class Resolver:
         # `spread_damage` (Week 13 Task 1): every hit's damage weighed over the
         # likely spreads, not only where they decide a knock-out
         self.spread_damage = spread_damage
+        # who comes in after a pivot move the log does not show: (sides, field,
+        # role, bench) -> each one's chance (Week 13: the forced-switch model)
+        self.switch_in = switch_in
         self.resolution, self.prune, self.cap = resolution, prune, cap
         self.coarsest = resolution or 0.0  # the grid the last resolve needed
         self.held = 0  # the most boards the last resolve held at once in a step
@@ -639,6 +645,7 @@ class Resolver:
             copy.deepcopy(fld),
             set(),
         )
+        hit_subs = []
         for r in ROLES:
             for j, x in enumerate(start.sides[r]):
                 x["_who"] = (r, j)  # for `_boost`: whose ability
@@ -648,11 +655,23 @@ class Resolver:
                 if up and not x.get("sub") and x["active"]:
                     x["sub"] = self.max_hp(r, j) // 4
                     if up == "hit":
-                        start.partial.add("substitute hit points")
+                        hit_subs.append((r, j))
                 # a type copied by Reflect Type: the log does not say it
                 if x["active"] and "types" in x and not x["types"]:
                     start.partial.add("type copied by Reflect Type")
-        worlds = self._switches(start, actions)
+        starts = [start]
+        for r, j in hit_subs:
+            # hit before: a quarter, a half or three quarters of it left, each
+            # as likely (Week 13; it was marked partly modelled)
+            full = start.sides[r][j]["sub"]
+            starts = [
+                b
+                for s in starts
+                for b in (s.clone(s.p / len(SUB_LEFT)) for _f in SUB_LEFT)
+            ]
+            for k, b in enumerate(starts):
+                b.sides[r][j]["sub"] = max(1, round(full * SUB_LEFT[k % len(SUB_LEFT)]))
+        worlds = [w1 for s in starts for w1 in self._switches(s, actions)]
         worlds = [w2 for w in worlds for w2 in self._megas(w, actions)]
         end = _Pool(self.resolution, self.prune)
         self.held = 0
@@ -2239,13 +2258,16 @@ class Resolver:
         elif how == "shedtail":
             passed = {"sub": sub}
         if to in bench:
-            picks = [to]
+            picks = [(to, 1.0)]
+        elif self.switch_in is not None:
+            chances = self.switch_in(w.sides, w.fld, role, bench)
+            picks = [(j, float(p)) for j, p in zip(bench, chances) if p > 0]
         else:
             w.partial.add("switch-in after a pivot move")
-            picks = bench
+            picks = [(j, 1 / len(bench)) for j in bench]
         out = []
-        for j in picks:
-            b = w.clone(w.p / len(picks))
+        for j, pj in picks:
+            b = w.clone(w.p * pj)
             self._switch(b, role, idx, j)
             new = b.sides[role][j]
             for k, v in passed.items():
@@ -2765,8 +2787,8 @@ class Resolver:
         """Leech Seed at the end of the turn: an eighth of the seeded Pokemon's
         hit points, to the Pokemon in the seeder's place (Showdown's
         `getAtSlot`). Nothing while that place is empty: it fainted, this turn
-        or before (-1). When it switched out this turn, the Pokemon that came
-        in is healed; which one is not followed here, so marked."""
+        or before (-1), or left with no one coming in. When it switched out
+        this turn, the Pokemon that came in is healed."""
         st = w.sides[r][j]
         o, k = _other(r), st["seeded"]
         seeder = w.sides[o][k] if 0 <= k < len(w.sides[o]) else None
@@ -2777,8 +2799,8 @@ class Resolver:
         lost = (before - st["hp_fraction"]) * self.max_hp(r, j)
         if seeder["active"]:
             self._heal(w, o, k, lost / self.max_hp(o, k))
-        else:
-            w.partial.add("leech seed heals the Pokemon in its place")
+        # else: it left and no one came into its place (a switch moves the
+        # pointer to whoever does, `_switch`): no one is healed (Week 13)
 
     def _drowsy(self, w: _World) -> None:
         """Yawn: asleep at the end of the turn after it landed."""

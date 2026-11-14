@@ -654,9 +654,12 @@ def test_eject_button_and_eject_pack_are_marked_partly_modelled(dex, moves, calc
     assert all("eject pack" in o.partial for o in outs)
 
 
-def test_a_substitute_already_up_holds_a_quarter_and_a_hit_one_is_partly_modelled(
+def test_a_substitute_already_up_holds_a_quarter_and_a_hit_one_some_of_it(
     dex, moves, calc
 ):
+    """Week 13: a substitute the log shows hit has a quarter, a half or three
+    quarters of its hit points left, each as likely (the log never shows what
+    is left); it was marked partly modelled (7 Reg M-A turns)."""
     b = board()
     b["p2"][0]["sub_up"] = "full"
     hit = Action(0, "move", move="dragonclaw", target=("foe", 0))
@@ -666,4 +669,11 @@ def test_a_substitute_already_up_holds_a_quarter_and_a_hit_one_is_partly_modelle
     assert not any(o.partial for o in outs)
     b["p2"][0]["sub_up"] = "hit"
     outs = rv.resolve(b, R.Field(), {"p1": (hit, QUIET["p1"][1]), "p2": QUIET["p2"]})
-    assert all("substitute hit points" in o.partial for o in outs)
+    assert not any(o.partial for o in outs)
+    assert all(o.sides["p2"][0]["hp_fraction"] == 1.0 for o in outs)
+    full = rv.max_hp("p2", 0) // 4
+    quiet = (Action(0, "move", move="protect"), QUIET["p1"][1])
+    outs = rv.resolve(b, R.Field(), {"p1": quiet, "p2": QUIET["p2"]})
+    left = {o.sides["p2"][0]["sub"]: o.prob for o in outs}
+    assert set(left) == {round(full * f) for f in (0.25, 0.5, 0.75)}
+    assert all(p == pytest.approx(1 / 3) for p in left.values())

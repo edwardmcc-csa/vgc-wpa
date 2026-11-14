@@ -1072,6 +1072,68 @@ class PreviewSetup:
     t0: float
 
 
+def pivot_chooser(tools, sheets, spreads, dex, odds) -> Callable | None:
+    """Who a player sends in after a pivot move (U-turn, Parting Shot ...) where
+    the log does not say: the forced-switch model's chances (Week 13), from the
+    board at that moment, as for a forced switch. None without the model."""
+    model = getattr(tools, "replace", None)
+    if model is None:
+        return None
+    from types import SimpleNamespace
+
+    from wpa import replace_model as RM
+    from wpa.bring import marginals
+    from wpa.policy import DamageInfo
+
+    memo: dict = {}
+
+    def choose(sides, fld, role, bench) -> list[float]:
+        other = "p2" if role == "p1" else "p1"
+        key = (
+            role,
+            tuple(bench),
+            tuple(
+                (x["active"], x["fainted"], round(x["hp_fraction"], 2))
+                for r in ("p1", "p2")
+                for x in sides[r]
+            ),
+            fld.weather,
+            fld.terrain,
+        )
+        if key not in memo:
+            revealed = [
+                i
+                for i, p in enumerate(sides[role])
+                if p["active"] or p["fainted"] or p["hp_fraction"] > 0
+            ]
+            bring_p = marginals(odds[role], revealed) if role in odds else None
+            ctx = (
+                DamageInfo(
+                    {"our_pokemon": sides[role], "opp_pokemon": sides[other]},
+                    sheets,
+                    role,
+                    spreads,
+                    dex,
+                    tools.calc,
+                    {"weather": fld.weather or None, "terrain": fld.terrain or None},
+                )
+                if getattr(tools, "calc", None) is not None
+                else None
+            )
+            here: Any = SimpleNamespace(ours=sides[role])  # as a Replacement
+            X = np.array(
+                [
+                    RM.option_features(here, j, sheets[role], ctx, bring_p)
+                    for j in bench
+                ],
+                dtype=float,
+            )
+            memo[key] = [float(p) for p in model.chances(X)]
+        return memo[key]
+
+    return choose
+
+
 def _error(base: dict, e: Exception) -> list[dict]:
     why = f"error: {type(e).__name__}: {str(e)[:80]}"
     return [dict(base, role=r, skipped=why) for r in ("p1", "p2")]
@@ -1217,6 +1279,7 @@ def turn_setups(
                 spread_hits=tools.spread_hits,
                 spread_damage=tools.spread_damage,
                 speed_beliefs=tools.speed_beliefs,
+                switch_in=pivot_chooser(tools, sheets, ctxs[k].spreads, dex, odds),
             )
             bw = BoardWP(
                 tools.predict[fmt],
@@ -1716,6 +1779,7 @@ def public_setups(tag: str, log: str, fmt: str, tools: Tools):
                     else None,
                     spread_hits=tools.spread_hits,
                     spread_damage=tools.spread_damage,
+                    switch_in=pivot_chooser(tools, view, spreads, dex, odds),
                     speed_beliefs=tools.speed_beliefs,
                 )
                 pub = public_of(r, i)

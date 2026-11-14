@@ -486,3 +486,87 @@ def test_the_board_keeps_the_hazards_on_each_side():
     f3 = R.field_from_timers(g.joined["p1"][by_turn[3]], "p1")
     assert f3.sides["p1"] == {"stealthrock": 1, "spikes": 2}
     assert f3.sides["p2"] == {}
+
+
+# --------------------------------------------------------------------------
+# Who comes in after a pivot move the log does not show
+# --------------------------------------------------------------------------
+
+
+@needs_showdown
+def test_the_pokemon_sent_in_after_a_pivot_has_the_forced_switch_models_chance(tools):
+    """Where the log does not say who comes in (a pivot in a branch that did not
+    happen, or a hidden choice), each Pokemon on the bench has the chance the
+    forced-switch model gives it (the brief), not each alike and marked."""
+    from wpa.team_sheets import SheetMon
+
+    dex, moves, calc = tools
+    sheets = {
+        "p1": SHEETS["p1"],
+        "p2": (
+            SHEETS["p2"][0],
+            SHEETS["p2"][1],
+            SheetMon(3, "sinistcha", "", "hospitality", ("matchagotcha",), ""),
+            SheetMon(4, "garchomp", "", "roughskin", ("earthquake",), ""),
+        ),
+    }
+    asked = []
+
+    def chooser(sides, fld, role, bench):
+        asked.append((role, tuple(bench)))
+        return [0.75, 0.25]
+
+    rv = R.Resolver(dex, moves, calc, sheets, SPREADS, switch_in=chooser)
+    b = board()
+    b["p2"] += [
+        dict(b["p2"][0], species=s, active=False) for s in ("sinistcha", "garchomp")
+    ]
+    shot = (
+        Action(0, "move", move="protect"),
+        Action(1, "move", move="partingshot", target=("foe", 1)),  # no switch_to
+    )
+    outs = rv.resolve(b, R.Field(), {"p1": SD2, "p2": shot})
+    assert asked and asked[0] == ("p2", (2, 3))
+    assert _no_partial(outs)
+    came = {}
+    for o in outs:
+        for j in (2, 3):
+            if o.sides["p2"][j]["active"]:
+                came[j] = came.get(j, 0.0) + o.prob
+    assert came[2] == pytest.approx(3 * came[3])
+
+
+def test_the_analysis_chooses_with_the_forced_switch_model():
+    from types import SimpleNamespace as NS
+
+    from wpa import attribution as A
+    from wpa.replace_model import FEATURES, ReplaceModel
+
+    w = [0.0] * len(FEATURES)
+    w[FEATURES.index("hp")] = 2.0
+    from wpa.team_sheets import SheetMon
+
+    tools = NS(replace=ReplaceModel(w), calc=None)
+    more = tuple(SheetMon(k, "sinistcha", "", "hospitality", (), "") for k in (3, 4))
+    sheets = {"p1": SHEETS["p1"], "p2": SHEETS["p2"] + more}
+    choose = A.pivot_chooser(tools, sheets, SPREADS, None, {})
+    b = board()
+    b["p2"] += [dict(b["p2"][0], active=False, hp_fraction=h) for h in (1.0, 0.25)]
+    ps = choose(b, R.Field(), "p2", [2, 3])
+    assert sum(ps) == pytest.approx(1.0) and ps[0] > ps[1]
+    assert (
+        A.pivot_chooser(NS(replace=None, calc=None), sheets, SPREADS, None, {}) is None
+    )
+
+
+@needs_showdown
+def test_leech_seed_heals_no_one_when_no_one_took_the_seeders_place(tools):
+    """Showdown heals whoever is in the seeder's place (getAtSlot): when the
+    seeder left and no one came in there, no one (8 turns were marked)."""
+    rv, b = _bench(tools)
+    b["p1"][0]["seeded"] = 2  # Sinistcha seeded Garchomp, then went to the bench
+    outs = rv.resolve(b, R.Field(), {"p1": P1_QUIET, "p2": SD_PROTECT})
+    for o in outs:
+        assert "leech seed heals the Pokemon in its place" not in o.partial
+        assert o.sides["p2"][2]["hp_fraction"] == 1.0
+        assert o.sides["p1"][0]["hp_fraction"] == pytest.approx(7 / 8, abs=0.01)
