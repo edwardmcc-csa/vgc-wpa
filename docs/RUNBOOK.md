@@ -1392,22 +1392,32 @@ first: step 2 uses what it learns.
    Send me `models_v4_preview\report.txt`.
 
 4. **The check with the opponent's sheet hidden** (Task 5; about 4 to 5 hours;
-   after steps 2 and 3, on the first 100 Reg M-A and 60 Reg M-B games of
-   step 2's sample). Each player's turns are analysed from what that player
-   knew: their own sheet, and the opponent's believed from the usage
-   statistics and what the game had shown.
+   after step 3). The first 100 Reg M-A and 60 Reg M-B games of step 2's
+   sample, analysed twice with today's code: once with both sheets, to compare
+   with, and once with each player's turns analysed from what that player knew
+   (their own sheet, and the opponent's believed from the usage statistics and
+   what the game had shown). Step 2's own records are not compared: it ran
+   before the week's last fixes and revision 11.
    ```
+   python -m wpa.attribution --models models_v4_avg --moves-dir build --workers 6 --alternatives 0 --spread-hits --max-games 100 60 --out reports/attribution_whole160.jsonl
    python -m wpa.attribution --models models_v4_avg --moves-dir build --workers 6 --alternatives 0 --spread-hits --hidden-sets --max-games 100 60 --out reports/attribution_hidden.jsonl
-   python -m wpa.sheet_check
+   python -m wpa.sheet_check --whole reports/attribution_whole160.jsonl
    ```
-   The second command sets each turn beside step 2's and prints how far each
-   part of the split moves, and how often the board that happened is found,
-   with the sheet hidden. It saves `reports\sheet_check.txt`. Send me that
-   file.
-   - If step 3 has not finished, the first command stops at once and says so.
+   The last command sets each turn of the two runs side by side and prints how
+   far each part of the split moves, and how often the board that happened is
+   found, with the sheet hidden. It saves `reports\sheet_check.txt`.
+   - Or double-click `build\w12-next\step4.cmd`: it runs the three in order,
+     after step 3 has finished, and writes `build\w12-next\step4.log`.
+   - If step 3 has not finished, the second command stops at once and says so.
    - Ctrl+C stops it; the same command carries on.
 
 ---
+
+**The opponent model's strength (DEFINITIONS revision 11, 13 Nov 2026).** Every
+run now uses the strength learned on training games (`--strength fitted`, the
+default; it reads `models_v4\strength.json`), and so do the replay report and
+the advice. `--strength 0` gives revision 10's model. A replay analysed before
+revision 11 is analysed again the next time you ask for it.
 
 ## 24. Advice at a turn's start (worked ahead, Week 12)
 

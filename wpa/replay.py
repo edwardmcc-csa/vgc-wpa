@@ -1000,7 +1000,25 @@ def _options(a: argparse.Namespace) -> argparse.Namespace:  # pragma: no cover
         replace=Path("models_v4/replace.json"),
         hidden_sets=bool(getattr(a, "hidden", False)),
         public_models=getattr(a, "public_models", None) or Path("models_v4_preview"),
+        strength="fitted",  # DEFINITIONS revision 11
     )
+
+
+def stale(path: Path, strength: float) -> bool:
+    """Whether a game's saved records must be made again: none saved, or made
+    at another opponent model strength (records before revision 11: 0)."""
+    path = Path(path)
+    if not path.exists():
+        return True
+    recs = [
+        json.loads(x)
+        for x in path.read_text(encoding="utf-8").splitlines()
+        if x.strip()
+    ]
+    used = {
+        float(r.get("strength", 0.0)) for r in recs if r.get("kind", "turn") == "turn"
+    }
+    return any(abs(u - strength) > 1e-9 for u in used)
 
 
 def analyse(
@@ -1013,10 +1031,11 @@ def analyse(
     prev = A.previous_leads([(tag, log) for tag, log, _f in games])
     end = "-hidden" if getattr(a, "hidden", False) else ""
     saved = {tag: a.out / f"{tag}{end}.jsonl" for tag, _l, _f in games}
+    want = A.strength_value(_options(a))  # analysed again at another strength
     jobs = [
         (tag, log, fmt, True, prev.get(tag, {}))
         for tag, log, fmt in games
-        if a.fresh or not saved[tag].exists()
+        if a.fresh or stale(saved[tag], want)
     ]
     if jobs:
         n = len(jobs)

@@ -507,7 +507,8 @@ def fit_strength(
 def strength_value(a, s: str | None = None) -> float:
     """The opponent model's strength the run asks for: `--strength` as a number,
     or "fitted" for the one learned on training games (strength.json beside the
-    policy); 0, the model of DEFINITIONS revision 10, when not given."""
+    policy). The command line's default is "fitted" (DEFINITIONS revision 11);
+    options built in code without it get 0, revision 10's model."""
     s = str(s if s is not None else getattr(a, "strength", "0") or "0")
     if s == "fitted":
         path = Path(a.policy).with_name("strength.json")
@@ -2580,7 +2581,9 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
     head = f"{name}: {games} games, {len(ok)} decision points ({len(turns)} turns)"
     used = {r.get("strength", 0) for r in ok}
     if used != {0}:
-        head += f"; opponent model strength {', '.join(f'{s:g}' for s in sorted(used))}"
+        head += (
+            f"; opponent model strength {', '.join(f'{s:.3g}' for s in sorted(used))}"
+        )
     if skipped:
         head += f"; left out: {skipped}"
     lines = [
@@ -2872,7 +2875,8 @@ def report(path: Path, top: int = 10) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:  # pragma: no cover
+def parser():
+    """The run's options (Runbook Sections 20 to 23)."""
     import argparse
 
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else "")
@@ -2984,9 +2988,10 @@ def main() -> None:  # pragma: no cover
     )
     p.add_argument(
         "--strength",
-        default="0",
-        help="the opponent model's strength (Week 12 Task 3, DEFINITIONS §7 draft): "
-        "0 (revision 10's model, the default), a number, or 'fitted'",
+        default="fitted",
+        help="the opponent model's strength (DEFINITIONS §7, revision 11): "
+        "'fitted', the one learned on training games (the default), a number, "
+        "or 0 for revision 10's model",
     )
     p.add_argument(
         "--measure-strengths",
@@ -3009,7 +3014,11 @@ def main() -> None:  # pragma: no cover
         default=None,
         help="with --fit-strength: at most this many new games this run",
     )
-    a = p.parse_args()
+    return p
+
+
+def main() -> None:  # pragma: no cover
+    a = parser().parse_args()
     if a.fit_strength:
         fit_strength_run(a)
         return

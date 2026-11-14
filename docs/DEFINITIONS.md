@@ -1,6 +1,6 @@
 # DEFINITIONS
 
-**Status:** approved by the product owner. Revision 10 — §3 splits "your decision" into your choice and the position, and §4's average becomes the typical choice (PO, 10 Nov 2026). Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
+**Status:** approved by the product owner. Revision 11 — §7 weighs each plausible action by its worth to the one choosing, at the strength learned on training games (PO, 13 Nov 2026). Revision 10 — §3 splits "your decision" into your choice and the position, and §4's average becomes the typical choice (PO, 10 Nov 2026). Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
 **Applies to:** milestones M4, M4b, M5, M7.
 
 This document is the contract. If code and this document disagree, the code is wrong.
@@ -77,6 +77,10 @@ A single game turn may therefore contain multiple decision points. Do not aggreg
 Both players choose without seeing the other's choice. Therefore the baseline in §4 is evaluated against the **opponent's belief-weighted distribution over their plausible actions**, not against the action the opponent actually chose.
 
 This matters more than it sounds. Evaluating against what the opponent actually did would punish a player for a well-reasoned read that happened to be exploited, and reward a lucky guess. We are measuring decision quality, not outcome.
+
+Each plausible action's chance is the choice model's chance, weighed by how much the action is worth to the one choosing: `chance × exp(strength × worth)`, scaled so the chances add up to 1. Its worth is the expected `WP` for the one choosing, against the other side's likely actions from the choice model alone. Where the log hides part of a player's action (§3: averaged over the actions the log allows), that average is weighed the same way. One strength serves both formats. It is learned on training games: it is the strength that makes the actions players took likeliest, which is also the strength at which, on training games, the actions players took are worth on average what the model expects. Revision 10's model is strength 0.
+
+Rationale (rev 11, PO, 13 Nov 2026): with the choice model alone, the choices players made were worth 6.2 points more on average than the model expected (115 training games, both formats), and their opponents' "their decision" averaged about −2.2 points in Weeks 10 and 11: real players read each other better than the model assumed. The learned strength is 6.55 (6.3 Reg M-A, 6.8 Reg M-B alone). On validation (the Week 12 sample), where the log shows the choice, your choice's average went from +3.0 to +1.2 points in Reg M-A and from +3.1 to +1.3 in Reg M-B; their decision's from −2.4 to −0.6 and from −2.6 to −0.7.
 
 ## 8. What counts as luck
 

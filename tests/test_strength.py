@@ -258,3 +258,71 @@ def test_a_choice_the_log_hides_is_weighed_as_the_likely_choices_are():
     assert dict(out["p1"])[(b,)] > 0.5  # b is worth more against p2's likely
     assert out["p2"] == taken["p2"]  # a choice the log shows whole: as it is
     assert A.strong_taken(tv, taken, likely, 0.0) == taken
+
+
+# DEFINITIONS revision 11 (PO, 13 Nov 2026): the opponent model is the stronger
+# one, at the strength learned on training games, unless a run asks otherwise.
+
+
+def test_revision_11_the_analysis_uses_the_learned_strength_by_default():
+    assert A.parser().parse_args([]).strength == "fitted"
+    assert A.parser().parse_args(["--strength", "0"]).strength == "0"  # rev 10's
+
+
+def test_revision_11_the_replay_report_and_advice_use_it_too():
+    import argparse
+
+    from wpa import replay as RP
+
+    a = argparse.Namespace(models=None, dex_tables=None, moves_dir=None)
+    assert RP._options(a).strength == "fitted"
+
+
+def test_the_summary_says_which_strength_a_run_used(tmp_path):
+    import json
+
+    rec = {
+        "tag": "g0",
+        "format": "regma",
+        "turn": 1,
+        "kind": "turn",
+        "role": "p1",
+        "before": 0.5,
+        "after": 0.6,
+        "yours": 0.1,
+        "choice": 0.1,
+        "position": 0.0,
+        "theirs": 0.0,
+        "dice": 0.0,
+        "vs_best": None,
+        "vs_average": None,
+        "kept": 1.0,
+        "unknown": 0,
+        "found": True,
+        "partial": [],
+        "seconds": 1.0,
+        "strength": 6.54842,
+    }
+    path = tmp_path / "a.jsonl"
+    path.write_text(json.dumps(rec) + "\n")
+    head = next(x for x in A.report(path).splitlines() if x.startswith("Reg M-A"))
+    assert "opponent model strength 6.55" in head
+
+
+def test_a_saved_replay_analysed_at_another_strength_is_analysed_again(tmp_path):
+    """The replay report keeps each game's records; one analysed before
+    revision 11 (strength 0) is analysed again rather than shown as it was."""
+    import json
+
+    from wpa import replay as RP
+
+    p = tmp_path / "g.jsonl"
+    assert RP.stale(p, 0.0)  # never analysed
+    p.write_text(json.dumps({"tag": "g", "turn": 1, "kind": "turn"}) + "\n")
+    assert RP.stale(p, 6.54842) and not RP.stale(p, 0.0)
+    rows = [
+        {"tag": "g", "kind": "preview"},  # team preview's record has no strength
+        {"tag": "g", "turn": 1, "kind": "turn", "strength": 6.54842},
+    ]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert not RP.stale(p, 6.54842) and RP.stale(p, 0.0)
