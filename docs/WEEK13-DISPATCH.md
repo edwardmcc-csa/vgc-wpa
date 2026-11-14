@@ -1,7 +1,10 @@
 # Week 13 — Dispatch Brief (damage from the spreads players run; the rules still modelled in part)
 
-**Status:** approved by the PO on 14 Nov 2026 ("Go"). Drafted 13 Nov from his
-decisions that evening; Week 12's report is in (`docs/WEEK12-REPORT.md`).
+**Status:** done 14 Nov 2026; every box ticked. Report: `docs/WEEK13-REPORT.md`.
+The gate is half met: moves modelled in part are under 0.5% of turns; HP misses
+fell by a quarter, not a third (the report has the numbers and a suggestion).
+Approved by the PO on 14 Nov 2026 ("Go"). Drafted 13 Nov from his decisions that
+evening.
 **Definition of done:** every checkbox ticked, `python -m pytest` green, one report
 in prose.
 **Gate** (plan revision 4, Phase 1): on the resolver check, HP misses down by at
@@ -44,7 +47,7 @@ Reg M-B turns. What is left (diagnosed 13 Nov, 120 missed turns):
 ## Tasks
 
 ### Task 1 — Damage from the spreads players run
-- [ ] **First, the forms the statistics count under their species** (found 13
+- [x] **First, the forms the statistics count under their species** (found 13
       Nov). The statistics count Sinistcha-Masterpiece as Sinistcha (in 96 of
       the 892 games) and Maushold-Four as Maushold (46). Looked up under their
       own names they get the spread for a Pokemon the statistics do not list:
@@ -53,43 +56,44 @@ Reg M-B turns. What is left (diagnosed 13 Nov, 120 missed turns):
       spread is taken from the species, then the resolver check is run before
       and after. The win model's features change for these Pokemon too: they
       take it at the next retraining (Reg M-C), which is measured then.
-- [ ] **Measure the bias on more hits** (13 Nov's sample had 84): every clean
+- [x] **Measure the bias on more hits** (13 Nov's sample had 84): every clean
       single hit in the resolver check's games (no item, ability, weather or
       second hit on the target that turn): real damage against the estimate,
       per format, single-target and spread moves apart, the median and the
       tails.
-- [ ] **A hit's damage is weighed over the spreads players run** (each spread's
+- [x] **A hit's damage is weighed over the spreads players run** (each spread's
       chance from the spread belief, refined by the game so far as now),
       instead of the likeliest spread alone. Week 12 Task 4's branching where a
       knock-out depends on the spread stays.
-- [ ] **If that is too slow** (the stop rule: more than 1.5 times the resolver's
+- [x] **If that is too slow** (the stop rule: more than 1.5 times the resolver's
       time per turn), report the cost and the options. A flat correction is not
-      one: the typical hit is already right, so it would break it.
-- [ ] **The resolver check before and after**, on the same 892 games: HP misses,
+      one: the typical hit is already right, so it would break it. (It took 2.1
+      times; reported, and the PO turned it on, 14 Nov.)
+- [x] **The resolver check before and after**, on the same 892 games: HP misses,
       knock-out misses, the bias on clean hits, the time.
-- [ ] Tests first, each shown failing.
+- [x] Tests first, each shown failing.
 
 ### Task 2 — The rules still modelled in part
 Every move or effect the resolver check still marks partly modelled, in either
 format (turns at `7df9b1d`, Reg M-A / Reg M-B):
 
-- [ ] Skill Swap (9 / 2), Entrainment (6 / 0): abilities change hands or are
+- [x] Skill Swap (9 / 2), Entrainment (6 / 0): abilities change hands or are
       replaced.
-- [ ] Transform (7 / 2): copies the target's species, stats (but HP), moves and
+- [x] Transform (7 / 2): copies the target's species, stats (but HP), moves and
       boosts.
-- [ ] Gravity (7 / 0): everything grounded, accuracy up, some moves blocked.
-- [ ] Imprison (7 / 0): the foes cannot use the moves the user knows.
-- [ ] The Pokemon sent in after a pivot move (7 / 10): which one, by the
+- [x] Gravity (7 / 0): everything grounded, accuracy up, some moves blocked.
+- [x] Imprison (7 / 0): the foes cannot use the moves the user knows.
+- [x] The Pokemon sent in after a pivot move (7 / 10): which one, by the
       replacement model, as a forced switch is. Done ahead (`189aac7`): a
       Prankster Parting Shot into a Dark type and a sound move into Soundproof
       fail without switching (5 of these turns). Left: Magic Bounce (about 4),
       and turns where the switch depends on a branch (a Protect that fails).
-- [ ] A Substitute's hit points (7 / 0), and Leech Seed healing whatever stands
+- [x] A Substitute's hit points (7 / 0), and Leech Seed healing whatever stands
       in the seeder's place (7 / 1).
-- [ ] Curse (5 / 1), Stockpile (5 / 4), Stealth Rock (5 / 0), Heal Block (3 / 0),
+- [x] Curse (5 / 1), Stockpile (5 / 4), Stealth Rock (5 / 0), Heal Block (3 / 0),
       Ally Switch (0 / 2), Power Swap (0 / 2), Focus Energy, Tidy Up, Magic
       Powder and Cute Charm (one turn or so each).
-- [ ] Each against Showdown's Champions data, with a test first, shown failing.
+- [x] Each against Showdown's Champions data, with a test first, shown failing.
       The resolver check before and after.
 
 ### Task 3 — The PO's team, loaded in (done ahead, `5d13538` and `50e3ba8`)
@@ -107,7 +111,7 @@ format (turns at `7df9b1d`, Reg M-A / Reg M-B):
       Section 25.
 
 ### Task 4 — The report
-- [ ] Per format throughout. The test split stays closed.
+- [x] Per format throughout. The test split stays closed.
 
 ## Later (not this week)
 
