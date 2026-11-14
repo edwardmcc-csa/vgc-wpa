@@ -996,6 +996,8 @@ def _options(a: argparse.Namespace) -> argparse.Namespace:  # pragma: no cover
         budget=4000,
         no_typical=False,
         speed_beliefs=False,
+        spread_hits=True,  # Week 12 Task 4
+        spread_damage=True,  # Week 13 Task 1 (PO, 14 Nov)
         leads=Path("models_v4/leads.json"),
         replace=Path("models_v4/replace.json"),
         hidden_sets=bool(getattr(a, "hidden", False)),

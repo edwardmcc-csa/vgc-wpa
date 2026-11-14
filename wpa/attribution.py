@@ -1000,7 +1000,7 @@ class Tools:
     # hits branch on the likely spreads where they decide a knock-out (Week 12
     # Task 4); off until measured
     spread_hits: bool = False
-    spread_damage: bool = False
+    spread_damage: bool = True
     # the opponent's sheet hidden (Week 12 Task 5): the sets in the statistics
     # (`wpa.hidden.SetStore`) and, per format, the one-sided model trained with
     # the opponent's sheet blanked; None: the sheets as the log shows them
@@ -2248,7 +2248,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     tools.speed_beliefs = bool(getattr(a, "speed_beliefs", False))
     tools.strength = strength_value(a)
     tools.spread_hits = bool(getattr(a, "spread_hits", False))
-    tools.spread_damage = bool(getattr(a, "spread_damage", False))
+    tools.spread_damage = bool(getattr(a, "spread_damage", True))
     tools.measure_strengths = measure_values(a)
     if getattr(a, "hidden_sets", False):
         from wpa.hidden import SetStore
@@ -2972,8 +2972,10 @@ def parser():
     )
     p.add_argument(
         "--spread-damage",
-        action="store_true",
-        help="every hit's damage weighed over the likely spreads (Week 13 Task 1)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="every hit's damage weighed over the likely spreads (Week 13 Task 1; "
+        "on since the PO's decision of 14 Nov: about twice the resolver's time)",
     )
     p.add_argument(
         "--hidden-sets",

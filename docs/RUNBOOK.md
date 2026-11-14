@@ -1315,6 +1315,9 @@ and never reads the test split.
 - `--fresh` starts a run over.
 - `--spread-hits` runs it with Task 4's spread method (Section 23). The run's
   column is named with "-spread-hits".
+- Since Week 13 every hit is weighed over the likely spreads (Section 26), and
+  the run's column is named with "-spread-damage". `--no-spread-damage` runs it
+  without. An earlier commit's code that does not have it runs as it was.
 
 **What the table shows, per format**
 - **Fully modelled:** the share of turns where nothing happened that the
@@ -1331,6 +1334,12 @@ and never reads the test split.
 - **Boards per turn** and **resolver time per turn:** what it costs.
 - **Partly modelled, turns by reason:** what is left to model, with each run's
   count.
+- **Clean hits** (Week 13): a Pokemon hit by one move and nothing else that
+  turn (no other HP change, critical hit, item or ability; no weather), on
+  turns whose choices the log shows whole. Single-target and spread moves
+  apart, then real damage over the resolver's estimate: the median (1.00 is
+  right on), and the shares where the estimate is too high or too low by
+  over 10%.
 
 ---
 
@@ -1512,6 +1521,28 @@ Save your team once and the tool uses it everywhere.
 - When your team has a Pokemon the format's statistics have not seen, or have
   seen on under 1% of teams, it says so at the top: the numbers for those are
   rough. A species counts its Mega forms (Raichu-Mega-X is a Raichu).
+
+## 26. Week 13: damage over the spreads players run, and the rules added
+
+**Every hit is weighed over the spreads players run** (on by default since
+your decision of 14 Nov). A hit's damage is averaged over the attacker's and
+the target's likely spreads (each with at least 10% of the belief, three at
+most), not only the likeliest. It costs about twice the resolver's time per
+turn. To run without it, add `--no-spread-damage` to `python -m
+wpa.attribution` or `python -m wpa.resolver_check`. The advice and the replay
+report always use it.
+
+**Rules added** (each from the log onto the board, and played out):
+- Abilities that change hands: Skill Swap, Entrainment, Simple Beam.
+- Gravity, Imprison, Curse, Stockpile, Salt Cure, Heal Block (and Psychic
+  Noise), Power Swap, Destiny Bond, Magic Powder, Focus Energy, Tidy Up.
+- Hazards: Stealth Rock, Spikes, Toxic Spikes and Sticky Web, on whoever comes
+  in (the board keeps them; Heavy-Duty Boots stop them).
+- Sitrus Berry after any damage; Life Dew heals the ally too; Leech Seed heals
+  whoever stands in the seeder's place.
+- A Mega Evolution shows in the log even when the move does not; weather ends
+  before its damage on its last turn.
+- Sinistcha-Masterpiece and Maushold-Four take their species' spreads and sets.
 
 ---
 

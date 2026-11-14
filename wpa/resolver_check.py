@@ -612,6 +612,14 @@ def child_command(a: argparse.Namespace, dest: Path, root: Path) -> list[str]:
         p = Path(p)
         return str(p if p.is_absolute() else (Path(root) / p).resolve())
 
+    # code from before Week 13 has no --spread-damage: run it as it was
+    try:
+        knows = "--spread-damage" in (Path(dest) / "wpa" / "resolver_check.py").read_text(
+            encoding="utf-8"
+        )
+    except OSError:
+        knows = False
+    a = argparse.Namespace(**{**vars(a), "spread_damage": a.spread_damage and knows})
     cmd = [sys.executable, "-m", "wpa.resolver_check"]
     cmd += ["--label", run_label(a, a.code), "--expect-code", full(dest)]
     for flag, value in (
@@ -635,8 +643,8 @@ def child_command(a: argparse.Namespace, dest: Path, root: Path) -> list[str]:
         cmd += ["--max-games", str(a.max_games)]
     if a.spread_hits:
         cmd.append("--spread-hits")
-    if a.spread_damage:
-        cmd.append("--spread-damage")
+    if knows:
+        cmd.append("--spread-damage" if a.spread_damage else "--no-spread-damage")
     if a.fresh:
         cmd.append("--fresh")
     return cmd
@@ -847,8 +855,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--spread-damage",
-        action="store_true",
-        help="every hit's damage weighed over the likely spreads (Week 13 Task 1)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="every hit's damage weighed over the likely spreads (Week 13 Task 1; "
+        "on by default since 14 Nov)",
     )
     p.add_argument("--cap", type=int, default=300)
     p.add_argument("--label", default=None, help=argparse.SUPPRESS)

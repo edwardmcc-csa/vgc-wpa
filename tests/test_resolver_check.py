@@ -376,32 +376,44 @@ def test_a_trial_run_can_stop_after_a_few_games():
 
 
 def test_a_run_with_spread_hits_is_named_for_it_and_passes_it_on(tmp_path):
-    a = RC.parse_args(["--spread-hits"])
+    a = RC.parse_args(["--spread-hits", "--no-spread-damage"])
     assert a.spread_hits is True
     assert RC.run_label(a, "abc1234") == "abc1234-spread-hits"
-    assert RC.run_label(RC.parse_args([]), "abc1234") == "abc1234"
-    a = RC.parse_args(["--code", "9e9ef90", "--spread-hits"])
+    plain = RC.parse_args(["--no-spread-damage"])
+    assert RC.run_label(plain, "abc1234") == "abc1234"
+    a = RC.parse_args(["--code", "9e9ef90", "--spread-hits", "--no-spread-damage"])
     cmd = RC.child_command(a, tmp_path / "code", Path.cwd())
     assert "--spread-hits" in cmd
     assert cmd[cmd.index("--label") + 1] == "9e9ef90-spread-hits"
 
 
 def test_a_run_with_spread_damage_is_named_for_it_and_passes_it_on(tmp_path):
-    """Week 13 Task 1: every hit weighed over the likely spreads."""
-    a = RC.parse_args(["--spread-hits", "--spread-damage"])
+    """Week 13 Task 1: every hit weighed over the likely spreads, on by default
+    since the PO's decision (14 Nov)."""
+    a = RC.parse_args(["--spread-hits"])
     assert a.spread_damage is True
     assert RC.run_label(a, "abc1234") == "abc1234-spread-hits-spread-damage"
-    a = RC.parse_args(["--code", "9e9ef90", "--spread-damage"])
-    cmd = RC.child_command(a, tmp_path / "code", Path.cwd())
+    # an earlier commit's code that has it gets it; older code is run as it was
+    knows = tmp_path / "new" / "wpa"
+    knows.mkdir(parents=True)
+    (knows / "resolver_check.py").write_text('p.add_argument("--spread-damage")')
+    a = RC.parse_args(["--code", "9e9ef90"])
+    cmd = RC.child_command(a, tmp_path / "new", Path.cwd())
     assert "--spread-damage" in cmd
     assert cmd[cmd.index("--label") + 1] == "9e9ef90-spread-damage"
+    cmd = RC.child_command(a, tmp_path / "old", Path.cwd())
+    assert not any("spread-damage" in x for x in cmd)
+    assert cmd[cmd.index("--label") + 1] == "9e9ef90"
 
 
-def test_the_analysis_and_advice_take_spread_damage():
+def test_the_analysis_and_advice_take_spread_damage_by_default():
     from wpa import attribution as A
+    from wpa import replay as RP
 
-    assert A.parser().parse_args(["--spread-damage"]).spread_damage is True
-    assert A.parser().parse_args([]).spread_damage is False
+    assert A.parser().parse_args([]).spread_damage is True
+    assert A.parser().parse_args(["--no-spread-damage"]).spread_damage is False
+    opts = RP._options(NS(models=None, dex_tables=None, moves_dir=None))
+    assert opts.spread_damage is True and opts.spread_hits is True
 
 
 # --------------------------------------------------------------------------
