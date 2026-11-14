@@ -16,7 +16,7 @@ import pytest
 from tests.test_board_effects import at_turn_start
 from tests.test_more_mechanics import _mon, _turns, needs_showdown
 from tests.test_resolver import ROOT, SHEETS, SPREADS, board, p_of
-from tests.test_week12_mechanics import P1_QUIET, _bench
+from tests.test_week12_mechanics import P1_QUIET, SINISTCHA, _bench
 from wpa import resolver as R
 from wpa.choices import Action
 
@@ -811,3 +811,75 @@ def test_imposter_copies_the_foe_opposite_when_it_comes_in(tools):
             x.pop("slot", None)
     outs = _go(rv, b, sw, BOTH_DANCE)
     assert set().union(*(o.partial for o in outs)) == {"imposter: the foe opposite"}
+
+
+@needs_showdown
+def test_magic_bounce_sends_a_status_move_back_at_its_user(tools):
+    """Hatterene, Espeon, Mega Absol (game 2634826863, Parting Shot twice): a
+    move with the reflectable flag aimed at it is used back at its user."""
+    rv = _with(tools, p2={1: {"ability": "magicbounce"}})
+    wisp = (
+        Action(0, "move", move="protect"),
+        Action(1, "move", move="willowisp", target=("foe", 1)),
+    )
+    outs = _go(rv, board(), wisp, BOTH_DANCE)
+    assert _no_partial(outs)
+    assert not any(o.sides["p2"][1]["status"] for o in outs)
+    burnt = p_of(outs, lambda o: o.sides["p1"][1]["status"] == "brn")
+    assert burnt == pytest.approx(0.85, abs=0.001)  # Will-O-Wisp's accuracy
+    rocks = (Action(0, "move", move="stealthrock"), Action(1, "move", move="protect"))
+    for o in _go(rv, board(), rocks, BOTH_DANCE):
+        assert o.field.sides["p1"].get("stealthrock") == 1
+        assert not o.field.sides["p2"].get("stealthrock")
+
+
+@needs_showdown
+def test_a_bounced_parting_shot_lowers_its_user_and_switches_the_bouncer_out(tools):
+    import dataclasses
+
+    dex, moves, calc = tools
+    sheets = {
+        "p1": (
+            SHEETS["p1"][0],
+            dataclasses.replace(SHEETS["p1"][1], ability="magicbounce"),
+            SINISTCHA,
+        ),
+        "p2": SHEETS["p2"],
+    }
+    rv = R.Resolver(
+        dex, moves, calc, sheets, SPREADS, switch_in=lambda s, f, r, bench: [1.0]
+    )
+    b = board()
+    b["p1"].append(dict(b["p1"][0], species="sinistcha", active=False))
+    shot = (
+        Action(0, "move", move="partingshot", target=("foe", 1), switch_to=None),
+        Action(1, "move", move="protect"),
+    )
+    outs = _go(rv, b, BOTH_DANCE, shot)
+    assert outs and _no_partial(outs)
+    for o in outs:
+        assert o.sides["p2"][0]["active"]  # Incineroar stays in
+        assert o.sides["p2"][0]["boosts"] == {"atk": -1, "spa": -1}
+        assert not o.sides["p1"][1]["active"] and o.sides["p1"][2]["active"]
+
+
+def test_team_preview_shows_each_pokemons_gender_before_it_comes_in():
+    """Game 2625643887 turn 3: Lopunny (Cute Charm) came in during the turn; its
+    gender was unknown until its switch-in, so the turn was marked. Team
+    preview's lines show every gender."""
+    from tests.test_board_effects import game
+
+    log = game(
+        "|t:|1\n|move|p2a: Inci|Fake Out|p1a: Whim\n|-damage|p1a: Whim|90/100",
+        "|upkeep",
+        "|t:|2\n|turn|2",
+    ).replace(
+        "|showteam|p1|",  # before the sheets, as in Showdown's logs
+        "|poke|p1|Whim, L50, F|\n|poke|p1|Rock, L50|\n|poke|p1|Back, L50, M|\n"
+        "|poke|p2|Inci, L50, M|\n|poke|p2|Rime, L50, F|\n|showteam|p1|",
+        1,
+    )
+    s = at_turn_start(log, 1)
+    assert _mon(s, 2)["gender"] == "M" and not _mon(s, 2)["active"]
+    assert _mon(s, 1)["gender"] == "N"
+    assert _theirs(s, 2)["gender"] == "F"

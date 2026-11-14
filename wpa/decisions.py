@@ -201,6 +201,8 @@ class _Board:
         self.species: dict[str, list[str]] = {}
         # each one's moves, from the sheet (what Transform copies, Week 13)
         self.movesets: dict[str, list[tuple[str, ...]]] = {}
+        # each one's gender, from team preview (before the sheets in the log)
+        self.preview: dict[tuple[str, str], str] = {}
         self.mons: dict[str, list[dict]] = {}
         self.slots: dict[str, dict[str, int | None]] = {
             r: {"a": None, "b": None} for r in ROLES
@@ -246,6 +248,11 @@ class _Board:
                 "rev_moves": set(),
                 "rev_item": "",
                 "rev_ability": "",
+                **(
+                    {"gender": self.preview[(role, to_id(m.species))]}
+                    if (role, to_id(m.species)) in self.preview
+                    else {}
+                ),
             }
             for m in mons
         ]
@@ -632,6 +639,15 @@ class _Board:
         t = p[1]
         ident = p[2]
         role = ident[:2]
+        if t == "poke" and len(p) > 3 and role in ROLES:
+            # team preview: each one's gender (Cute Charm, Week 13), usually
+            # before the sheets; none shown is none to have (N)
+            sex = [d for d in p[3].split(", ")[1:] if d in ("M", "F")]
+            self.preview[(role, to_id(p[3].split(",")[0]))] = sex[0] if sex else "N"
+            idx = self._index(role, "", p[3]) if self.mons.get(role) else None
+            if idx is not None:
+                self.mons[role][idx]["gender"] = sex[0] if sex else "N"
+            return
         if role not in self.mons:
             return
         if t in ("switch", "drag") and len(p) > 4:

@@ -1773,7 +1773,11 @@ class Resolver:
 
     # ---------------------------------------------------------------- status
 
-    def _status(self, w: _World, role: str, a: Action, m: Mapping) -> list[_World]:
+    def _status(
+        self, w: _World, role: str, a: Action, m: Mapping, bounced: bool = False
+    ) -> list[_World]:
+        """A status move. `bounced`: used back by a Magic Bounce holder at the
+        one that used it (`_bounces`; it does not bounce again)."""
         mv = a.move
         st = w.sides[role][a.user]
         if mv == "roost":
@@ -1810,7 +1814,11 @@ class Resolver:
             return [w]
         sc = m.get("sideCondition")
         if sc in HAZARDS:  # on the foes' side, a layer more (Week 13)
-            side = w.fld.sides[_other(role)]
+            back = not bounced and any(
+                self._bounces(w, role, a, m, (_other(role), j))
+                for j in range(len(w.sides[_other(role)]))
+            )
+            side = w.fld.sides[role if back else _other(role)]  # Magic Bounce
             side[sc] = min(HAZARDS[sc], side.get(sc, 0) + 1)
             return [w]
         if sc in SIDE_TIMED:
@@ -1914,6 +1922,14 @@ class Resolver:
                     failed.add(id(b))
                     nxt.append(b)
                     continue
+                if not bounced and self._bounces(b, role, a, m, tgt):
+                    # used back at its user (Showdown: `useMove` by the holder);
+                    # the user's own move fails, so it does not switch out
+                    back = Action(tgt[1], "move", move=mv, target=("foe", a.user))
+                    got = self._status(b, tgt[0], back, m, bounced=True)
+                    failed.update(id(g) for g in got)
+                    nxt += got
+                    continue
                 if (
                     prankster
                     and tgt[0] != role
@@ -1984,6 +2000,21 @@ class Resolver:
                 x for b in out for x in (self._drag(b, targets[0]) if targets else [b])
             ]
         return out
+
+    def _bounces(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> bool:
+        """Magic Bounce (Week 13): a foe that has it sends back a move with the
+        reflectable flag aimed at it or at its side, unless the user has Mold
+        Breaker (or the like)."""
+        if tgt[0] == role or "reflectable" not in (m.get("flags") or ()):
+            return False
+        x = w.sides[tgt[0]][tgt[1]]
+        if x["fainted"] or not x["active"]:
+            return False
+        user = w.sides[role][a.user]
+        return (
+            self.ability(tgt[0], tgt[1], x) == "magicbounce"
+            and self.ability(role, a.user, user) not in MOLD
+        )
 
     # ------------------------------------------------------- Week 13 Task 2
 

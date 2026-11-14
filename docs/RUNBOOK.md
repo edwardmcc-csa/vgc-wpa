@@ -1546,8 +1546,10 @@ report always use it.
 - Ally Switch: the two change places, so a move aimed at one's place lands on
   the other (a third of the time when used the turn before).
 - Cute Charm: a contact hit can infatuate the attacker (30%, opposite genders,
-  as each switch-in shows them); an infatuated Pokemon cannot move half the
+  as team preview shows them); an infatuated Pokemon cannot move half the
   time, until the one that caused it leaves.
+- Magic Bounce: a status move aimed at its holder, or hazards at its side, go
+  back to the user; a bounced Parting Shot switches the holder out.
 - Transform (Imposter): Ditto copies the foe opposite, its stats but HP, form,
   ability, moves and stat stages, and keeps its own item. Its choices are the
   copied moves. The board says which place each Pokemon on the field is in.
