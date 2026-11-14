@@ -1554,6 +1554,82 @@ report always use it.
   ability, moves and stat stages, and keeps its own item. Its choices are the
   copied moves. The board says which place each Pokemon on the field is in.
 
+
+## 27. Week 14: Reg M-C, and the steps for any new regulation
+
+**What changed.** Reg M-C is a third format (DEFINITIONS revision 12). Its
+rules come from a second copy of Showdown's code, `pokemon-showdown-mc`
+(Showdown's own, 13 Nov 2026). Showdown's current code no longer has M-A's
+rules, so M-A and M-B keep the June copy and their numbers don't move.
+
+**1. The second copy of Showdown's code** (once on each computer; a few
+minutes). From the repo root:
+```
+git submodule update --init pokemon-showdown-mc
+cd pokemon-showdown-mc
+npm ci
+node build
+cd ..
+python scripts\check_pins.py
+```
+The last line should say `OK` for both copies (and poke-env).
+If `npm ci` stops with no message in PowerShell, run the same lines in
+Command Prompt instead (Start, type `cmd`); on your computer that worked on
+14 Nov, with Node 26.
+
+**2. The Reg M-C games and statistics** (about 9 hours for 60,000 games; it
+can run overnight; stopping it is safe, and running it again carries on):
+```
+python -m wpa.fetch_replays
+python -m wpa.fetch_replays --finish
+python -m wpa.fetch_replays --usage 2026-09 2026-10
+```
+The games go to `battle_logs_mc\`, the statistics to `usage_stats\`. Only
+best-of-three games are taken: each shows both team sheets.
+
+**3. Parse, split and shard them** (about an hour):
+```
+python -m wpa.reparse --battle_logs_dir battle_logs_mc --num_workers 6
+python -m wpa.splits --add-format regmc --into splits.json
+python -m wpa.features --split-logs logs_mc --logs battle_logs_mc --shards 16
+```
+The second line adds M-C's train, validation and test games to `splits.json`
+and checks that no M-A or M-B game moved before it writes.
+
+**4. The resolver check on Reg M-C** (about 40 minutes):
+```
+python -m wpa.resolver_check --add-sample regmc 300 --logs logs_mc
+python -m wpa.resolver_check --spread-hits
+python -m wpa.resolver_check --report
+```
+The first line adds 300 M-C validation sets to the check's sample, once.
+`build\w14\mc.cmd` does steps 3 and 4 in one go.
+
+**Rules added this week** (each in every format where it can happen):
+- Terrain Seeds; the abilities that take in a move (Volt Absorb, Water
+  Absorb, Earth Eater, Sap Sipper, Motor Drive and the like); the abilities a
+  damaging hit sets off (Justified, Thermal Exchange, Stamina, Weak Armor and
+  the like, Seed Sower); Moxie; the abilities that keep a status off.
+- Air Balloon, Red Card, Normal Gem, Leek; Eject Button's switch-in from the
+  forced-switch model.
+- Meteor Assault's recharge, Glaive Rush, Revival Blessing, Milk Drink on an
+  ally, Court Change.
+
+**For the next regulation** (M-D, say), the same steps with its names:
+1. **Pin a copy of Showdown that has it:** `git submodule add --depth 1
+   https://github.com/smogon/pokemon-showdown.git pokemon-showdown-md`, its
+   commit in `docs/PINNED-VERSIONS.md` and in `SHOWDOWN_COPIES` in
+   `scripts\check_pins.py`; then step 1 above in its folder.
+2. **A DEFINITIONS §15 revision** for the new format, approved before the code.
+3. **The configuration:** two lines in `LOG_NAMES` (`wpa\formats.py`), one
+   each in `FORMAT_MODS` and `FORMAT_COPIES` (`wpa\durations.py`); then
+   `python -m wpa.durations --out docs\DURATIONS.md`.
+4. **Steps 2 to 4** with `--format gen9championsvgc2026regmdbo3`,
+   `--add-format regmd`, `--add-sample regmd 300` and their own folders.
+5. **The resolver:** the rules the regulation adds, each with a test first;
+   the resolver check marks what is left.
+6. **The models** (Week 15 adds this part of the runbook).
+
 ---
 
 ## If something goes wrong
