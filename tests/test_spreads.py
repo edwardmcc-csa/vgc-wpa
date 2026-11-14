@@ -66,6 +66,38 @@ def test_the_prior_keeps_the_sheet_nature_and_has_a_default():
     assert d.nature == "timid" and d.sps == (32, 0, 0, 32, 0, 2) and d.weight == 1.0
 
 
+def test_a_form_the_statistics_count_under_its_species_takes_its_spreads():
+    """Week 13 Task 1: the statistics count Sinistcha-Masterpiece as Sinistcha
+    (96 of the resolver check's 892 games) and Maushold-Four as Maushold. Under
+    its own name it got the default (full HP and Special Attack), where real
+    Sinistchas put their points in the defences, so hits on it were too strong.
+    A form the statistics list apart (Basculegion-F) keeps its own; a species
+    not listed at all keeps the default."""
+    from wpa.team_sheets import Dex
+
+    tea = {"baseSpecies": "Sinistcha", "baseStats": {"atk": 60, "spa": 121}}
+    dex = Dex(
+        species={
+            "sinistcha": {"name": "Sinistcha", **tea},
+            "sinistchamasterpiece": {"name": "Sinistcha-Masterpiece", **tea},
+            "basculegion": {"name": "Basculegion", "baseSpecies": "Basculegion"},
+            "basculegionf": {"name": "Basculegion-F", "baseSpecies": "Basculegion"},
+        },
+        moves={},
+        items={},
+    )
+    bulky = S.Spread("bold", (32, 0, 15, 0, 19, 0), 1.0)
+    usage = {
+        "sinistcha": [bulky],
+        "basculegion": [S.Spread("adamant", (2, 32, 0, 0, 0, 32), 1.0)],
+        "basculegionf": [S.Spread("modest", (2, 0, 0, 32, 0, 32), 1.0)],
+    }
+    assert S.prior(usage, mon("sinistchamasterpiece"), dex) == [bulky]
+    assert S.prior(usage, mon("basculegionf"), dex)[0].nature == "modest"
+    (d,) = S.prior({}, mon("sinistchamasterpiece"), dex)
+    assert d.sps == (32, 0, 0, 32, 0, 2)
+
+
 def test_a_hit_moves_belief_to_the_spread_it_fits():
     bulky, frail = (
         S.Spread("bold", (32, 0, 32, 0, 2, 0), 0.5),

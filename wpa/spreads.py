@@ -121,8 +121,10 @@ def default_spread(nature: str, base_stats: Mapping[str, int] | None) -> Spread:
 
 def prior(usage: Mapping[str, list[Spread]], mon, dex, base_stats=None) -> list[Spread]:
     """Candidates for one sheet Pokemon. Its Mega form's entry when it holds its
-    stone (the statistics list Megas apart), else its own. A nature shown on the
-    sheet (Reg M-B) keeps only spreads with that nature."""
+    stone (the statistics list Megas apart), else its own, else (a form the
+    statistics count under its species, such as Sinistcha-Masterpiece) its
+    species'. A nature shown on the sheet (Reg M-B) keeps only spreads with
+    that nature."""
     from wpa.team_sheets import form_of
 
     keys = [mon.species]
@@ -131,6 +133,9 @@ def prior(usage: Mapping[str, list[Spread]], mon, dex, base_stats=None) -> list[
         entry = form_of(mon, dex)
         if entry.get("isMega"):
             keys.insert(0, _id(entry["name"]))
+        base = _id(dex.species.get(mon.species, {}).get("baseSpecies", ""))
+        if base and base != mon.species:
+            keys.append(base)
     cands = next((usage[k] for k in keys if k in usage), [])
     nature = _id(mon.nature)
     if nature:
