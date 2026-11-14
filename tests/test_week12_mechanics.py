@@ -12,6 +12,8 @@ of all turns, and none was marked partly modelled:
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from tests.test_board_effects import at_turn_start
@@ -553,3 +555,65 @@ def test_instruct_repeats_last_turns_move_unless_it_charges_or_there_is_none(
     outs = rv.resolve(b, R.Field(trickroom=3), {"p1": act, "p2": P2_QUIET})
     assert {o.sides["p2"][0]["boosts"].get("atk", 0) for o in outs} == {attack}
     assert "move:instruct" not in set().union(*(o.partial for o in outs))
+
+
+# Week 13 worked ahead: the switch-in after a pivot move was marked partly
+# modelled on 17 turns at 7df9b1d. Most were a Parting Shot that failed, so no
+# one switched: Prankster into a Dark type (3), Soundproof (2).
+
+PRANKSTER_WHIMSICOTT = SheetMon(
+    2, "whimsicott", "", "prankster", ("partingshot", "protect"), ""
+)
+
+
+def _bench(tools, p1=None, p2_second=None):
+    dex, moves, calc = tools
+    sheets = {
+        "p1": p1 or SHEETS["p1"],
+        "p2": (SHEETS["p2"][0], p2_second or SHEETS["p2"][1], SINISTCHA),
+    }
+    rv = R.Resolver(dex, moves, calc, sheets, SPREADS)
+    b = board()
+    b["p2"].append(mon("sinistcha"))
+    b["p2"][2].update(active=False, hp_fraction=1.0)
+    return rv, b
+
+
+def _shot(target):
+    return (
+        Action(0, "move", move="swordsdance"),
+        Action(1, "move", move="partingshot", target=target, switch_to=2),
+    )
+
+
+P1_QUIET = (Action(0, "move", move="protect"), Action(1, "move", move="swordsdance"))
+
+
+@needs_showdown
+def test_a_prankster_parting_shot_into_a_dark_type_fails_and_no_one_switches(tools):
+    rv, b = _bench(tools, p2_second=PRANKSTER_WHIMSICOTT)
+    outs = rv.resolve(b, R.Field(), {"p1": P1_QUIET, "p2": _shot(("foe", 1))})
+    assert "switch-in after a pivot move" not in set().union(*(o.partial for o in outs))
+    for o in outs:  # Kingambit is Dark: the move fails, Whimsicott stays in
+        assert o.sides["p2"][1]["active"] and not o.sides["p2"][2]["active"]
+    # into Garchomp, it works: Sinistcha comes in
+    sd = (Action(0, "move", move="swordsdance"), Action(1, "move", move="protect"))
+    outs = rv.resolve(b, R.Field(), {"p1": sd, "p2": _shot(("foe", 0))})
+    hit = [o for o in outs if o.sides["p1"][0]["boosts"].get("atk")]
+    assert hit and all(o.sides["p2"][2]["active"] for o in hit)
+
+
+@needs_showdown
+def test_soundproof_blocks_a_sound_move_and_parting_shot_does_not_switch(tools):
+    p1 = _with(SHEETS, "p1", 0, ability="soundproof")["p1"]
+    rv, b = _bench(
+        tools,
+        p1=p1,
+        p2_second=dataclasses.replace(PRANKSTER_WHIMSICOTT, ability="infiltrator"),
+    )
+    quiet = (Action(0, "move", move="swordsdance"), Action(1, "move", move="protect"))
+    outs = rv.resolve(b, R.Field(), {"p1": quiet, "p2": _shot(("foe", 0))})
+    assert "switch-in after a pivot move" not in set().union(*(o.partial for o in outs))
+    for o in outs:
+        assert o.sides["p1"][0]["boosts"].get("atk", 0) == 2  # only its own +2
+        assert o.sides["p2"][1]["active"] and not o.sides["p2"][2]["active"]

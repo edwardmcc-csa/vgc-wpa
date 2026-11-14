@@ -1401,9 +1401,15 @@ class Resolver:
         tgt: tuple[str, int],
         spread: bool,
     ) -> bool:
+        flags = m.get("flags") or []
+        if (
+            "sound" in flags
+            and tgt != (role, a.user)
+            and self.ability(*tgt, w.sides[tgt[0]][tgt[1]]) == "soundproof"
+        ):
+            return True  # Soundproof: any sound move but its own, an ally's too
         if tgt[0] == role:
             return False
-        flags = m.get("flags") or []
         if tgt in w.protected and "protect" in flags and not m.get("breaksProtect"):
             return True
         if spread and (tgt[0], "wideguard") in w.guards:
@@ -1649,6 +1655,7 @@ class Resolver:
                     and tgt[0] != role
                     and "Dark" in self.types(*tgt, b.sides[tgt[0]][tgt[1]])
                 ):
+                    failed.add(id(b))  # it fails: no Parting Shot switch either
                     nxt.append(b)
                     continue
                 acc = self._accuracy(b, role, a, m, tgt)
