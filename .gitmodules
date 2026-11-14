@@ -2,3 +2,7 @@
 	path = pokemon-showdown
 	url = https://github.com/cameronangliss/pokemon-showdown.git
 	branch = vgc-bench
+[submodule "pokemon-showdown-mc"]
+	path = pokemon-showdown-mc
+	url = https://github.com/smogon/pokemon-showdown.git
+	shallow = true

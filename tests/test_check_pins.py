@@ -63,3 +63,18 @@ def test_the_damage_calculator_version_is_pinned_too(tmp_path):
         encoding="utf-8",
     )
     assert calc_version(lock) == "0.12.0"
+
+
+def test_both_pinned_showdown_copies_are_checked_for_drift():
+    """Week 14: a second copy of Showdown's code for Reg M-C (Showdown's current
+    code dropped M-A's rules). Both copies have a recorded commit, and the
+    drift check reads each from its own folder."""
+    from scripts.check_pins import PINS_FILE, SHOWDOWN_COPIES
+
+    assert SHOWDOWN_COPIES == {
+        "pokemon-showdown submodule": "pokemon-showdown",
+        "pokemon-showdown-mc submodule": "pokemon-showdown-mc",
+    }
+    text = PINS_FILE.read_text(encoding="utf-8")
+    for name in SHOWDOWN_COPIES:
+        assert len(parse_pin(text, name)) == 40

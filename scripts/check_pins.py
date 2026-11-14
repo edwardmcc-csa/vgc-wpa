@@ -19,6 +19,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 PINS_FILE = REPO_ROOT / "docs" / "PINNED-VERSIONS.md"
+# Each pinned copy of Showdown's code (Week 14): the June copy for Reg M-A and
+# M-B, and Showdown's own for Reg M-C (its current code dropped M-A's rules)
+SHOWDOWN_COPIES: dict[str, str] = {
+    "pokemon-showdown submodule": "pokemon-showdown",
+    "pokemon-showdown-mc submodule": "pokemon-showdown-mc",
+}
 
 
 def parse_pin(pins_text: str, name: str) -> str:
@@ -61,9 +67,9 @@ def check_drift(name: str, expected: str, actual: str) -> str | None:
     )
 
 
-def _actual_submodule_commit() -> str:
+def _actual_submodule_commit(folder: str = "pokemon-showdown") -> str:
     result = subprocess.run(
-        ["git", "-C", str(REPO_ROOT / "pokemon-showdown"), "rev-parse", "HEAD"],
+        ["git", "-C", str(REPO_ROOT / folder), "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
         check=True,
@@ -92,7 +98,10 @@ def _actual_poke_env_commit() -> str:
 def main() -> int:
     pins_text = PINS_FILE.read_text(encoding="utf-8")
     checks = [
-        ("pokemon-showdown submodule", _actual_submodule_commit),
+        *(
+            (name, lambda folder=folder: _actual_submodule_commit(folder))
+            for name, folder in SHOWDOWN_COPIES.items()
+        ),
         ("poke-env", _actual_poke_env_commit),
     ]
     failed = False
