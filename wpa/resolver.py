@@ -869,6 +869,10 @@ class Resolver:
             n["hp_fraction"] = 1.0  # first time in
         n.update(active=True, boosts={}, moved=False, last_move="", protect_streak=0)
         w.replaced[(role, old)] = (role, new)
+        # Leech Seed drains into the seeder's place: whoever comes in there
+        for x in w.sides[_other(role)]:
+            if x.get("seeded") == old:
+                x["seeded"] = new
         if entry:
             self._on_entry(w, role, new)
         return True
@@ -1612,7 +1616,12 @@ class Resolver:
         targets = self._targets(w, role, a, m)
         if m.get("heal") and m.get("target") in ("self", "allies", "allySide"):
             n, d = m["heal"]
-            self._heal(w, role, a.user, n / d)
+            if m.get("target") == "self":
+                self._heal(w, role, a.user, n / d)
+            else:  # Life Dew: the user and its ally (Week 13)
+                for j, x in enumerate(w.sides[role]):
+                    if x["active"] and not x["fainted"]:
+                        self._heal(w, role, j, n / d)
             return [w]
         if m.get("boosts") and m.get("target") == "self":
             self._boost(st, m["boosts"])
@@ -2482,9 +2491,8 @@ class Resolver:
                 t["bound"] = 6 if band else 8
         if new == 0:
             self._faint(w, tgt)
-        elif t.get("item") == "sitrusberry" and new <= max_hp / 2:
-            t["hp_fraction"] = min(1.0, (new + max_hp // 4) / max_hp)
-            t["item"], t["rev_item"] = "", "sitrusberry"
+        else:
+            self._sitrus(t, new, max_hp)
         # contact punishment
         if dealt > 0 and "contact" in (m.get("flags") or []):
             st = w.sides[role][a.user]
@@ -2561,6 +2569,16 @@ class Resolver:
         st["hp_fraction"] = new / max_hp
         if new == 0:
             self._faint(w, who)
+        else:
+            self._sitrus(st, new, max_hp)  # recoil, Rough Skin, the end of the turn
+
+    @staticmethod
+    def _sitrus(st: dict, hp: int, max_hp: int) -> None:
+        """Sitrus Berry: a quarter back once the holder is at half or less, from
+        any damage (Week 13: it was eaten only after a hit)."""
+        if st.get("item") == "sitrusberry" and hp <= max_hp / 2:
+            st["hp_fraction"] = min(1.0, (hp + max_hp // 4) / max_hp)
+            st["item"], st["rev_item"] = "", "sitrusberry"
 
     def _perish(self, w: _World) -> None:
         """Perish Song counts down after the other end-of-turn effects, in Speed
