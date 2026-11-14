@@ -384,3 +384,99 @@ def test_a_run_with_spread_hits_is_named_for_it_and_passes_it_on(tmp_path):
     cmd = RC.child_command(a, tmp_path / "code", Path.cwd())
     assert "--spread-hits" in cmd
     assert cmd[cmd.index("--label") + 1] == "9e9ef90-spread-hits"
+
+
+# --------------------------------------------------------------------------
+# Week 13 Task 1: the bias on clean hits
+# --------------------------------------------------------------------------
+
+NAMES = {"p1": ["Garchomp", "Incineroar"], "p2": ["Sinistcha", "Kingambit"]}
+
+
+def test_a_clean_hit_is_one_move_and_nothing_else_on_its_target():
+    """One hit from a move, and no other HP change, critical hit, item or
+    ability on the target that turn; no weather. A spread move is marked."""
+    lines = [
+        "|move|p1a: Garchomp|Dragon Claw|p2b: Kingambit",
+        "|-damage|p2b: Kingambit|70/100",
+        "|move|p1b: Incineroar|Heat Wave|p2a: Sinistcha|[spread] p2a",
+        "|-damage|p2a: Sinistcha|60/100",
+        "|move|p2b: Kingambit|Kowtow Cleave|p1b: Incineroar",
+        "|-crit|p1b: Incineroar",
+        "|-damage|p1b: Incineroar|40/100",
+        "|move|p2a: Sinistcha|Matcha Gotcha|p1a: Garchomp|[spread] p1a,p1b",
+        "|-damage|p1a: Garchomp|80/100",
+        "|-damage|p1a: Garchomp|70/100|[from] item: Life Orb",
+    ]
+    assert RC.clean_hits(lines, NAMES) == {("p2", 1): False, ("p2", 0): True}
+
+
+def test_no_clean_hit_in_weather_or_with_an_item_ability_or_second_hit():
+    hit = [
+        "|move|p1a: Garchomp|Dragon Claw|p2b: Kingambit",
+        "|-damage|p2b: Kingambit|70/100",
+    ]
+    assert RC.clean_hits(hit + ["|-weather|RainDance|[upkeep]"], NAMES) == {}
+    assert RC.clean_hits(hit + ["|-weather|none"], NAMES) == {("p2", 1): False}
+    for extra in (
+        "|-enditem|p2b: Kingambit|Chople Berry|[eat]",
+        "|-ability|p2b: Kingambit|Defiant|boost",
+        "|-heal|p2b: Kingambit|95/100|[from] item: Sitrus Berry",
+        "|-damage|p2b: Kingambit|50/100",
+        "|-activate|p2b: Kingambit|ability: Battle Armor",
+    ):
+        assert RC.clean_hits([*hit, extra], NAMES) == {}, extra
+
+
+def test_a_clean_hit_records_the_estimate_against_what_happened():
+    """The estimate is the median HP lost over the boards where the target is
+    hit and stays standing, by their chances; a hidden choice is left out."""
+    actual = {"p1": [mon(1.0)], "p2": [mon(0.5)]}
+    fake = Fake(
+        {
+            ((HIT,), (HIT,)): [
+                out([mon(1.0)], [mon(0.4)], prob=0.3),
+                out([mon(1.0)], [mon(0.45)], prob=0.3),
+                out([mon(1.0)], [mon(0.0, True)], prob=0.2),
+                out([mon(1.0)], [mon(1.0)], prob=0.2),
+            ]
+        }
+    )
+    ts = setup(fake, {"p1": HIT, "p2": HIT}, actual)
+    rec = RC.check_turn(ts, PRIORITY, clean={("p2", 0): False})
+    assert rec["hits"] == [["p2", 0, False, 0.6, 0.5]]
+    assert "hits" not in RC.check_turn(ts, PRIORITY)
+
+
+def test_the_summary_gives_the_bias_on_clean_hits():
+    recs = [
+        {
+            "tag": "a",
+            "format": "regma",
+            "turn": 1,
+            "found": True,
+            "partial": [],
+            "missed": None,
+            "off": None,
+            "seconds": 0.1,
+            "boards": 2,
+            "hits": [
+                ["p2", 0, False, 0.5, 0.5],
+                ["p2", 1, True, 0.5, 0.4],
+                ["p1", 0, False, 0.4, 0.5],
+                ["p1", 1, False, 0.3, 0.3],
+            ],
+        }
+    ]
+    s = RC.summarise(recs)["regma"]
+    assert sorted(s["hits"]) == [
+        (False, 0.3, 0.3),
+        (False, 0.4, 0.5),
+        (False, 0.5, 0.5),
+        (True, 0.5, 0.4),
+    ]
+    text = "\n".join(RC.summary_lines({"run": recs}))
+    assert "clean hits (single / spread)" in text and "3 / 1" in text
+    assert "real damage / estimate, median" in text and "1.00" in text
+    assert "estimate too high by over 10%" in text and "25.0%" in text
+    assert "estimate too low by over 10%" in text

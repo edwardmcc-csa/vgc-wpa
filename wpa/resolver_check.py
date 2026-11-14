@@ -70,11 +70,86 @@ def _knock_out(before: Mapping, after: Mapping) -> bool:
     )
 
 
-def check_turn(ts: Any, priority: Mapping[str, int], tol: float = TOL) -> dict:
+_OTHER = ("-heal", "-sethp", "-crit", "-enditem", "-item", "-ability", "-activate")
+
+
+def clean_hits(
+    lines: Sequence[str], names: Mapping[str, Sequence[str]]
+) -> dict[tuple[str, int], bool]:
+    """The Pokemon hit cleanly in a turn's log lines (Week 13 Task 1): one hit
+    from a move and nothing else on it (no other HP change, critical hit, item
+    or ability), with no weather that turn. Each as (side, sheet position) ->
+    whether the move was a spread move. `names`: each side's Pokemon as the
+    log names them, in sheet order."""
+    hits: Counter = Counter()
+    spread: dict[tuple[str, int], bool] = {}
+    other: set[tuple[str, int]] = set()
+    last_spread = False
+
+    def who(field: str) -> tuple[str, int] | None:
+        side, _, name = field.partition(": ")
+        role = side[:2]
+        if role not in names or name not in names[role]:
+            return None
+        return role, list(names[role]).index(name)
+
+    for line in lines:
+        f = line.split("|")
+        if len(f) < 3:
+            continue
+        kind = f[1]
+        if kind == "-weather" and f[2] != "none":
+            return {}
+        if kind == "move":
+            last_spread = "[spread]" in line
+            continue
+        if kind not in ("-damage", *_OTHER):
+            continue
+        pk = who(f[2])
+        if pk is None:
+            continue
+        if kind == "-damage" and "[from]" not in line and "fnt" not in line:
+            hits[pk] += 1
+            spread[pk] = last_spread
+        else:
+            other.add(pk)
+    return {pk: spread[pk] for pk, n in hits.items() if n == 1 and pk not in other}
+
+
+def _hit(ts: Any, outs: Sequence, r: str, i: int) -> tuple[float, float] | None:
+    """A clean hit's estimate (the median HP lost over the boards where the
+    Pokemon is hit and stays standing, by their chances) and what it lost."""
+    before = ts.tv.sides[r][i]["hp_fraction"]
+    z = ts.actual[r][i]
+    if z["fainted"] or z["hp_fraction"] >= before - 1e-9:
+        return None
+    hit = [
+        (o.prob, o.sides[r][i]["hp_fraction"])
+        for o in outs
+        if not o.sides[r][i]["fainted"] and o.sides[r][i]["hp_fraction"] < before - 1e-9
+    ]
+    total = sum(p for p, _ in hit)
+    if total <= 0:
+        return None
+    acc = 0.0
+    for p, h in sorted(hit, key=lambda t: t[1]):
+        acc += p
+        if acc >= total / 2 - 1e-12:
+            return round(before - h, 4), round(before - z["hp_fraction"], 4)
+    return None
+
+
+def check_turn(
+    ts: Any,
+    priority: Mapping[str, int],
+    tol: float = TOL,
+    clean: Mapping[tuple[str, int], bool] | None = None,
+) -> dict:
     """One turn (a `wpa.attribution.TurnSetup`): the choices both players took
     resolved, each board against the board that happened. A miss says whether a
     knock-out differs on every board, or only HP (`off`: the closest board's
-    largest HP difference)."""
+    largest HP difference). With `clean` (`clean_hits`), and both choices shown
+    whole, each clean hit's estimate against what happened (`hits`)."""
     from wpa.attribution import _close, taken_mixture
 
     mixes = {}
@@ -104,7 +179,7 @@ def check_turn(ts: Any, priority: Mapping[str, int], tol: float = TOL) -> dict:
             missed, off = "hp", round(min(gaps), 4)
         else:
             missed = "knock-out"
-    return {
+    rec = {
         "tag": ts.base["tag"],
         "format": ts.base["format"],
         "turn": ts.base["turn"],
@@ -117,14 +192,47 @@ def check_turn(ts: Any, priority: Mapping[str, int], tol: float = TOL) -> dict:
         "boards": len(outs),
         "seconds": round(secs, 4),
     }
+    if clean is not None:
+        rec["hits"] = [
+            [r, i, sp, *got]
+            for (r, i), sp in sorted(clean.items())
+            if all(len(m) == 1 for m in mixes.values())
+            and (got := _hit(ts, outs, r, i)) is not None
+        ]
+    return rec
+
+
+def _segments(log: str) -> tuple[dict[str, list[str]], dict[int, list[str]]]:
+    """Each side's Pokemon as the log names them (sheet order), and each
+    turn's lines."""
+    from wpa.sheets import parse_showteam_message
+
+    names: dict[str, list[str]] = {}
+    turns: dict[int, list[str]] = {}
+    turn = None
+    for line in log.split("\n"):
+        if line.startswith("|showteam|"):
+            role, mons = parse_showteam_message(line)
+            names[role] = [m.name or m.species for m in mons]
+        elif line.startswith("|turn|"):
+            turn = int(line.split("|")[2])
+            turns[turn] = []
+        elif turn is not None:
+            turns[turn].append(line)
+    return names, turns
 
 
 def check_game(
-    setups: Iterable, priority: Mapping[str, int], tol: float = TOL
+    setups: Iterable,
+    priority: Mapping[str, int],
+    tol: float = TOL,
+    log: str | None = None,
 ) -> list[dict]:
     """Each decision point `wpa.attribution.turn_setups` gives: a turn checked,
     or a point left out (once, with its reason). An error in one turn is kept as
-    a point left out, and the game goes on."""
+    a point left out, and the game goes on. With the `log`, each turn's clean
+    hits are measured too."""
+    names, segs = _segments(log) if log is not None else ({}, {})
     recs = []
     for ts in setups:
         if isinstance(ts, list):
@@ -140,7 +248,12 @@ def check_game(
                 )
             continue
         try:
-            recs.append(check_turn(ts, priority, tol))
+            clean = (
+                clean_hits(segs.get(ts.base["turn"], []), names)
+                if log is not None
+                else None
+            )
+            recs.append(check_turn(ts, priority, tol, clean))
         except Exception as e:
             recs.append(
                 {
@@ -185,6 +298,7 @@ def summarise(recs: Iterable[Mapping]) -> dict[str, dict]:
                 "skipped": Counter(),
                 "seconds": 0.0,
                 "boards": 0,
+                "hits": [],
             },
         )
         s["games"].add(r.get("tag"))
@@ -209,7 +323,26 @@ def summarise(recs: Iterable[Mapping]) -> dict[str, dict]:
             s["offs"].append(r["off"])
         s["seconds"] += r.get("seconds", 0.0)
         s["boards"] += r.get("boards", 0)
+        for h in r.get("hits", ()):
+            s["hits"].append((bool(h[2]), float(h[3]), float(h[4])))
     return out
+
+
+def bias(hits: Sequence[tuple[bool, float, float]]) -> dict[str, float] | None:
+    """Clean hits' real damage against the estimate: the median ratio, and the
+    shares where the estimate is too high (real under 90% of it) or too low
+    (over 110%)."""
+    ratios = [real / est for _sp, est, real in hits if est > 0]
+    if not ratios:
+        return None
+    n = len(ratios)
+    return {
+        "single": sum(not sp for sp, _e, _r in hits),
+        "spread": sum(bool(sp) for sp, _e, _r in hits),
+        "median": statistics.median(ratios),
+        "high": sum(x < 0.9 for x in ratios) / n,
+        "low": sum(x > 1.1 for x in ratios) / n,
+    }
 
 
 def _pct(n: int, d: int) -> str:
@@ -316,6 +449,18 @@ def summary_lines(
             left.update(c)
         for why in sorted(left):
             lines.append(row(f"left out: {why}", (f"{c.get(why, 0):,}" for c in per)))
+        bs = [bias(s.get("hits", ())) for s in ss]
+        if any(bs):
+            for name, show in (
+                (
+                    "clean hits (single / spread)",
+                    lambda b: f"{b['single']:,} / {b['spread']:,}",
+                ),
+                ("real damage / estimate, median", lambda b: f"{b['median']:.2f}"),
+                ("estimate too high by over 10%", lambda b: f"{100 * b['high']:.1f}%"),
+                ("estimate too low by over 10%", lambda b: f"{100 * b['low']:.1f}%"),
+            ):
+                lines.append(row(name, (show(b) if b else "-" for b in bs)))
         lines.append(
             row(
                 "boards per turn",
@@ -550,7 +695,7 @@ def _one(job: tuple[str, str, str]) -> tuple[str, str, list[dict]]:  # pragma: n
     recs: list[dict] = []
     try:
         for ts in A.turn_setups(tag, log, fmt, _W["tools"]):
-            recs += check_game([ts], _W["priority"][fmt], _W["tol"])
+            recs += check_game([ts], _W["priority"][fmt], _W["tol"], log)
     except Exception as e:  # reported, not hidden
         why = f"error: {type(e).__name__}: {str(e)[:80]}"
         recs.append({"tag": tag, "format": fmt, "turn": None, "skipped": why})
