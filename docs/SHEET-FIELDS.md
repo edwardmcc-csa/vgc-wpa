@@ -69,3 +69,21 @@ regulation-split finding above, built on fixtures already checked into
 the repo (`tests/fixtures/sample_battles.json` for Reg M-B,
 `tests/fixtures/battles/early_forfeit.json` for Reg M-A) rather than new
 large data files.
+
+## Reg M-C (Week 14)
+
+Checked on the first 3,000 Reg M-C best-of-three games downloaded on 14 Nov
+2026 (`wpa.fetch_replays`, newest first): 36,000 Pokémon sheets.
+
+| Field | Reg M-C |
+|---|---|
+| `nature` | **100%**: shown, as in Reg M-B |
+| `item` | 99.9% |
+| `ability` | 100% |
+| `moves` (all four) | 99.9% |
+| `level` (50) | 100% |
+| `gender` | 93.6% (blank for genderless species) |
+| `evs` / `ivs` | 0% |
+
+So M-C is like M-B: nature is an observation, and stat points (EVs) stay
+hidden (DEFINITIONS §15, revision 12).
