@@ -454,6 +454,65 @@ def split_directory(
     )
 
 
+def add_format(
+    existing: dict, directory, fmt: str, num_workers: int = 4
+) -> tuple[dict, list[GameFile]]:
+    """Week 14 (DEFINITIONS §15, revision 12): split one format's state files
+    and put them into a split file already made, with its salt, proportions and
+    archetype settings. Only that format's files are read, and no game of
+    another format moves; a format already in the file is replaced by the new
+    split of its files (the same hash rule, so an unchanged game stays put)."""
+    import copy
+
+    for k in ("salt", "proportions", "games"):
+        if k not in existing:
+            raise ValueError(f"not a split file: no {k!r}")
+    salt = existing["salt"]
+    if salt != DEFAULT_SALT:
+        raise ValueError(f"the split file's salt is {salt!r}, not {DEFAULT_SALT!r}")
+    paths = []
+    for e in os.scandir(directory):
+        if not e.name.endswith(".json"):
+            continue
+        tag, _role = parse_state_filename(e.name)
+        if format_of(tag) == fmt:  # an unknown format raises, as everywhere
+            paths.append(str(Path(directory) / e.name))
+    paths.sort()
+    if num_workers <= 1:
+        scanned = list(map(scan_game_file, paths))
+    else:
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            scanned = list(executor.map(scan_game_file, paths, chunksize=500))
+    result = assign_splits(
+        scanned,
+        dict(existing["proportions"]),
+        salt,
+        True,
+        existing.get("archetype_holdout"),
+        existing.get("min_shared", DEFAULT_MIN_SHARED),
+    )
+    new = result.to_dict()
+    merged = copy.deepcopy(existing)
+    had = fmt in merged.get("counts", {})
+    games = {t: s for t, s in merged["games"].items() if format_of(t) != fmt}
+    games.update(new["games"])
+    merged["games"] = dict(sorted(games.items()))
+    for key in ("counts", "group_stats", "archetype_stats", "held_out_archetypes"):
+        merged.setdefault(key, {}).pop(fmt, None)
+        if fmt in new.get(key, {}):
+            merged[key][fmt] = new[key][fmt]
+    merged["dropped_files"] = [
+        x for x in merged.get("dropped_files", []) if format_of(x[0]) != fmt
+    ] + new["dropped_files"]
+    by_fmt = merged.setdefault("dropped_states_by_format", {})
+    before = by_fmt.get(fmt, 0) if had else 0
+    by_fmt[fmt] = new["dropped_states"]
+    merged["dropped_states"] = (
+        merged.get("dropped_states", 0) - before + new["dropped_states"]
+    )
+    return merged, scanned
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--dir", type=Path, default=Path("wpa_states"))
@@ -469,7 +528,32 @@ def main() -> None:
     )
     parser.add_argument("--min_shared", type=int, default=DEFAULT_MIN_SHARED)
     parser.add_argument("--out", type=Path, help="write the full assignment as JSON")
+    parser.add_argument(
+        "--add-format",
+        help="Week 14: split only this format's files into the split file --into",
+    )
+    parser.add_argument("--into", type=Path, default=Path("splits.json"))
     args = parser.parse_args()
+    if args.add_format:
+        existing = json.loads(args.into.read_text(encoding="utf-8"))
+        merged, scanned = add_format(
+            existing, args.dir, args.add_format, args.num_workers
+        )
+        moved = sum(
+            merged["games"].get(t) != s
+            for t, s in existing["games"].items()
+            if format_of(t) != args.add_format
+        )
+        if moved:  # cannot happen; checked again before writing anything
+            raise SystemExit(f"{moved} games of other formats would move: stopped")
+        n = sum(1 for t in merged["games"] if format_of(t) == args.add_format)
+        counts = merged["counts"][args.add_format]
+        print(f"{args.add_format}: {len(scanned):,} files, {n:,} games")
+        for s in SPLITS:
+            print(f"  {s}: " + ", ".join(f"{v:,} {k}" for k, v in counts[s].items()))
+        (args.out or args.into).write_text(json.dumps(merged), encoding="utf-8")
+        print(f"wrote {args.out or args.into}; no game of another format moved")
+        return
 
     result = split_directory(
         args.dir,

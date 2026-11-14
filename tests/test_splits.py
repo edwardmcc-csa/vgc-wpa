@@ -540,3 +540,60 @@ def test_split_directory_fails_loudly_on_an_unrecognised_file(tmp_path):
     (tmp_path / "gen9ou-1234-p1.json").write_text("[]", encoding="utf-8")
     with pytest.raises(UnknownFormatError):
         split_directory(tmp_path, num_workers=1)
+
+
+# --------------------------------------------------------------------------
+# Week 14: Reg M-C added to the splits already made (DEFINITIONS §15, rev 12)
+# --------------------------------------------------------------------------
+
+MC_BO3 = "gen9championsvgc2026regmcbo3"
+
+
+def _mc_sets(n, start=100_000):
+    files = []
+    for i in range(n):
+        files += bo3(
+            MC_BO3,
+            20_000 + i,
+            (1, 2, 3)[: 2 + i % 2],
+            team(start + 2 * i),
+            team(start + 2 * i + 1),
+        )
+    return files
+
+
+def test_adding_a_format_reads_only_its_files_and_moves_no_other_format(tmp_path):
+    from wpa.splits import add_format
+
+    old_dir, mc_dir = tmp_path / "old", tmp_path / "all"
+    old_dir.mkdir()
+    mc_dir.mkdir()
+    ab = corpus(60, 60, 30, 30)
+    _write_corpus(old_dir, ab)
+    _write_corpus(mc_dir, ab + _mc_sets(80))
+    existing = split_directory(old_dir, num_workers=1).to_dict()
+    merged, scanned = add_format(existing, mc_dir, "regmc", num_workers=1)
+    for tag, split in existing["games"].items():
+        assert merged["games"][tag] == split  # M-A and M-B: exactly as they were
+    mc = {t: s for t, s in merged["games"].items() if t.startswith(MC_BO3)}
+    assert len(mc) == len({f.tag for f in _mc_sets(80)})
+    assert set(mc.values()) == set(SPLITS)
+    assert (
+        merged["counts"]["regmc"]
+        and merged["counts"]["regma"] == existing["counts"]["regma"]
+    )
+    assert {format_of(g.tag) for g in scanned} == {"regmc"}  # read only M-C's
+
+
+def test_adding_a_format_twice_replaces_it_and_never_another(tmp_path):
+    from wpa.splits import add_format
+
+    d = tmp_path / "all"
+    d.mkdir()
+    _write_corpus(d, corpus(60, 60, 30, 30) + _mc_sets(80))
+    full = split_directory(d, num_workers=1).to_dict()
+    once, _ = add_format(full, d, "regmc", num_workers=1)
+    twice, _ = add_format(once, d, "regmc", num_workers=1)
+    assert once["games"] == twice["games"] == full["games"]  # the same hash rule
+    with pytest.raises(ValueError, match="salt"):
+        add_format(dict(full, salt="other"), d, "regmc", num_workers=1)
