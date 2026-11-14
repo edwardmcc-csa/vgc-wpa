@@ -223,8 +223,11 @@ def _point(tag: str, log: str, fmt: str, tools, role: str, at: str) -> _Point:
         rv_spreads,
         resolution=tools.resolution,
         cap=tools.cap,
-        dists=rv_dists if tools.speed_beliefs or tools.spread_hits else None,
+        dists=rv_dists
+        if tools.speed_beliefs or tools.spread_hits or tools.spread_damage
+        else None,
         spread_hits=tools.spread_hits,
+        spread_damage=tools.spread_damage,
         speed_beliefs=tools.speed_beliefs,
     )
     return _Point(

@@ -490,6 +490,7 @@ class Resolver:
         dists: Mapping[tuple[str, int], Sequence[tuple[Spread, float]]] | None = None,
         spread_hits: bool = False,
         speed_beliefs: bool | None = None,
+        spread_damage: bool = False,
     ) -> None:
         self.dex, self.moves, self.calc = dex, moves, calc
         self.sheets, self.spreads = sheets, spreads
@@ -500,6 +501,9 @@ class Resolver:
         self.dists = dists or {}
         self.speed_beliefs = bool(dists) if speed_beliefs is None else speed_beliefs
         self.spread_hits = spread_hits
+        # `spread_damage` (Week 13 Task 1): every hit's damage weighed over the
+        # likely spreads, not only where they decide a knock-out
+        self.spread_damage = spread_damage
         self.resolution, self.prune, self.cap = resolution, prune, cap
         self.coarsest = resolution or 0.0  # the grid the last resolve needed
         self.held = 0  # the most boards the last resolve held at once in a step
@@ -2211,8 +2215,9 @@ class Resolver:
     ) -> list[tuple[float, Spread | None, Spread | None]] | None:
         """Where another likely spread (the attacker's or the target's) moves
         the chance of a knock-out by KO_DECIDES or more: each likely pair of the
-        side(s) that decide it, with its share; None to keep the likeliest."""
-        if not self.spread_hits or tgt == (role, a.user):
+        side(s) that decide it, with its share; None to keep the likeliest.
+        With `spread_damage`, every likely pair, knock-out or not."""
+        if not (self.spread_hits or self.spread_damage) or tgt == (role, a.user):
             return None
         t = w.sides[tgt[0]][tgt[1]]
         full = self.max_hp(*tgt)
@@ -2227,7 +2232,9 @@ class Resolver:
         sides = {"att": self._likely_spreads(role, a.user), "def": []}
         sides["def"] = self._likely_spreads(*tgt)
         decides = {}
-        for side, opts in sides.items():
+        if self.spread_damage:
+            decides = {side: len(opts) > 1 for side, opts in sides.items()}
+        for side, opts in sides.items() if not self.spread_damage else ():
             decides[side] = False
             for s, _p in opts[1:]:
                 pair = (s, None) if side == "att" else (None, s)

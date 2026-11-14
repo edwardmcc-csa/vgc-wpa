@@ -998,6 +998,7 @@ class Tools:
     # hits branch on the likely spreads where they decide a knock-out (Week 12
     # Task 4); off until measured
     spread_hits: bool = False
+    spread_damage: bool = False
     # the opponent's sheet hidden (Week 12 Task 5): the sets in the statistics
     # (`wpa.hidden.SetStore`) and, per format, the one-sided model trained with
     # the opponent's sheet blanked; None: the sheets as the log shows them
@@ -1207,9 +1208,12 @@ def turn_setups(
                 resolution=tools.resolution,
                 cap=tools.cap,
                 dists=(
-                    ctxs[k].dists if tools.speed_beliefs or tools.spread_hits else None
+                    ctxs[k].dists
+                    if tools.speed_beliefs or tools.spread_hits or tools.spread_damage
+                    else None
                 ),
                 spread_hits=tools.spread_hits,
+                spread_damage=tools.spread_damage,
                 speed_beliefs=tools.speed_beliefs,
             )
             bw = BoardWP(
@@ -1705,8 +1709,11 @@ def public_setups(tag: str, log: str, fmt: str, tools: Tools):
                     spreads,
                     resolution=tools.resolution,
                     cap=tools.cap,
-                    dists=dists if tools.speed_beliefs or tools.spread_hits else None,
+                    dists=dists
+                    if tools.speed_beliefs or tools.spread_hits or tools.spread_damage
+                    else None,
                     spread_hits=tools.spread_hits,
+                    spread_damage=tools.spread_damage,
                     speed_beliefs=tools.speed_beliefs,
                 )
                 pub = public_of(r, i)
@@ -2234,6 +2241,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     tools.speed_beliefs = bool(getattr(a, "speed_beliefs", False))
     tools.strength = strength_value(a)
     tools.spread_hits = bool(getattr(a, "spread_hits", False))
+    tools.spread_damage = bool(getattr(a, "spread_damage", False))
     tools.measure_strengths = measure_values(a)
     if getattr(a, "hidden_sets", False):
         from wpa.hidden import SetStore
@@ -2954,6 +2962,11 @@ def parser():
         action="store_true",
         help="hits branch on the likely spreads where they decide whether the "
         "target is knocked out (Week 12 Task 4)",
+    )
+    p.add_argument(
+        "--spread-damage",
+        action="store_true",
+        help="every hit's damage weighed over the likely spreads (Week 13 Task 1)",
     )
     p.add_argument(
         "--hidden-sets",

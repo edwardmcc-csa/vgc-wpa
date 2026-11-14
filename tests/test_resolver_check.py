@@ -386,6 +386,24 @@ def test_a_run_with_spread_hits_is_named_for_it_and_passes_it_on(tmp_path):
     assert cmd[cmd.index("--label") + 1] == "9e9ef90-spread-hits"
 
 
+def test_a_run_with_spread_damage_is_named_for_it_and_passes_it_on(tmp_path):
+    """Week 13 Task 1: every hit weighed over the likely spreads."""
+    a = RC.parse_args(["--spread-hits", "--spread-damage"])
+    assert a.spread_damage is True
+    assert RC.run_label(a, "abc1234") == "abc1234-spread-hits-spread-damage"
+    a = RC.parse_args(["--code", "9e9ef90", "--spread-damage"])
+    cmd = RC.child_command(a, tmp_path / "code", Path.cwd())
+    assert "--spread-damage" in cmd
+    assert cmd[cmd.index("--label") + 1] == "9e9ef90-spread-damage"
+
+
+def test_the_analysis_and_advice_take_spread_damage():
+    from wpa import attribution as A
+
+    assert A.parser().parse_args(["--spread-damage"]).spread_damage is True
+    assert A.parser().parse_args([]).spread_damage is False
+
+
 # --------------------------------------------------------------------------
 # Week 13 Task 1: the bias on clean hits
 # --------------------------------------------------------------------------

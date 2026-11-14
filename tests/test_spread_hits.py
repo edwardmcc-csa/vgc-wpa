@@ -153,3 +153,44 @@ def test_spread_beliefs_alone_do_not_change_move_order_or_damage(tools):
         speed_beliefs=False,
     )
     assert rv.speed_beliefs is False
+
+
+# --------------------------------------------------------------------------
+# Week 13 Task 1: every hit weighed over the spreads players run
+# --------------------------------------------------------------------------
+
+
+def _mean_lost(outs, scale=1.0):
+    tot = sum(o.prob for o in outs)
+    return (
+        sum(o.prob * (1 - o.sides["p2"][0]["hp_fraction"]) for o in outs) * scale / tot
+    )
+
+
+def test_with_spread_damage_every_hit_weighs_the_likely_spreads(tools):
+    """A hit that knocks out on no likely spread did not branch (Week 12 Task 4):
+    the likeliest spread alone set its damage, so a bulkier player's Pokemon
+    took too much. With `spread_damage`, the damage is weighed over the likely
+    spreads by their chances, in the likeliest spread's hit points."""
+    dex, moves, calc = tools
+    dists = {("p2", 0): [(FULL, 0.6), (BULK, 0.4)]}
+    frail = {**SPREADS, ("p2", 0): FULL}
+    one = {"p1": CLAW, "p2": QUIET}
+
+    def lost(spreads, **kw):
+        rv = R.Resolver(
+            dex, moves, calc, SHEETS, spreads, dists=dists, speed_beliefs=False, **kw
+        )
+        return rv, rv.resolve(board(1.0), R.Field(), one)
+
+    rv, outs = lost(frail)
+    on_full = _mean_lost(outs)
+    rv_b, outs_b = lost(SPREADS)
+    on_bulk = _mean_lost(outs_b, rv_b.max_hp("p2", 0, BULK) / rv.max_hp("p2", 0, FULL))
+    assert on_bulk < on_full - 0.03  # the bulky spread takes less
+    _rv, outs = lost(frail, spread_hits=True)
+    assert _mean_lost(outs) == pytest.approx(
+        on_full, abs=1e-9
+    )  # no knock-out: no branch
+    _rv, outs = lost(frail, spread_hits=True, spread_damage=True)
+    assert _mean_lost(outs) == pytest.approx(0.6 * on_full + 0.4 * on_bulk, abs=0.01)

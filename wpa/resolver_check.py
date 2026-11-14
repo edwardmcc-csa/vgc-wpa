@@ -628,6 +628,8 @@ def child_command(a: argparse.Namespace, dest: Path, root: Path) -> list[str]:
         cmd += ["--max-games", str(a.max_games)]
     if a.spread_hits:
         cmd.append("--spread-hits")
+    if a.spread_damage:
+        cmd.append("--spread-damage")
     if a.fresh:
         cmd.append("--fresh")
     return cmd
@@ -637,7 +639,8 @@ def run_label(a: argparse.Namespace, code: str) -> str:
     """A run's name: the code's (commit), and what it was asked to do."""
     if a.label:
         return a.label
-    return f"{code}-spread-hits" if a.spread_hits else code
+    label = f"{code}-spread-hits" if a.spread_hits else code
+    return f"{label}-spread-damage" if getattr(a, "spread_damage", False) else label
 
 
 def _label() -> str:  # pragma: no cover - asks git
@@ -834,6 +837,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="hits branch on the likely spreads where they decide a knock-out "
         "(Week 12 Task 4)",
+    )
+    p.add_argument(
+        "--spread-damage",
+        action="store_true",
+        help="every hit's damage weighed over the likely spreads (Week 13 Task 1)",
     )
     p.add_argument("--cap", type=int, default=300)
     p.add_argument("--label", default=None, help=argparse.SUPPRESS)
