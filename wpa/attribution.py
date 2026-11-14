@@ -687,6 +687,18 @@ def chains(
 # --------------------------------------------------------------------------
 
 
+def wp_models(models: Path, groups: str) -> dict:
+    """Each format's win model (`wp_model`); a format with none yet (Reg M-C
+    until Week 15) is left out."""
+    from wpa.durations import FORMAT_MODS
+
+    return {
+        f: wp_model(models, f, groups)
+        for f in FORMAT_MODS
+        if (Path(models) / ("pooled" if f == "regmb" else f)).exists()
+    }
+
+
 def wp_model(models: Path, fmt: str, groups: str):
     """v4's prediction as the Week 8 test opening used it: Reg M-A's model
     (recalibrated if it was), Reg M-B the pooled model with its temperature; or
@@ -2284,12 +2296,17 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
         from wpa.team_sheets import load_dexes
 
         dexes, tables = load_dexes(a.showdown), load_all(a.showdown)
-    mods = {"regma": "championsregma", "regmb": "champions"}
+    from wpa.durations import FORMAT_MODS, showdown_for
+
+    # each format's moves from its own copy of Showdown's code (revision 12),
+    # or from a saved file
     moves = {
-        f: load_moves_file(Path(a.moves_dir) / f"moves_{f}.json")
-        if a.moves_dir
-        else load_moves(a.showdown, mods[f])
-        for f in mods
+        f: (
+            load_moves_file(Path(a.moves_dir) / f"moves_{f}.json")
+            if a.moves_dir and (Path(a.moves_dir) / f"moves_{f}.json").exists()
+            else load_moves(showdown_for(f, a.showdown), mod)
+        )
+        for f, mod in FORMAT_MODS.items()
     }
     tools = Tools(
         dexes,
@@ -2299,7 +2316,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
         UsageStore(a.usage),
         BringModel.load(a.bring) if Path(a.bring).exists() else None,
         PolicyModel.load(a.policy),
-        {f: wp_model(a.models, f, a.groups) for f in mods},
+        wp_models(a.models, a.groups),
         a.groups,
         a.resolution,
         a.cap,
@@ -2318,7 +2335,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
         from wpa.hidden import SetStore
 
         tools.hidden = SetStore(a.usage)
-        tools.predict_public = {f: wp_model(a.public_models, f, a.groups) for f in mods}
+        tools.predict_public = wp_models(a.public_models, a.groups)
     if getattr(a, "leads", None) and Path(a.leads).exists():
         from wpa.lead_model import LeadModel
 

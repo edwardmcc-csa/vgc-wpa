@@ -346,3 +346,19 @@ def test_the_prevalence_report_counts_teams_with_each_capability_by_format():
     assert report.teams == {"regma": 4, "regmb": 2}
     text = report.describe()
     assert "regma: 4 team sheets" in text and "regmb: 2 team sheets" in text
+
+
+@pytest.mark.skipif(
+    shutil.which("node") is None
+    or not (ROOT / "pokemon-showdown-mc" / "dist" / "sim" / "dex.js").exists(),
+    reason="needs Node and the built Reg M-C copy of Showdown's code",
+)
+def test_reg_m_c_has_its_own_dex_with_the_new_megas():
+    """Week 14: Reg M-C reads the November copy of Showdown's code; Garchomp's
+    Z Mega is in it and not in Reg M-A's."""
+    dexes = S.load_dexes(ROOT / "pokemon-showdown")
+    assert set(dexes) == {"regma", "regmb", "regmc"}
+    z = dexes["regmc"].species["garchompmegaz"]
+    assert z["types"] == ["Dragon"] and z["baseStats"]["spe"] == 151
+    assert "lucariomegaz" in dexes["regmc"].species
+    assert dexes["regmc"].abilities["auraguard"]["name"] == "Aura Guard"

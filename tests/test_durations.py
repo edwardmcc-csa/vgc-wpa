@@ -23,11 +23,15 @@ from wpa import durations as D
 
 ROOT = Path(__file__).resolve().parent.parent
 SHOWDOWN = ROOT / "pokemon-showdown"
-FORMATS = ("regma", "regmb")
+FORMATS = ("regma", "regmb", "regmc")  # Reg M-C: revision 12, Week 14
 
 needs_showdown = pytest.mark.skipif(
-    shutil.which("node") is None or not (SHOWDOWN / "dist" / "sim" / "dex.js").exists(),
-    reason="needs Node and the built pokemon-showdown submodule",
+    shutil.which("node") is None
+    or not all(
+        (ROOT / copy / "dist" / "sim" / "dex.js").exists()
+        for copy in ("pokemon-showdown", "pokemon-showdown-mc")
+    ),
+    reason="needs Node and both built copies of Showdown's code",
 )
 
 
@@ -43,8 +47,13 @@ def data():
 
 @needs_showdown
 def test_format_to_mod_mapping_matches_showdown_config():
-    text = (SHOWDOWN / "config" / "formats.ts").read_text(encoding="utf-8")
-    for fmt, label in (("regma", "Reg M-A"), ("regmb", "Reg M-B")):
+    for fmt, label in (
+        ("regma", "Reg M-A"),
+        ("regmb", "Reg M-B"),
+        ("regmc", "Reg M-C"),
+    ):
+        copy = D.showdown_for(fmt, SHOWDOWN)
+        text = (copy / "config" / "formats.ts").read_text(encoding="utf-8")
         pattern = (
             r'name: "\[Gen 9 Champions\] VGC 2026 %s",\s*mod: \'(\w+)\''
             % re.escape(label)
@@ -186,7 +195,7 @@ def test_every_counter_in_the_condition_table_is_accounted_for(data, fmt):
             [
                 "node",
                 str(ROOT / "scripts" / "dump_durations.js"),
-                str(SHOWDOWN),
+                str(D.showdown_for(fmt, SHOWDOWN)),
                 D.FORMAT_MODS[fmt],
             ],
             capture_output=True,
@@ -225,7 +234,8 @@ def test_every_source_reference_points_at_the_text_it_describes(data, fmt):
         refs += [(m.source, (m.name,)) for m in effect.modifiers]
         refs += [(a.source, ("duration",)) for a in effect.adjustments]
         for ref, needles in refs:
-            lines = (SHOWDOWN / ref.file).read_text(encoding="utf-8").split("\n")
+            copy = D.showdown_for(fmt, SHOWDOWN)  # each format's own copy
+            lines = (copy / ref.file).read_text(encoding="utf-8").split("\n")
             assert 1 <= ref.line <= len(lines), (effect.id, ref)
             assert any(n in lines[ref.line - 1] for n in needles), (
                 effect.id,
@@ -314,7 +324,7 @@ def test_markdown_is_deterministic_and_names_each_effect_with_its_source(data):
 def test_committed_document_matches_a_fresh_generation(data):
     committed = ROOT / "docs" / "DURATIONS.md"
     assert committed.exists(), "run: python -m wpa.durations --out docs/DURATIONS.md"
-    fresh = D.render_markdown(data, commit=D.showdown_commit(SHOWDOWN))
+    fresh = D.render_markdown(data, commit=D.showdown_commits(SHOWDOWN))
     assert committed.read_text(encoding="utf-8") == fresh
 
 
@@ -348,3 +358,18 @@ def test_turns_remaining_takes_no_end_event():
     names = set(inspect.signature(D.turns_remaining).parameters)
     assert names == {"current_turn", "start_turn", "start_phase", "duration"}
     assert not any("end" in n for n in names)
+
+
+def test_each_format_reads_its_own_copy_of_showdowns_code():
+    """DEFINITIONS §15 (revision 12): M-A and M-B from the June copy, M-C from
+    the November one, which sits beside it."""
+    assert D.showdown_for("regma", SHOWDOWN) == SHOWDOWN
+    assert D.showdown_for("regmb", SHOWDOWN) == SHOWDOWN
+    assert D.showdown_for("regmc", SHOWDOWN) == ROOT / "pokemon-showdown-mc"
+    assert D.FORMAT_MODS["regmc"] == "champions"
+
+
+@needs_showdown
+def test_the_reg_m_c_table_comes_from_the_november_copy(data):
+    assert data["regmc"].copy == "pokemon-showdown-mc"
+    assert {data[f].copy for f in ("regma", "regmb")} == {"pokemon-showdown"}

@@ -2,7 +2,7 @@
 
 **Generated. Do not edit by hand.** Regenerate with `python -m wpa.durations --out docs/DURATIONS.md`; a test fails if this file differs from a fresh generation.
 
-Source: the pinned `pokemon-showdown` submodule at `913da3602a3aa1db79f9fdc5d5222eaf8d39569d`, read through Showdown's own mod inheritance by `scripts/dump_durations.js`. Every row gives the file and line the number comes from.
+Source: the pinned copies of Showdown's code, `pokemon-showdown` at `913da3602a3aa1db79f9fdc5d5222eaf8d39569d`; `pokemon-showdown-mc` at `7e743761cd13cdb361fc0f58eb5a866284894f5b`, read through Showdown's own mod inheritance by `scripts/dump_durations.js`. Every row gives the file and line the number comes from.
 
 ## How to read the turn numbers
 
@@ -15,12 +15,13 @@ Source: the pinned `pokemon-showdown` submodule at `913da3602a3aa1db79f9fdc5d522
 
 ## Formats and mods
 
-| Format | Showdown mod | Inherits |
-|---|---|---|
-| regma | `championsregma` | `championsregma`, `champions` |
-| regmb | `champions` | `champions` |
+| Format | Copy of Showdown's code | Showdown mod | Inherits |
+|---|---|---|---|
+| regma | `pokemon-showdown` | `championsregma` | `championsregma`, `champions` |
+| regmb | `pokemon-showdown` | `champions` | `champions` |
+| regmc | `pokemon-showdown-mc` | `champions` | `champions` |
 
-## regma (`championsregma`)
+## regma (`pokemon-showdown`, `championsregma`)
 
 ### Timed effects
 
@@ -160,7 +161,7 @@ Source: the pinned `pokemon-showdown` submodule at `913da3602a3aa1db79f9fdc5d522
 - Chance 33/100 each attempt that the Pokemon hits itself instead of moving. This is not a length.
 
 
-## regmb (`champions`)
+## regmb (`pokemon-showdown`, `champions`)
 
 ### Timed effects
 
@@ -269,6 +270,146 @@ Source: the pinned `pokemon-showdown` submodule at `913da3602a3aa1db79f9fdc5d522
 | Wish | slotCondition | 2 | - | - | data/moves.ts:20938 |
 | Wonder Room | pseudoWeather | 5 | ability `persistent`: 7 (data/moves.ts:20992) | - | data/moves.ts:20990 |
 | Yawn | volatileStatus | 2 | - | - | data/moves.ts:21158 |
+
+### Counted effects (status and volatile counters)
+
+**par** (`par`, data/conditions.ts:23)
+
+- Chance 1/8 each attempt that the Pokemon cannot move (full paralysis). This is not a length.
+
+**slp** (`slp`, data/mods/champions/conditions.ts:23)
+
+- Starting count: 2: 1/3, 3: 2/3.
+- Chance it ends at each attempt, given it has not ended: 0, 1/3, 1.
+- With Early Bird the count drops by 2 per attempt: 1/3, 1.
+
+**frz** (`frz`, data/mods/champions/conditions.ts:43)
+
+- Starting count: 3: 1.
+- Chance it ends at each attempt, given it has not ended: 1/4, 1/4, 1.
+- Ends early with chance 1/4 each attempt.
+
+**tox** (`tox`, data/conditions.ts:141)
+
+- the poison count rises by one each residual (see the source).
+
+**confusion** (`confusion`, data/conditions.ts:174)
+
+- Starting count: 2: 1/4, 3: 1/4, 4: 1/4, 5: 1/4.
+- Starting count when caused by `axekick`: 3: 1/3, 4: 1/3, 5: 1/3.
+- Chance it ends at each attempt, given it has not ended: 0, 1/4, 1/3, 1/2, 1.
+- Chance 33/100 each attempt that the Pokemon hits itself instead of moving. This is not a length.
+
+
+## regmc (`pokemon-showdown-mc`, `champions`)
+
+### Timed effects
+
+| Effect | Attached as | Turns | Modifiers | Ordering | Source |
+|---|---|---|---|---|---|
+| Ally Switch | - | 2 | - | - | data/moves.ts:333 |
+| Aurora Veil | sideCondition | 5 | item `lightclay`: 8 (data/moves.ts:846) | - | data/moves.ts:844 |
+| Baneful Bunker | volatileStatus | 1 | - | - | data/moves.ts:1003 |
+| Beak Blast | - | 1 | - | - | data/moves.ts:1132 |
+| Bide | volatileStatus | 3 | - | - | data/moves.ts:1280 |
+| Bounce | - | 2 | - | - | data/moves.ts:1727 |
+| Burning Bulwark | volatileStatus | 1 | - | - | data/moves.ts:2038 |
+| Chilly Reception | weather | 1 | - | - | data/moves.ts:2411 |
+| Counter | - | 1 | - | - | data/moves.ts:3008 |
+| Crafty Shield | sideCondition | 1 | - | - | data/moves.ts:3158 |
+| DeltaStream | weather | 0 | - | - | data/conditions.ts:736 |
+| DesolateLand | weather | 0 | - | - | data/conditions.ts:599 |
+| Dig | - | 2 | - | - | data/moves.ts:3609 |
+| Disable | volatileStatus | 5 | - | -1 if `this.queue.willMove(pokemon) || pokemon === this.activePokemon && this.activeMove && !this.activeMove.isExternal` (data/moves.ts:3675) | data/moves.ts:3667 |
+| Dive | - | 2 | - | - | data/moves.ts:3778 |
+| Echoed Voice | - | 2 | - | - | data/moves.ts:4427 |
+| Electric Terrain | terrain | 5 | item `terrainextender`: 8 (data/moves.ts:4514) | - | data/moves.ts:4512 |
+| Electrify | volatileStatus | 1 | - | - | data/moves.ts:4574 |
+| Embargo | volatileStatus | 5 | - | - | data/moves.ts:4694 |
+| Encore | volatileStatus | 3 | - | +1 if `!action   [where action = this.queue.willMove(target)]` (data/mods/champions/moves.ts:328) | data/moves.ts:4738 |
+| Endure | volatileStatus | 1 | - | - | data/moves.ts:4826 |
+| Fairy Lock | pseudoWeather | 2 | - | - | data/moves.ts:5064 |
+| Fire Pledge | - | 4 | - | - | data/moves.ts:5426 |
+| flinch | - | 1 | - | - | data/conditions.ts:200 |
+| Fly | - | 2 | - | - | data/moves.ts:5921 |
+| Focus Punch | - | 1 | - | - | data/moves.ts:6025 |
+| Follow Me | volatileStatus | 1 | - | - | data/moves.ts:6056 |
+| Fury Cutter | - | 2 | - | - | data/moves.ts:6326 |
+| futuremove | slotCondition | 3 | - | - | data/conditions.ts:384 |
+| G-Max Cannonade | - | 4 | - | - | data/moves.ts:6756 |
+| G-Max Vine Lash | - | 4 | - | - | data/moves.ts:7386 |
+| G-Max Volcalith | - | 4 | - | - | data/moves.ts:7424 |
+| G-Max Wildfire | - | 4 | - | - | data/moves.ts:7484 |
+| gem | - | 1 | - | - | data/conditions.ts:469 |
+| Grass Pledge | - | 4 | - | - | data/moves.ts:7625 |
+| Grassy Terrain | terrain | 5 | item `terrainextender`: 8 (data/moves.ts:7690) | - | data/moves.ts:7688 |
+| Gravity | pseudoWeather | 5 | ability `persistent`: 7 (data/moves.ts:7770) | - | data/moves.ts:7768 |
+| Hail | weather | 5 | item `icyrock`: 8 (data/conditions.ts:675) | - | data/conditions.ts:673 |
+| Heal Block | volatileStatus | 5 | trigger `Psychic Noise`: 2 (data/moves.ts:8290); ability `persistent`: 7 (data/moves.ts:8293) | - | data/moves.ts:8288 |
+| Helping Hand | volatileStatus | 1 | - | - | data/moves.ts:8590 |
+| Ice Ball | - | 1 | - | - | data/moves.ts:9287 |
+| Ion Deluge | pseudoWeather | 1 | - | - | data/moves.ts:9689 |
+| King's Shield | volatileStatus | 1 | - | - | data/moves.ts:9926 |
+| Laser Focus | volatileStatus | 2 | - | - | data/moves.ts:10026 |
+| Light Screen | sideCondition | 5 | item `lightclay`: 8 (data/moves.ts:10330) | - | data/moves.ts:10328 |
+| Lock-On | - | 2 | - | - | data/moves.ts:10414 |
+| lockedmove | - | 2 | - | - | data/conditions.ts:256 |
+| Lucky Chant | sideCondition | 5 | - | - | data/moves.ts:10515 |
+| Magic Coat | volatileStatus | 1 | - | - | data/moves.ts:10705 |
+| Magic Room | pseudoWeather | 5 | ability `persistent`: 7 (data/moves.ts:10769) | - | data/moves.ts:10767 |
+| Magnet Rise | volatileStatus | 5 | - | - | data/moves.ts:10875 |
+| Mat Block | sideCondition | 1 | - | - | data/moves.ts:11005 |
+| Max Guard | volatileStatus | 1 | - | - | data/moves.ts:11178 |
+| Me First | - | 1 | - | - | data/moves.ts:11556 |
+| Micle Berry | - | 2 | - | - | data/items.ts:4108 |
+| Mirror Coat | - | 1 | - | - | data/moves.ts:12006 |
+| Mist | sideCondition | 5 | - | - | data/moves.ts:12084 |
+| Misty Terrain | terrain | 5 | item `terrainextender`: 8 (data/moves.ts:12167) | - | data/moves.ts:12165 |
+| Mud Sport | pseudoWeather | 5 | - | - | data/moves.ts:12469 |
+| mustrecharge | - | 2 | - | - | data/conditions.ts:366 |
+| Obstruct | volatileStatus | 1 | - | - | data/moves.ts:12889 |
+| partiallytrapped | - | random 5-6 | item `gripclaw`: 8 (data/conditions.ts:226) | - | data/conditions.ts:224 |
+| Perish Song | - | 4 | - | - | data/moves.ts:13259 |
+| Phantom Force | - | 2 | - | - | data/moves.ts:13326 |
+| Powder | volatileStatus | 1 | - | - | data/moves.ts:13668 |
+| PrimordialSea | weather | 0 | - | - | data/conditions.ts:521 |
+| Protect | volatileStatus | 1 | - | - | data/moves.ts:13976 |
+| Psychic Terrain | terrain | 5 | item `terrainextender`: 8 (data/moves.ts:14106) | - | data/moves.ts:14104 |
+| Pursuit | - | 1 | - | - | data/moves.ts:14394 |
+| Quick Guard | sideCondition | 1 | - | - | data/moves.ts:14503 |
+| Rage Powder | volatileStatus | 1 | - | - | data/moves.ts:14609 |
+| RainDance | weather | 5 | item `damprock`: 8 (data/conditions.ts:485) | - | data/conditions.ts:483 |
+| Reflect | sideCondition | 5 | item `lightclay`: 8 (data/moves.ts:14852) | - | data/moves.ts:14850 |
+| Revival Blessing | slotCondition | 1 | - | - | data/moves.ts:15128 |
+| Rollout | - | 1 | - | - | data/moves.ts:15407 |
+| rolloutstorage | - | 2 | - | - | data/conditions.ts:949 |
+| Roost | - | 1 | - | - | data/moves.ts:15438 |
+| Safeguard | sideCondition | 5 | ability `persistent`: 7 (data/moves.ts:15584) | - | data/moves.ts:15582 |
+| Sandstorm | weather | 5 | item `smoothrock`: 8 (data/conditions.ts:637) | - | data/conditions.ts:635 |
+| Shadow Force | - | 2 | - | - | data/moves.ts:16091 |
+| Shell Trap | - | 1 | - | - | data/moves.ts:16293 |
+| Silk Trap | volatileStatus | 1 | - | - | data/moves.ts:16419 |
+| Sky Drop | - | 2 | - | - | data/moves.ts:16734 |
+| Snatch | volatileStatus | 1 | - | - | data/moves.ts:17112 |
+| Snowscape | weather | 5 | item `icyrock`: 8 (data/conditions.ts:705) | - | data/conditions.ts:703 |
+| Spiky Shield | volatileStatus | 1 | - | - | data/moves.ts:17546 |
+| Spotlight | volatileStatus | 1 | - | - | data/moves.ts:17774 |
+| stall | - | 2 | - | - | data/conditions.ts:446 |
+| SunnyDay | weather | 5 | item `heatrock`: 8 (data/conditions.ts:555) | - | data/conditions.ts:553 |
+| Syrup Bomb | - | 4 | - | - | data/moves.ts:18768 |
+| Tailwind | sideCondition | 4 | ability `persistent`: 6 (data/moves.ts:18884) | - | data/moves.ts:18882 |
+| Taunt | volatileStatus | 3 | - | +1 if `target.activeTurns && !this.queue.willMove(target)` (data/moves.ts:18984) | data/moves.ts:18981 |
+| Telekinesis | volatileStatus | 3 | - | - | data/moves.ts:19130 |
+| Throat Chop | - | 2 | - | - | data/moves.ts:19395 |
+| Trick Room | pseudoWeather | 5 | ability `persistent`: 7 (data/moves.ts:19949) | - | data/moves.ts:19947 |
+| twoturnmove | - | 2 | - | - | data/conditions.ts:290 |
+| Uproar | - | 3 | - | - | data/moves.ts:20228 |
+| Water Pledge | - | 4 | - | - | data/moves.ts:20561 |
+| Water Sport | pseudoWeather | 5 | - | - | data/moves.ts:20635 |
+| Wide Guard | sideCondition | 1 | - | - | data/moves.ts:20821 |
+| Wish | slotCondition | 2 | - | - | data/moves.ts:20924 |
+| Wonder Room | pseudoWeather | 5 | ability `persistent`: 7 (data/moves.ts:20984) | - | data/moves.ts:20982 |
+| Yawn | volatileStatus | 2 | - | - | data/moves.ts:21150 |
 
 ### Counted effects (status and volatile counters)
 

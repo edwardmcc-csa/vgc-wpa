@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from wpa.durations import FORMAT_MODS
+from wpa.durations import FORMAT_MODS, showdown_for
 from wpa.sheets import parse_showteam_message
 
 
@@ -67,8 +67,12 @@ def load_dex(showdown: Path, mod: str) -> Dex:
 
 
 def load_dexes(showdown: Path) -> dict[str, Dex]:
-    """One Dex per format, from that format's Showdown mod."""
-    return {fmt: load_dex(Path(showdown), mod) for fmt, mod in FORMAT_MODS.items()}
+    """One Dex per format, from that format's Showdown mod, in that format's
+    copy of Showdown's code (`showdown` is the June copy's folder)."""
+    return {
+        fmt: load_dex(showdown_for(fmt, showdown), mod)
+        for fmt, mod in FORMAT_MODS.items()
+    }
 
 
 # --------------------------------------------------------------------------

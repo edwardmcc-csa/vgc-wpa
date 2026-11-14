@@ -174,17 +174,20 @@ def collect(a) -> None:  # pragma: no cover - runs on the corpus
         from wpa.team_sheets import load_dexes
 
         dexes, tables = load_dexes(a.showdown), load_all(a.showdown)
+    from wpa.durations import FORMAT_MODS, showdown_for
     from wpa.resolver import load_moves, load_moves_file
 
-    mods = {"regma": "championsregma", "regmb": "champions"}
+    # each format's moves from its own copy of Showdown's code (revision 12),
+    # or from a saved file
     moves = {
         f: (
             load_moves_file(Path(a.moves_dir) / f"moves_{f}.json")
-            if a.moves_dir
-            else load_moves(a.showdown, mods[f])
+            if a.moves_dir and (Path(a.moves_dir) / f"moves_{f}.json").exists()
+            else load_moves(showdown_for(f, a.showdown), mod)
         )
-        for f in mods
+        for f, mod in FORMAT_MODS.items()
     }
+    mods = ("regma", "regmb")  # the formats the choice model learns (M-C: Week 15)
     caps = {"regma": a.games[0], "regmb": a.games[1]}
     vcaps = {"regma": a.val_games[0], "regmb": a.val_games[1]}
     picked: dict[str, dict[str, list]] = {

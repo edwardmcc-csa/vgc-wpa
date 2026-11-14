@@ -1,7 +1,8 @@
 """Week 4 Task 1: format tagging (wpa/formats.py).
 
-DEFINITIONS section 15: Reg M-A and Reg M-B are two formats. Every battle
-tag maps to exactly one, and a best-of-three set never spans formats.
+DEFINITIONS section 15: Reg M-A, Reg M-B and (revision 12, Week 14) Reg M-C
+are three formats. Every battle tag maps to exactly one, and a best-of-three
+set never spans formats.
 """
 
 import json
@@ -11,6 +12,7 @@ import pytest
 from wpa.formats import (
     FORMAT_MA,
     FORMAT_MB,
+    FORMAT_MC,
     KIND_BO3,
     KIND_SINGLE,
     UnknownFormatError,
@@ -28,6 +30,8 @@ from wpa.formats import (
         ("gen9championsvgc2026regmabo3-2580300180", FORMAT_MA, KIND_BO3),
         ("gen9championsvgc2026regmb-1234", FORMAT_MB, KIND_SINGLE),
         ("gen9championsvgc2026regmbbo3-5678", FORMAT_MB, KIND_BO3),
+        ("gen9championsvgc2026regmc-2714087154", FORMAT_MC, KIND_SINGLE),
+        ("gen9championsvgc2026regmcbo3-2714084063", FORMAT_MC, KIND_BO3),
     ],
 )
 def test_known_tags_map_to_one_format_and_kind(tag, expected_format, expected_kind):
@@ -43,7 +47,7 @@ def test_bo3_is_not_confused_with_its_single_game_prefix():
 
 @pytest.mark.parametrize(
     "tag",
-    ["gen9championsvgc2026regmc-1", "gen9ou-1234", "gen9championsvgc2026regma", ""],
+    ["gen9championsvgc2026regmd-1", "gen9ou-1234", "gen9championsvgc2026regma", ""],
 )
 def test_unrecognised_tags_raise_and_are_never_defaulted(tag):
     with pytest.raises(UnknownFormatError):
@@ -127,7 +131,7 @@ def test_bo3_states_without_a_set_are_counted_not_hidden(tmp_path):
 
 
 def test_an_unrecognised_file_fails_loudly(tmp_path):
-    _write(tmp_path / "gen9championsvgc2026regmc-1-p1.json", [_state()])
+    _write(tmp_path / "gen9championsvgc2026regmd-1-p1.json", [_state()])
     with pytest.raises(UnknownFormatError):
         summarize_directory(tmp_path, num_workers=1)
 
@@ -166,7 +170,7 @@ def test_set_ids_with_a_private_room_password_still_map_to_a_format(
 @pytest.mark.parametrize(
     "tag",
     [
-        "gen9championsvgc2026regmc-12-abcpw",  # unknown log name, with a password
+        "gen9championsvgc2026regmd-12-abcpw",  # unknown log name, with a password
         "gen9championsvgc2026regma-12-34-56",  # more than one suffix
         "gen9championsvgc2026regma-abc",  # id is not a number
         "gen9championsvgc2026regma-12-",  # empty password

@@ -32,12 +32,33 @@ import argparse
 import json
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
 
-# Which Showdown mod each format runs (config/formats.ts, checked by a test).
-FORMAT_MODS: dict[str, str] = {"regma": "championsregma", "regmb": "champions"}
+# Which Showdown mod each format runs (config/formats.ts, checked by a test),
+# and which pinned copy of Showdown's code it comes from (DEFINITIONS §15,
+# revision 12): Showdown's current code no longer has M-A's rules.
+FORMAT_MODS: dict[str, str] = {
+    "regma": "championsregma",
+    "regmb": "champions",
+    "regmc": "champions",
+}
+FORMAT_COPIES: dict[str, str] = {
+    "regma": "pokemon-showdown",
+    "regmb": "pokemon-showdown",
+    "regmc": "pokemon-showdown-mc",
+}
+
+
+def showdown_for(fmt: str, showdown: Path | str) -> Path:
+    """The copy of Showdown's code `fmt` reads, given the June copy's folder
+    (the `--showdown` option): another copy sits beside it."""
+    root = Path(showdown)
+    copy = FORMAT_COPIES[fmt]
+    return root if copy == FORMAT_COPIES["regma"] else root.parent / copy
+
 
 ACTION = "action"  # set by a move or switch-in during the turn's actions
 AFTER_RESIDUAL = "after_residual"  # set after the turn's residual (e.g. a replacement)
@@ -187,6 +208,7 @@ class CountedEffect:
 @dataclass
 class Durations:
     mod: str
+    copy: str = "pokemon-showdown"  # the copy of Showdown's code it was read from
     timed: dict[str, TimedEffect] = field(default_factory=dict)
     counted: dict[str, CountedEffect] = field(default_factory=dict)
 
@@ -204,6 +226,14 @@ def showdown_commit(showdown_dir: Path | str) -> str:
         check=True,
     )
     return out.stdout.strip()
+
+
+def showdown_commits(showdown: Path | str) -> dict[str, str]:
+    """Each copy of Showdown's code the formats read, and its commit."""
+    return {
+        FORMAT_COPIES[f]: showdown_commit(showdown_for(f, showdown))
+        for f in FORMAT_MODS
+    }
 
 
 def _dump(showdown_dir: Path, mod: str) -> dict:
@@ -587,8 +617,11 @@ def _add(result: Durations, effect: TimedEffect) -> None:
 
 def load_all(showdown_dir: Path | str) -> dict[str, Durations]:
     """The duration table for each format, keyed by format name."""
-    root = Path(showdown_dir)
-    return {fmt: _load(root, mod) for fmt, mod in FORMAT_MODS.items()}
+    out = {}
+    for fmt, mod in FORMAT_MODS.items():
+        out[fmt] = _load(showdown_for(fmt, showdown_dir), mod)
+        out[fmt].copy = FORMAT_COPIES[fmt]
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -611,7 +644,11 @@ def _dist(d: dict[int, Fraction]) -> str:
     return ", ".join(f"{k}: {_frac(v)}" for k, v in sorted(d.items())) or "none"
 
 
-def render_markdown(data: dict[str, Durations], commit: str) -> str:
+def render_markdown(data: dict[str, Durations], commit: str | Mapping[str, str]) -> str:
+    """The document. `commit`: each copy of Showdown's code and its commit
+    (one commit alone: the June copy's)."""
+    commits = {"pokemon-showdown": commit} if isinstance(commit, str) else commit
+    source = "; ".join(f"`{c}` at `{sha}`" for c, sha in commits.items())
     out = [
         "# Durations of timed effects",
         "",
@@ -619,7 +656,7 @@ def render_markdown(data: dict[str, Durations], commit: str) -> str:
         "`python -m wpa.durations --out docs/DURATIONS.md`; a test fails if this file "
         "differs from a fresh generation.",
         "",
-        f"Source: the pinned `pokemon-showdown` submodule at `{commit}`, read through "
+        f"Source: the pinned copies of Showdown's code, {source}, read through "
         "Showdown's own mod inheritance by `scripts/dump_durations.js`. Every row "
         "gives the file and line the number comes from.",
         "",
@@ -646,13 +683,13 @@ def render_markdown(data: dict[str, Durations], commit: str) -> str:
         "",
         "## Formats and mods",
         "",
-        "| Format | Showdown mod | Inherits |",
-        "|---|---|---|",
+        "| Format | Copy of Showdown's code | Showdown mod | Inherits |",
+        "|---|---|---|---|",
     ]
     for fmt, mod in FORMAT_MODS.items():
-        out.append(f"| {fmt} | `{mod}` | {_inherits(data, fmt)} |")
+        out.append(f"| {fmt} | `{data[fmt].copy}` | `{mod}` | {_inherits(data, fmt)} |")
     for fmt, d in data.items():
-        out += ["", f"## {fmt} (`{d.mod}`)", "", "### Timed effects", ""]
+        out += ["", f"## {fmt} (`{d.copy}`, `{d.mod}`)", "", "### Timed effects", ""]
         out += [
             "| Effect | Attached as | Turns | Modifiers | Ordering | Source |",
             "|---|---|---|---|---|---|",
@@ -739,7 +776,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     data = load_all(args.showdown)
-    text = render_markdown(data, showdown_commit(args.showdown))
+    text = render_markdown(data, showdown_commits(args.showdown))
     if args.out:
         args.out.write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")

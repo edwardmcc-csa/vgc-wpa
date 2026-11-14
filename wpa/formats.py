@@ -1,12 +1,13 @@
 """Format tagging (Week 4 Task 1; docs/DEFINITIONS.md section 15).
 
-Regulation M-A and Regulation M-B are two formats. Every battle tag maps to
-exactly one format and one kind (a single game, or a game from a
-best-of-three). Matching is on the whole log-file name, never a prefix:
-"regma" is a prefix of "regmabo3" and they are different kinds.
+Regulation M-A, Regulation M-B and Regulation M-C (revision 12, Week 14) are
+three formats. Every battle tag maps to exactly one format and one kind (a
+single game, or a game from a best-of-three). Matching is on the whole
+log-file name, never a prefix: "regma" is a prefix of "regmabo3" and they are
+different kinds.
 
-The mapping is configuration (LOG_NAMES). Adding a third format is an edit
-to that table, not to any model code. An unrecognised tag raises
+The mapping is configuration (LOG_NAMES). Adding a format is an edit to that
+table, not to any model code. An unrecognised tag raises
 UnknownFormatError; it is never defaulted to a format, because a silently
 mis-tagged battle would put the wrong data in a format's training or test
 set.
@@ -27,6 +28,7 @@ from pathlib import Path
 
 FORMAT_MA = "regma"
 FORMAT_MB = "regmb"
+FORMAT_MC = "regmc"
 KIND_SINGLE = "single"
 KIND_BO3 = "bo3"
 
@@ -37,6 +39,8 @@ LOG_NAMES: dict[str, tuple[str, str]] = {
     "gen9championsvgc2026regmabo3": (FORMAT_MA, KIND_BO3),
     "gen9championsvgc2026regmb": (FORMAT_MB, KIND_SINGLE),
     "gen9championsvgc2026regmbbo3": (FORMAT_MB, KIND_BO3),
+    "gen9championsvgc2026regmc": (FORMAT_MC, KIND_SINGLE),
+    "gen9championsvgc2026regmcbo3": (FORMAT_MC, KIND_BO3),
 }
 
 
@@ -59,7 +63,7 @@ def _lookup(tag: str) -> tuple[str, str]:
 
 
 def format_of(tag: str) -> str:
-    """The format ('regma' or 'regmb') a battle tag or set id belongs to."""
+    """The format ('regma', 'regmb' or 'regmc') a battle tag or set id belongs to."""
     return _lookup(tag)[0]
 
 
