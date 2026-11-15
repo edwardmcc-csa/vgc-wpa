@@ -99,8 +99,7 @@ choices, bring, leads, replacement, the opponent's strength; Phase 2's gate.
 
 ## For the PO
 
-1. **Decide the resolver check's cap:** 3,000 from now on (suggested) or 300.
-2. **Close the overnight PowerShell window** of the Reg M-C steps. It is
-   waiting on a game that hung before the fix, and nothing is lost by closing it.
+1. ~~Decide the resolver check's cap.~~ **Decided 15 Nov: 3,000** (`32f6af4`).
+2. ~~Close the overnight PowerShell window.~~ Closed 15 Nov.
 3. **Showdown's bot rules changed in October** (see the report of 14 Nov): this
    bears on Phases 5 and 6.

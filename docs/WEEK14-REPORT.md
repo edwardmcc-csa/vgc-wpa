@@ -194,7 +194,7 @@ Each rule is checked against Showdown's Champions data, with a test first, shown
 
 ## For you
 
-1. **Decide the resolver check's cap:**
+1. **Decided (15 Nov): 3,000** (`32f6af4`). Was: decide the resolver check's cap:
    - **(a) 3,000 from now on.** This is my suggestion. The check then measures the rules rather than the grid, the HP gate is met, and the check takes 39 minutes instead of 25.
    - **(b) Keep 300.**
 
