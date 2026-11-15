@@ -203,6 +203,25 @@ def trim(mix: Mix, keep: float = 0.95, most: int | None = None) -> tuple[Mix, fl
     return [(j, p / s) for j, p in out], s
 
 
+# DEFINITIONS §4, revision 13: how many of the choice model's likeliest choices
+# count as the ones players usually make (a best choice outside them is "a play
+# players rarely make")
+USUAL = 10
+
+
+def choices_to_compare(full: Mix, most: int | None) -> tuple[list[Mix], set]:
+    """The choices your choice is compared with for cost vs. best (DEFINITIONS
+    §4): every joint choice the rules allow when `most` is None (revision 13),
+    likeliest first; the `most` likeliest otherwise (the old way, for a
+    comparison run); none for 0. Also the `USUAL` likeliest, the ones players
+    usually make. The choice model only orders them: it never drops one."""
+    order = [j for j, _ in sorted(full, key=lambda x: -x[1])]
+    usual = set(order[:USUAL])
+    if most is not None:
+        order = order[:most]
+    return [[(j, 1.0)] for j in order], usual
+
+
 def likely(full: Mix, top: int, draws: int, seed: str) -> tuple[Mix, float]:
     """The opponent's replies for E[WP | your choice]: the `top` likeliest with
     their own chances, and the rest of the chance shared by `draws` replies
@@ -992,7 +1011,9 @@ class Tools:
     cap: int = 300
     top: int = 6
     draws: int = 6
-    alternatives: int = 10
+    # the choices compared for cost vs. best: None, every choice the rules allow
+    # (DEFINITIONS §4, revision 13); a number, that many of the likeliest
+    alternatives: int | None = None
     # the forced-switch model (`wpa.replace_model`); without it forced switches
     # keep their WPs (so a game still chains) but are not split
     replace: Any = None
@@ -1984,17 +2005,17 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         seed = f"{ts.base['tag']} {ts.turn} {r}"
         lk, kept = likely(full, tools.top, tools.draws, seed)
         alts = None
-        if with_alternatives and tools.alternatives and r in roles:
-            top, _ = trim(full, 1.0, tools.alternatives)
-            alts = [[(j, 1.0)] for j, _ in top]
-            if not (len(taken) == 1 and any(taken[0][0] == j for j, _ in top)):
+        usual: set = set()
+        if with_alternatives and tools.alternatives != 0 and r in roles:
+            alts, usual = choices_to_compare(full, tools.alternatives)
+            if not (len(taken) == 1 and any(taken[0][0] == j[0][0] for j in alts)):
                 alts.append(taken)
         unknown = sum(
             1 for i in opts if not isinstance(t.taken.get(i), Action) or i in t.hidden
         )
-        mixes[r] = (taken, lk, kept, alts, unknown)
-    t1, l1, _k1, alts1, _u1 = mixes["p1"]
-    t2, l2, _k2, alts2, _u2 = mixes["p2"]
+        mixes[r] = (taken, lk, kept, alts, unknown, usual)
+    t1, l1, _k1, alts1, _u1, _s1 = mixes["p1"]
+    t2, l2, _k2, alts2, _u2, _s2 = mixes["p2"]
     # p1's split: p1's choice against p2's likely and taken ones; p2's: p1's
     # likely and taken choices against p2's
     pairs = [(x, y) for x, _ in t1 for y, _ in l2 + t2] if "p1" in roles else []
@@ -2023,8 +2044,8 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     for r, other in (("p1", "p2"), ("p2", "p1")):
         if r not in roles:
             continue
-        taken, _l, _k, alts, unknown = mixes[r]
-        _t, _lk, kept, _a, _u = mixes[other]
+        taken, _l, _k, alts, unknown, usual = mixes[r]
+        _t, _lk, kept, _a, _u, _s = mixes[other]
         b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
 
         def split(s: float) -> Split:
@@ -2061,6 +2082,9 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
             lk = strong[tools.strength][other]
             best = best_choice(tv.for_role(r), alts, lk, b + sp.yours)
             recs[-1]["best"] = joint_json(best) if best else None
+            # revision 13: a best choice players rarely make, and how many
+            recs[-1]["best_rare"] = best is not None and best not in usual
+            recs[-1]["compared"] = len(alts)
     pairs = [(x, y) for x, _ in t1 for y, _ in t2]
     outs = [o for key in pairs for o in tv.outcomes.get(key, ())]
     tol = max(0.03, tools.resolution + 0.01)
@@ -3022,8 +3046,9 @@ def parser():
     p.add_argument(
         "--alternatives",
         type=int,
-        default=10,
-        help="our likeliest choices to compare with",
+        default=None,
+        help="compare with this many of our likeliest choices only (default: "
+        "every choice the rules allow, DEFINITIONS §4 revision 13)",
     )
     p.add_argument(
         "--alternatives-every",

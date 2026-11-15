@@ -793,10 +793,16 @@ def _choice_lines(r: Mapping, role: str, sheets, names) -> list[str]:
     text = f"Your choice: {pts(r['choice'])} against the typical choice"
     if r.get("vs_best") is not None:
         text += f", {pts(r['vs_best'])} against the best"
+        if r.get("compared"):
+            text += f" ({r['compared']} choices compared)"
     out.append(text + ".")
     if r.get("best") and (r.get("vs_best") or 0.0) < -0.005:
         try:
-            out.append("Best: " + say_choice(r["best"], r["kind"], role, sheets, names))
+            out.append(
+                "Best: "
+                + say_choice(r["best"], r["kind"], role, sheets, names)
+                + (" (a play players rarely make)" if r.get("best_rare") else "")
+            )
         except (IndexError, KeyError, ValueError):  # pragma: no cover - a sheet gap
             pass
     out.append(
@@ -942,6 +948,11 @@ def game_report(
                     lines.append(
                         "      Best: "
                         + say_choice(r["best"], r["kind"], role, sheets, names)
+                        + (
+                            " (a play players rarely make)"
+                            if r.get("best_rare")
+                            else ""
+                        )
                     )
                 except (IndexError, KeyError, ValueError):  # pragma: no cover
                     pass
@@ -992,7 +1003,7 @@ def _options(a: argparse.Namespace) -> argparse.Namespace:  # pragma: no cover
         cap=300,
         top=6,
         draws=6,
-        alternatives=10,
+        alternatives=None,  # every choice the rules allow (DEFINITIONS §4, rev 13)
         budget=4000,
         no_typical=False,
         speed_beliefs=False,

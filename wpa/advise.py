@@ -66,6 +66,53 @@ def rank(
     return sorted(got, key=lambda x: -x[1])
 
 
+def rank_all(
+    value: Callable[[Joint, Joint], float],
+    full: Mix,
+    replies: Mix,
+    prepare: Callable[[list], Any] | None = None,
+    screen: int = 3,
+    finalists: int = 12,
+) -> tuple[list[tuple[Joint, float, float]], int]:
+    """Every choice the rules allow (`full`, with how often players make each),
+    ranked by win chance against the replies, best first (DEFINITIONS §4,
+    revision 13). With more than the ones players usually make and `finalists`
+    together, a first pass values each choice against the `screen` likeliest
+    replies; its best `finalists`, with the ones players usually make, are then
+    valued against every reply. The choice model only orders the search: no
+    choice is dropped for being unusual. Choices valued in the first pass only
+    follow the others, by that value. `prepare` is given each pass's pairs
+    (yours, theirs) before it is valued. Returns the ranking (choice, win
+    chance, how often players make it) and how many choices were compared."""
+    from wpa.attribution import USUAL, expected
+
+    def ask(pairs: list) -> None:
+        if prepare is not None:
+            prepare(pairs)
+
+    order = sorted(full, key=lambda x: -x[1])
+    chance = dict(order)
+    if len(order) <= USUAL + finalists:
+        ask([(j, y) for j, _ in order for y, _ in replies])
+        got = [(j, expected(value, [(j, 1.0)], replies), p) for j, p in order]
+        return sorted(got, key=lambda x: -x[1]), len(order)
+    top = sorted(replies, key=lambda x: -x[1])[:screen]
+    total = sum(q for _, q in top)
+    top = [(y, q / total) for y, q in top]
+    ask([(j, y) for j, _ in order for y, _ in top])
+    first = {j: expected(value, [(j, 1.0)], top) for j, _ in order}
+    best = sorted(first, key=lambda j: -first[j])[:finalists]
+    final = list(dict.fromkeys([*(j for j, _ in order[:USUAL]), *best]))
+    ask([(j, y) for j in final for y, _ in replies])
+    got = sorted(
+        ((j, expected(value, [(j, 1.0)], replies), chance[j]) for j in final),
+        key=lambda x: -x[1],
+    )
+    done = set(final)
+    rest = sorted((j for j, _ in order if j not in done), key=lambda j: -first[j])
+    return got + [(j, first[j], chance[j]) for j in rest], len(order)
+
+
 @dataclass
 class Advice:
     tag: str
@@ -85,6 +132,9 @@ class Advice:
     # four to pick, the first two lead) or "replacement" (a forced switch)
     kind: str = "turn"
     note: str = ""  # a warning shown at the top (`team_check.rough_note`)
+    # how many choices were compared: at a turn, every one the rules allow
+    # (DEFINITIONS §4, revision 13); 0 when not counted
+    compared: int = 0
 
 
 @dataclass
@@ -310,7 +360,11 @@ def advise(
             kept = k
     strong = A.strong_mixes(tv, plain, tools.strength)
     replies, mine = strong[other], strong[role]
-    choices, _ = A.trim(full[role], 1.0, tools.alternatives or 10)
+    if tools.alternatives is None:  # every choice the rules allow (rev 13)
+        return _advice(
+            tag, turn, role, pt, tv, full[role], mine, replies, kept, every=True
+        )
+    choices, _ = A.trim(full[role], 1.0, tools.alternatives)  # the old way
     return _advice(tag, turn, role, pt, tv, choices, mine, replies, kept)
 
 
@@ -523,30 +577,35 @@ def advise_replacement(
 
 
 def _advice(
-    tag, turn, role, pt, tv, choices, mine, replies, kept, kind="turn"
+    tag, turn, role, pt, tv, choices, mine, replies, kept, kind="turn", every=False
 ) -> Advice:
-    """The choices ranked against the replies, and a typical choice (`mine`)."""
+    """The choices ranked against the replies, and a typical choice (`mine`).
+    `every`: `choices` is every choice the rules allow, ranked by `rank_all`
+    (DEFINITIONS §4, revision 13)."""
     from wpa.attribution import expected
 
-    tv.prepare(
-        [
-            (j, y) if role == "p1" else (y, j)
-            for j, _p in [*choices, *mine]
-            for y, _q in replies
-        ]
-    )
+    def prepare(pairs) -> None:  # the resolver takes (p1's, p2's)
+        tv.prepare([(j, y) if role == "p1" else (y, j) for j, y in pairs])
+
     value = tv.for_role(role)
+    if every:
+        ranked, compared = rank_all(value, choices, replies, prepare)
+        prepare([(j, y) for j, _p in mine for y, _q in replies])
+    else:
+        prepare([(j, y) for j, _p in [*choices, *mine] for y, _q in replies])
+        ranked, compared = rank(value, choices, replies), len(choices)
     return Advice(
         tag,
         turn,
         role,
         pt.wp,
-        rank(value, choices, replies),
+        ranked,
         sorted(replies, key=lambda x: -x[1]),
         kept,
         pt.hidden,
         expected(value, mine, replies),
         kind,
+        compared=compared,
     )
 
 
@@ -655,8 +714,13 @@ def advice_text(
         "leads, and against typical leads. The back two are the two players most "
         "often bring with those leads: the model cannot yet tell which back two "
         "win more.",
-        "turn": "Your likely choices, best first: your win chance after this turn, "
-        "on average over their likely replies, and against a typical choice.",
+        "turn": (
+            f"Your choices, best first, of the {adv.compared} the rules allow: "
+            if adv.compared
+            else "Your likely choices, best first: "
+        )
+        + "your win chance after this turn, on average over their likely replies, "
+        "and against a typical choice.",
         "replacement": "Who to send in, best first: your win chance at the next "
         "turn's start, on average over their likely switch-ins, and against a "
         "typical choice.",
