@@ -72,32 +72,59 @@ class Calc:
     """One Node process running `calc/bridge.js`, with a cache."""
 
     BATCH = 200  # requests per round trip, so neither pipe fills up
+    # answers kept at most, so a worker's memory stays bounded over a long run
+    # (Week 15: comparing every choice asks for many more)
+    MAX_CACHE = 200_000
 
     def __init__(self, calc_dir: Path | str = CALC_DIR) -> None:
-        self.proc = subprocess.Popen(
-            ["node", str(Path(calc_dir) / "bridge.js")],
-            cwd=str(calc_dir),
+        self.calc_dir = Path(calc_dir)
+        self.proc = self._start()
+        self.cache: dict[str, dict] = {}
+        self.calls = 0  # requests actually sent to the calculator
+        self.restarts = 0  # times the process stopped and was started again
+
+    def _start(self) -> subprocess.Popen:
+        return subprocess.Popen(
+            ["node", str(self.calc_dir / "bridge.js")],
+            cwd=str(self.calc_dir),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             bufsize=1,
         )
-        self.cache: dict[str, dict] = {}
-        self.calls = 0  # requests actually sent to the calculator
+
+    def _ask(self, chunk: list[str]) -> list[str]:
+        """The answers to one batch, from the process as it is."""
+        assert self.proc.stdin is not None and self.proc.stdout is not None
+        self.proc.stdin.write("".join(k + "\n" for k in chunk))
+        self.proc.stdin.flush()
+        lines = []
+        for _k in chunk:
+            line = self.proc.stdout.readline()
+            if not line:
+                raise BrokenPipeError("the damage calculator stopped")
+            lines.append(line)
+        return lines
 
     def run(self, requests: Sequence[Mapping]) -> list[dict]:
         keys = [json.dumps(r, sort_keys=True) for r in requests]
+        if len(self.cache) + len(keys) > self.MAX_CACHE:
+            self.cache.clear()
         todo = [k for k in dict.fromkeys(keys) if k not in self.cache]
-        assert self.proc.stdin is not None and self.proc.stdout is not None
         for i in range(0, len(todo), self.BATCH):
             chunk = todo[i : i + self.BATCH]
-            self.proc.stdin.write("".join(k + "\n" for k in chunk))
-            self.proc.stdin.flush()
-            for k in chunk:
-                line = self.proc.stdout.readline()
-                if not line:
-                    raise RuntimeError("the damage calculator stopped")
+            try:
+                lines = self._ask(chunk)
+            except OSError:  # it stopped (a broken pipe): start it again, once
+                try:
+                    self.proc.kill()
+                except OSError:  # pragma: no cover - already gone
+                    pass
+                self.proc = self._start()
+                self.restarts += 1
+                lines = self._ask(chunk)
+            for k, line in zip(chunk, lines):
                 self.cache[k] = json.loads(line)
             self.calls += len(chunk)
         return [self.cache[k] for k in keys]

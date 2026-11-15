@@ -170,3 +170,32 @@ def test_final_speed_with_tailwind_paralysis_and_scarf(calc):
     assert speed(mon={"status": "par"}) == 84
     assert speed(mon={"item": "choicescarf"}) == 253
     assert speed(mon={"boosts": {"spe": 1}}) == 253
+
+
+def test_the_calculator_starts_again_when_its_process_stops():
+    """Week 15: a long run with every choice compared (revision 13) lost the
+    calculator's process after 2½ hours, and the whole run stopped. It now
+    starts the process again and asks again, once."""
+    c = DM.Calc(CALC)
+    try:
+        one(c, GAMBIT, FLOETTE, "kowtowcleave")
+        c.proc.kill()
+        c.proc.wait(timeout=10)
+        r = one(c, GAMBIT, {**FLOETTE, "hp": 0.5}, "kowtowcleave")
+        assert r["rolls"] and c.restarts == 1
+    finally:
+        c.close()
+
+
+def test_the_cache_is_emptied_when_it_grows_too_big():
+    """The answers kept are bounded, so a worker's memory does not grow over a
+    whole run."""
+    c = DM.Calc(CALC)
+    c.MAX_CACHE = 2
+    try:
+        one(c, GAMBIT, FLOETTE, "kowtowcleave")
+        one(c, GAMBIT, FLOETTE, "ironhead")
+        one(c, GAMBIT, FLOETTE, "suckerpunch")
+        assert len(c.cache) <= 2
+    finally:
+        c.close()
