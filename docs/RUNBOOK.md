@@ -1596,13 +1596,17 @@ python -m wpa.features --split-logs logs_mc --logs battle_logs_mc --shards 16
 The second line adds M-C's train, validation and test games to `splits.json`
 and checks that no M-A or M-B game moved before it writes.
 
-**4. The resolver check on Reg M-C** (about 40 minutes):
+**4. The resolver check on Reg M-C** (about 40 minutes for all three formats):
 ```
 python -m wpa.resolver_check --add-sample regmc 300 --logs logs_mc
 python -m wpa.resolver_check --spread-hits
 python -m wpa.resolver_check --report
 ```
 The first line adds 300 M-C validation sets to the check's sample, once.
+Since 15 Nov the check keeps up to 3,000 boards a turn (your decision; it was
+300): on the busiest turns, 300 merged boards so coarsely that half of all HP
+misses were the cap, not the rules. `--cap 300` gives the old way. The advice
+and the replay report still keep 300, for speed.
 `build\w14\mc.cmd` does steps 3 and 4 in one go.
 
 **Rules added this week** (each in every format where it can happen):

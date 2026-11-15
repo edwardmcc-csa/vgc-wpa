@@ -533,7 +533,12 @@ def summary_lines(
         lines.append(
             "Each run took: "
             + "; ".join(
-                f"{k} {_dur(meta[k]['wall'])} ({meta[k].get('workers', '?')} workers)"
+                f"{k} {_dur(meta[k]['wall'])} ({meta[k].get('workers', '?')} workers"
+                + (
+                    f", a cap of {meta[k]['cap']:,} boards)"
+                    if "cap" in meta[k]
+                    else ")"
+                )
                 for k in timed
             )
         )
@@ -819,7 +824,9 @@ def run(a: argparse.Namespace) -> None:  # pragma: no cover - runs on the corpus
         else {"label": label, "started": time.time(), "wall": 0.0}
     )
     wall0 = meta.get("wall", 0.0)
-    meta.update(workers=a.workers, code=str(Path(wpa.__file__).resolve().parent))
+    meta.update(
+        workers=a.workers, cap=a.cap, code=str(Path(wpa.__file__).resolve().parent)
+    )
     t0 = time.time()
 
     def save_meta() -> None:
@@ -947,7 +954,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="every hit's damage weighed over the likely spreads (Week 13 Task 1; "
         "on by default since 14 Nov)",
     )
-    p.add_argument("--cap", type=int, default=300)
+    p.add_argument(
+        "--cap",
+        type=int,
+        default=3000,
+        help="the most boards a turn keeps (3,000 since 15 Nov, the PO's decision; "
+        "the advice keeps 300)",
+    )
     p.add_argument("--label", default=None, help=argparse.SUPPRESS)
     p.add_argument("--expect-code", type=Path, default=None, help=argparse.SUPPRESS)
     a = p.parse_args(argv)

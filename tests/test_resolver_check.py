@@ -566,3 +566,28 @@ def test_a_turn_says_whether_the_cap_coarsened_its_boards():
     text = "\n".join(RC.summary_lines({"run": [rec, rec2]}))
     line = next(x for x in text.splitlines() if "on the cap's coarser grid" in x)
     assert line.split()[-1] == "1"
+
+
+def test_the_check_keeps_3000_boards_a_turn_by_default():
+    """The PO's decision (15 Nov): the check uses a cap of 3,000 boards, so it
+    measures the rules rather than the cap's grid (Week 14: half of all HP
+    misses were on turns a cap of 300 coarsened). The advice keeps its own."""
+    from wpa import attribution as A
+
+    assert RC.parse_args([]).cap == 3000
+    assert A.Tools.__dataclass_fields__["cap"].default == 300
+
+
+def test_each_run_says_its_cap():
+    text = "\n".join(
+        RC.summary_lines(
+            {"old": RUN, "new": RUN},
+            {
+                "old": {"wall": 1500.0, "workers": 6},
+                "new": {"wall": 2340.0, "workers": 6, "cap": 3000},
+            },
+        )
+    )
+    line = next(x for x in text.splitlines() if x.startswith("Each run took"))
+    assert "old 25 min (6 workers)" in line
+    assert "new 39 min (6 workers, a cap of 3,000 boards)" in line
