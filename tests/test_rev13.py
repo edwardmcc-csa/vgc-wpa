@@ -183,3 +183,44 @@ def test_each_record_also_keeps_the_best_of_the_usual_ten():
     got = A.best_of_usual(value, alts, usual, LIKELY, e_mine)
     assert got == pytest.approx(e_mine - 0.5)  # choice 0 is the usual best
     assert A.best_of_usual(value, alts, usual, LIKELY, 0.95) == 0.0  # yours beats them
+
+
+# --------------------------------------------------------------------------
+# The analysis's first pass (Week 15): every choice is valued against the
+# opponent's likeliest replies; the best of them, with the usual ones and your
+# own, are valued in full
+# --------------------------------------------------------------------------
+
+
+def test_the_first_pass_keeps_the_best_the_usual_and_yours():
+    alts, usual = A.choices_to_compare(FULL, None)
+    mine = [(CHOICES[13], 0.5), (CHOICES[12], 0.5)]  # a choice the log half hides
+    alts.append(mine)
+    got = A.finalists(value2, alts, usual, REPLIES, screen=1, keep=2)
+    singles = {a[0][0] for a in got if len(a) == 1}
+    assert CHOICES[14] in singles  # the best, a play players rarely make
+    assert set(CHOICES[: A.USUAL]) <= singles  # the usual ones
+    assert mine in got  # yours, as the log shows it
+    assert len(got) == A.USUAL + 1 + 1  # choice 1 tops the first pass but is usual
+
+
+def test_with_few_choices_there_is_no_first_pass():
+    alts, usual = A.choices_to_compare(FULL[:12], None)
+    assert A.finalists(value2, alts, usual, REPLIES) == alts
+
+
+def test_against_the_average_of_the_usual_choices_as_before():
+    """`vs_average` stays the average of the choices players usually make,
+    whatever else is compared for the best."""
+    alts, usual = A.choices_to_compare(FULL, None)
+    mine = [(CHOICES[0], 1.0)]
+    average = [a for a in alts if a[0][0] in usual]
+    s = A.decompose(value, 0.5, 0.5, mine, LIKELY, LIKELY, alts, average=average)
+    want = 0.5 - sum(0.5 - 0.01 * i for i in range(10)) / 10
+    assert s.vs_average == pytest.approx(want)
+    assert s.vs_best == pytest.approx(0.5 - 0.9)
+
+
+def test_the_exact_way_is_kept_for_checking_the_first_pass():
+    assert A.Tools.__dataclass_fields__["exact_best"].default is False
+    assert A.parser().parse_args(["--exact-best"]).exact_best is True

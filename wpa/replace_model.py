@@ -198,9 +198,10 @@ def collect(a) -> None:  # pragma: no cover - runs on the corpus
         from wpa.team_sheets import load_dexes
 
         dexes, tables = load_dexes(a.showdown), load_all(a.showdown)
-    fmts = ("regma", "regmb")
-    caps = {"regma": a.games[0], "regmb": a.games[1]}
-    vcaps = {"regma": a.val_games[0], "regmb": a.val_games[1]}
+    from wpa.policy_data import format_caps
+
+    fmts = tuple(getattr(a, "formats", None) or ("regma", "regmb"))
+    caps, vcaps = format_caps(fmts, a.games, a.val_games)
     picked: dict[str, dict[str, list]] = {
         "train": {f: [] for f in fmts},
         "validation": {f: [] for f in fmts},
@@ -235,7 +236,7 @@ def collect(a) -> None:  # pragma: no cover - runs on the corpus
                     f"{len(g)} forced switches",
                     flush=True,
                 )
-    model = fit(groups["train"]["regma"] + groups["train"]["regmb"])
+    model = fit([g for f in fmts for g in groups["train"][f]])
     a.out.parent.mkdir(parents=True, exist_ok=True)
     model.save(a.out)
     lines = [
@@ -277,13 +278,19 @@ def main() -> None:  # pragma: no cover - runs on the corpus
         help="a pickled (dexes, tables) pair, instead of reading Showdown",
     )
     p.add_argument(
+        "--formats",
+        nargs="+",
+        default=["regma", "regmb"],
+        help="the formats fitted together (Reg M-C: alone, into its own file)",
+    )
+    p.add_argument(
         "--games",
         type=int,
-        nargs=2,
-        default=(1500, 2000),
-        help="training games per format (Reg M-A, Reg M-B)",
+        nargs="+",
+        default=[1500, 2000],
+        help="training games, one count per format",
     )
-    p.add_argument("--val-games", type=int, nargs=2, default=(1000, 400))
+    p.add_argument("--val-games", type=int, nargs="+", default=[1000, 400])
     p.add_argument("--out", type=Path, default=Path("models_v4/replace.json"))
     collect(p.parse_args())
 

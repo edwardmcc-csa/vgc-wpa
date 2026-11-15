@@ -20,7 +20,7 @@ import gzip
 import json
 import pickle
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -160,6 +160,19 @@ def examples_for_game(
     return out
 
 
+def format_caps(
+    formats: Sequence[str], games: Sequence[int], val_games: Sequence[int]
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Training and validation games per format, one count for each format
+    given (`--formats`, `--games`, `--val-games`)."""
+    if not len(formats) == len(games) == len(val_games):
+        raise SystemExit(
+            f"one count of games per format: {list(formats)}, {list(games)}, "
+            f"{list(val_games)}"
+        )
+    return dict(zip(formats, games)), dict(zip(formats, val_games))
+
+
 def collect(a) -> None:  # pragma: no cover - runs on the corpus
     from wpa.bring import BringModel
     from wpa.damage import Calc
@@ -187,12 +200,13 @@ def collect(a) -> None:  # pragma: no cover - runs on the corpus
         )
         for f, mod in FORMAT_MODS.items()
     }
-    mods = ("regma", "regmb")  # the formats the choice model learns (M-C: Week 15)
-    caps = {"regma": a.games[0], "regmb": a.games[1]}
-    vcaps = {"regma": a.val_games[0], "regmb": a.val_games[1]}
+    # the formats the choice model learns: Reg M-A and M-B together, or Reg M-C
+    # alone into its own file (Week 15)
+    mods = tuple(getattr(a, "formats", None) or ("regma", "regmb"))
+    caps, vcaps = format_caps(mods, a.games, a.val_games)
     picked: dict[str, dict[str, list]] = {
-        "train": {"regma": [], "regmb": []},
-        "validation": {"regma": [], "regmb": []},
+        "train": {f: [] for f in mods},
+        "validation": {f: [] for f in mods},
     }
     counts = {f: (Counter(), Counter()) for f in mods}
     for tag, log in _iter_logs(a.logs):
@@ -237,7 +251,7 @@ def collect(a) -> None:  # pragma: no cover - runs on the corpus
                     f"{split} {fmt}: {len(picked[split][fmt])} games, {len(g)} choices",
                     flush=True,
                 )
-    model = fit(groups["train"]["regma"] + groups["train"]["regmb"])
+    model = fit([g for f in mods for g in groups["train"][f]])
     model.rates = rates
     a.out.parent.mkdir(parents=True, exist_ok=True)
     model.save(a.out)

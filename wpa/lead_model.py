@@ -265,7 +265,7 @@ def main() -> None:  # pragma: no cover - runs on the corpus
         "led, against a uniform guess over the 15 pairs",
         f"  training: {len(train)} sides of games",
     ]
-    for fmt in ("regma", "regmb"):
+    for fmt in sorted({e.format for e in val}):  # each format in the logs given
         v = groups_for([e for e in val if e.format == fmt], rates)
         if not v:
             continue

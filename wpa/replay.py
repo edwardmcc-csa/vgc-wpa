@@ -39,7 +39,7 @@ _PAGE_LOG = re.compile(
     r'<script type="text/plain" class="battle-log-data">(.*?)</script>', re.S
 )
 _PAGE_ID = re.compile(re.escape(SITE) + r"/([a-z0-9]+-\d+(?:-[a-z0-9]+)?)")
-FORMAT_NAMES = {"regma": "Reg M-A", "regmb": "Reg M-B"}
+FORMAT_NAMES = {"regma": "Reg M-A", "regmb": "Reg M-B", "regmc": "Reg M-C"}
 
 
 class ReplayError(ValueError):
@@ -144,7 +144,8 @@ def format_for(tag: str, log: str) -> str:
     )
     raise ReplayError(
         f"this game is {tier}: the models know Champions VGC 2026 "
-        f"{' and '.join(FORMAT_NAMES.values())} only"
+        f"{', '.join(list(FORMAT_NAMES.values())[:-1])} and "
+        f"{list(FORMAT_NAMES.values())[-1]} only"
     )
 
 

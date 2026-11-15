@@ -169,3 +169,21 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def model_for(fmt: str) -> str:
+    """The win model a format's games use: Reg M-B the pooled one (with Reg
+    M-A's games), every other format its own (Reg M-C trained on its games
+    alone, Week 15)."""
+    return "pooled" if fmt == "regmb" else fmt
+
+
+def report_name(formats) -> str:
+    """Where a report on these formats goes: Reg M-A's and M-B's where it always
+    has, any other set of formats beside it (Week 15: `report_regmc.txt`)."""
+    formats = list(formats)
+    return (
+        "report.txt"
+        if formats == ["regma", "regmb"]
+        else f"report_{'_'.join(formats)}.txt"
+    )

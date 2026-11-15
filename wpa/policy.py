@@ -359,13 +359,19 @@ def main() -> None:  # pragma: no cover - runs on the corpus
         help="a pickled (dexes, tables) pair, instead of reading Showdown",
     )
     p.add_argument(
+        "--formats",
+        nargs="+",
+        default=["regma", "regmb"],
+        help="the formats fitted together (Reg M-C: alone, into its own file)",
+    )
+    p.add_argument(
         "--games",
         type=int,
-        nargs=2,
-        default=(1500, 2000),
-        help="training games per format (Reg M-A, Reg M-B)",
+        nargs="+",
+        default=[1500, 2000],
+        help="training games, one count per format",
     )
-    p.add_argument("--val-games", type=int, nargs=2, default=(1000, 400))
+    p.add_argument("--val-games", type=int, nargs="+", default=[1000, 400])
     p.add_argument("--out", type=Path, default=Path("models_v4/policy.json"))
     a = p.parse_args()
     from wpa.policy_data import collect

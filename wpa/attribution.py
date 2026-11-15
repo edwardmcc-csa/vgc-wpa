@@ -28,10 +28,11 @@ sets and `--report` summarises the results. The test split is never read.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,7 @@ def decompose(
     alternatives: Sequence[Mix] | None = None,
     kept: float = 1.0,
     typical: Mix | None = None,
+    average: Sequence[Mix] | None = None,
 ) -> Split:
     """`value(ours, theirs)`: E[WP | both choices], from the analysed side.
     `ours`, `theirs`: the choices taken (a mixture where the log does not show
@@ -111,6 +113,8 @@ def decompose(
     if alternatives:
         es = [expected(value, alt, likely) for alt in alternatives]
         vs_best = e_yours - max(max(es), e_yours)
+        if average:  # the usual choices only (revision 13), as before it
+            es = [expected(value, alt, likely) for alt in average]
         vs_average = e_yours - float(np.mean(es))
     choice = position = None
     if typical:
@@ -234,6 +238,41 @@ def choices_to_compare(full: Mix, most: int | None) -> tuple[list[Mix], set]:
     if most is not None:
         order = order[:most]
     return [[(j, 1.0)] for j in order], usual
+
+
+# the first pass (Week 15): every choice against this many of the opponent's
+# likeliest replies; this many of its best go on, beside the usual ones
+SCREEN = 3
+FINALISTS = 12
+
+
+def finalists(
+    value: Callable[[Joint, Joint], float],
+    alternatives: list[Mix],
+    usual: set,
+    replies: Mix,
+    screen: int = SCREEN,
+    keep: int = FINALISTS,
+) -> list[Mix]:
+    """The choices valued in full against every likely reply, of `alternatives`
+    (every choice the rules allow, revision 13). A first pass values each
+    against the `screen` likeliest replies; its `keep` best go on, with the
+    choices players usually make (`usual`) and any mixture (your own choice,
+    where the log hides part of it). With few choices, all go on. The choice
+    model orders the search but never drops a choice for being unusual: a choice
+    is dropped only for being worth less in the first pass."""
+    if len(alternatives) <= len(usual) + keep:
+        return list(alternatives)
+    top = sorted(replies, key=lambda x: -x[1])[:screen]
+    total = sum(q for _, q in top) or 1.0
+    top = [(y, q / total) for y, q in top]
+    first = [expected(value, alt, top) for alt in alternatives]
+    best = set(sorted(range(len(alternatives)), key=lambda i: -first[i])[:keep])
+    return [
+        alt
+        for i, alt in enumerate(alternatives)
+        if i in best or len(alt) != 1 or alt[0][0] in usual
+    ]
 
 
 def likely(full: Mix, top: int, draws: int, seed: str) -> tuple[Mix, float]:
@@ -1028,6 +1067,9 @@ class Tools:
     # the choices compared for cost vs. best: None, every choice the rules allow
     # (DEFINITIONS §4, revision 13); a number, that many of the likeliest
     alternatives: int | None = None
+    # value every choice against every likely reply, with no first pass: slower,
+    # for checking the first pass (Week 15)
+    exact_best: bool = False
     # the forced-switch model (`wpa.replace_model`); without it forced switches
     # keep their WPs (so a game still chains) but are not split
     replace: Any = None
@@ -1056,6 +1098,48 @@ class Tools:
     # the opponent's sheet blanked; None: the sheets as the log shows them
     hidden: Any = None
     predict_public: dict | None = None
+    # Week 15: models fitted on one format alone (Reg M-C), used for that format
+    # in place of the shared ones: {format: {"bring" | "policy" | "leads" |
+    # "replace": model}} (`own_models`)
+    by_format: dict = field(default_factory=dict)
+
+    def for_format(self, fmt: str) -> Tools:
+        """These tools with `fmt`'s own models where it has them (DEFINITIONS
+        §15: models are fitted per format); itself when it has none."""
+        own = self.by_format.get(fmt)
+        return dataclasses.replace(self, **own) if own else self
+
+
+# the models a format can have of its own, beside the shared file of each
+OWN_MODELS = ("bring", "policy", "leads", "replace")
+
+
+def own_models(a) -> dict:
+    """Each format's own models (Week 15): `<folder>/<format>/<name>` beside each
+    shared model file `<folder>/<name>` (`--bring`, `--policy`, `--leads`,
+    `--replace`), for the formats that have them."""
+    from wpa.bring import BringModel
+    from wpa.durations import FORMAT_MODS
+    from wpa.lead_model import LeadModel
+    from wpa.policy import PolicyModel
+    from wpa.replace_model import ReplaceModel
+
+    kinds = {
+        "bring": BringModel,
+        "policy": PolicyModel,
+        "leads": LeadModel,
+        "replace": ReplaceModel,
+    }
+    out: dict = {}
+    for fmt in FORMAT_MODS:
+        for key in OWN_MODELS:
+            shared = getattr(a, key, None)
+            if not shared:
+                continue
+            path = Path(shared).parent / fmt / Path(shared).name
+            if path.exists():
+                out.setdefault(fmt, {})[key] = kinds[key].load(path)
+    return out
 
 
 @dataclass
@@ -1218,6 +1302,7 @@ def turn_setups(
     from wpa.policy_data import _timers_by_turn, game_tools, turn_options
     from wpa.state_timing import loser_has_pokemon_left
 
+    tools = tools.for_format(fmt)  # its own models where it has them (Week 15)
     dex, table = tools.dexes[fmt], tools.tables[fmt]
     sheets, spreads, odds = game_tools(tag, log, fmt, tools.store, tools.bring, dex)
     if set(sheets) != {"p1", "p2"}:
@@ -1657,6 +1742,7 @@ def public_setups(tag: str, log: str, fmt: str, tools: Tools):
     (`tools.predict_public`). Team preview and forced switches keep each
     player's own WPs, so each player's game chains, but are not split. The
     records say "sheets": "hidden"."""
+    tools = tools.for_format(fmt)  # its own models where it has them (Week 15)
     from dataclasses import replace
 
     from wpa import choices as C
@@ -1968,6 +2054,7 @@ def analyse_game(
     """One record per decision point (team preview, each turn and each forced
     switch, each player) of one game."""
     out: list[dict] = []
+    tools = tools.for_format(fmt)  # its own models where it has them (Week 15)
     setups = (
         public_setups(tag, log, fmt, tools)
         if tools.hidden is not None
@@ -2028,8 +2115,8 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
             1 for i in opts if not isinstance(t.taken.get(i), Action) or i in t.hidden
         )
         mixes[r] = (taken, lk, kept, alts, unknown, usual)
-    t1, l1, _k1, alts1, _u1, _s1 = mixes["p1"]
-    t2, l2, _k2, alts2, _u2, _s2 = mixes["p2"]
+    t1, l1, _k1, _a1, _u1, _s1 = mixes["p1"]
+    t2, l2, _k2, _a2, _u2, _s2 = mixes["p2"]
     # p1's split: p1's choice against p2's likely and taken ones; p2's: p1's
     # likely and taken choices against p2's
     pairs = [(x, y) for x, _ in t1 for y, _ in l2 + t2] if "p1" in roles else []
@@ -2039,16 +2126,31 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     # (DEFINITIONS §3, revision 10): one block serves both players
     if tools.typical:
         pairs += [(x, y) for x, _ in l1 for y, _ in l2]
-    for alt in alts1 or ():
-        pairs += [(x, y) for x, _ in alt for y, _ in l2]
-    for alt in alts2 or ():
-        pairs += [(x, y) for x, _ in l1 for y, _ in alt]
     tv.prepare(pairs)
     plain = {"p1": l1, "p2": l2}
     # each side's likely choices: the plain model, or weighed by their worth
     # (the stronger model, Week 12 Task 3); measured strengths besides
     strengths = [tools.strength, *tools.measure_strengths]
     strong = {s: strong_mixes(tv, plain, s) for s in dict.fromkeys(strengths)}
+    # the choices to compare (revision 13): a first pass against their
+    # likeliest replies, then the best of it and the usual ones in full
+    for r, other in (("p1", "p2"), ("p2", "p1")):
+        alts, usual = mixes[r][3], mixes[r][5]
+        if not alts:
+            continue
+
+        def pair(x: Joint, y: Joint, r: str = r) -> tuple[Joint, Joint]:
+            return (x, y) if r == "p1" else (y, x)
+
+        if not tools.exact_best and len(alts) > len(usual) + FINALISTS:
+            lk = strong[tools.strength][other]
+            top = sorted(lk, key=lambda x: -x[1])[:SCREEN]
+            tv.prepare([pair(x, y) for alt in alts for x, _ in alt for y, _ in top])
+            alts = finalists(tv.for_role(r), alts, usual, lk)
+        tv.prepare(
+            [pair(x, y) for alt in alts for x, _ in alt for y, _ in plain[other]]
+        )
+        mixes[r] = (*mixes[r][:3], alts, *mixes[r][4:], len(mixes[r][3]))
     # the taken choices, their hidden parts weighed as the likely choices are
     taken_s = {
         s: strong_taken(tv, {q: mixes[q][0] for q in ("p1", "p2")}, plain, s)
@@ -2058,8 +2160,9 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     for r, other in (("p1", "p2"), ("p2", "p1")):
         if r not in roles:
             continue
-        taken, _l, _k, alts, unknown, usual = mixes[r]
-        _t, _lk, kept, _a, _u, _s = mixes[other]
+        taken, _l, _k, alts, unknown, usual, *n_all = mixes[r]
+        _t, _lk, kept, _a, _u, _s, *_n = mixes[other]
+        average = [a for a in alts or () if len(a) != 1 or a[0][0] in usual]
         b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
 
         def split(s: float) -> Split:
@@ -2074,6 +2177,7 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
                 [mine if alt is taken else alt for alt in alts] if alts else alts,
                 kept,
                 typical=strong[s][r] if tools.typical else None,
+                average=[mine if alt is taken else alt for alt in average] or None,
             )
 
         sp = split(tools.strength)
@@ -2098,7 +2202,8 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
             recs[-1]["best"] = joint_json(best) if best else None
             # revision 13: a best choice players rarely make, and how many
             recs[-1]["best_rare"] = best is not None and best not in usual
-            recs[-1]["compared"] = len(alts)
+            recs[-1]["compared"] = n_all[0] if n_all else len(alts)
+            recs[-1]["valued"] = len(alts)  # in full, after the first pass
             recs[-1]["vs_best_usual"] = best_of_usual(
                 tv.for_role(r), alts, usual, lk, b + sp.yours
             )
@@ -2374,6 +2479,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
     tools.strength = strength_value(a)
     tools.spread_hits = bool(getattr(a, "spread_hits", False))
     tools.spread_damage = bool(getattr(a, "spread_damage", True))
+    tools.exact_best = bool(getattr(a, "exact_best", False))
     tools.measure_strengths = measure_values(a)
     if getattr(a, "hidden_sets", False):
         from wpa.hidden import SetStore
@@ -2388,6 +2494,7 @@ def _tools(a) -> Tools:  # pragma: no cover - runs on the corpus
         from wpa.replace_model import ReplaceModel
 
         tools.replace = ReplaceModel.load(a.replace)
+    tools.by_format = own_models(a)  # Reg M-C's own (Week 15)
     # one thread for the model, set once it is loaded (its thread pool comes
     # with it): on small batches the pool costs seconds per call
     from threadpoolctl import threadpool_limits
@@ -2418,6 +2525,21 @@ def _one_strength(job) -> tuple[str, str, list[StrengthSample]]:  # pragma: no c
         return tag, fmt, []
 
 
+def strength_path(a) -> Path:
+    """Where a fit of the strength is saved: `--strength-out`, or beside the
+    policy (`strength.json`, the one every run reads)."""
+    out = getattr(a, "strength_out", None)
+    return Path(out) if out else Path(a.policy).with_name("strength.json")
+
+
+def per_format(a, counts) -> dict[str, int]:
+    """One count per format of `--formats` (`--sets`, `--max-games`)."""
+    formats = list(getattr(a, "formats", None) or ["regma", "regmb"])
+    if len(counts) != len(formats):
+        raise SystemExit(f"one count per format {formats}: {list(counts)}")
+    return dict(zip(formats, counts))
+
+
 def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
     """Learn the opponent model's strength on training sets (Week 12 Task 3).
     Each game's samples are kept in --strength-samples, so a stopped run
@@ -2430,9 +2552,7 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
     from wpa.resolver_check import done_tags
 
     splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
-    games = sample_sets(
-        a.logs, splits, {"regma": a.sets[0], "regmb": a.sets[1]}, split="train"
-    )
+    games = sample_sets(a.logs, splits, per_format(a, a.sets), split="train")
     path = Path(a.strength_samples)
     path.parent.mkdir(parents=True, exist_ok=True)
     done = done_tags(path)  # also mends a line cut off when a run stopped
@@ -2460,8 +2580,8 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
                     print(f"{i}/{len(jobs)} games", flush=True)
     if len(jobs) < left:
         print(f"{left - len(jobs)} games left: the same command carries on")
-    by: dict[str, list[StrengthSample]] = {"regma": [], "regmb": []}
-    n_games: dict[str, int] = {"regma": 0, "regmb": 0}
+    by: dict[str, list[StrengthSample]] = {f: [] for f in per_format(a, a.sets)}
+    n_games: dict[str, int] = {f: 0 for f in by}
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             d = json.loads(line)
@@ -2481,7 +2601,12 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
             continue
         s, curve = fits[f]
         inn = len(_in_fit(xs))
-        name = {"regma": "Reg M-A", "regmb": "Reg M-B", "both": "Both"}[f]
+        name = {
+            "regma": "Reg M-A",
+            "regmb": "Reg M-B",
+            "regmc": "Reg M-C",
+            "both": "Both",
+        }.get(f, f)
         games_f = sum(n_games.values()) if f == "both" else n_games.get(f, 0)
         lines += [
             f"{name}: {games_f} games, {len(xs)} choices, "
@@ -2497,7 +2622,7 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
     text = "\n".join(lines)
     print(text)
     if "both" in fits:
-        out = Path(a.policy).with_name("strength.json")
+        out = strength_path(a)
         out.write_text(
             json.dumps(
                 {
@@ -2521,9 +2646,7 @@ def fit_run(a) -> None:  # pragma: no cover - runs on the corpus
     from wpa.policy import PolicyModel
 
     splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
-    games = sample_sets(
-        a.logs, splits, {"regma": a.sets[0], "regmb": a.sets[1]}, split="train"
-    )
+    games = sample_sets(a.logs, splits, per_format(a, a.sets), split="train")
     jobs = [(tag, log, fmt, False) for fmt, gs in games.items() for tag, log in gs]
     print(f"{len(jobs)} training games", flush=True)
     samples: list[SharpSample] = []
@@ -2597,14 +2720,14 @@ def run(a) -> None:  # pragma: no cover - runs on the corpus
     from multiprocessing import Pool
 
     splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
-    games = sample_sets(a.logs, splits, {"regma": a.sets[0], "regmb": a.sets[1]})
+    games = sample_sets(a.logs, splits, per_format(a, a.sets))
     done = set()
     if a.out.exists():
         for line in a.out.read_text(encoding="utf-8").splitlines():
             done.add(json.loads(line)["tag"])
     jobs = []
     for fmt, gs in games.items():
-        cap = a.max_games[{"regma": 0, "regmb": 1}[fmt]] if a.max_games else None
+        cap = per_format(a, a.max_games)[fmt] if a.max_games else None
         prev = previous_leads(gs)
         for n, (tag, log) in enumerate(gs[:cap] if cap else gs):
             if tag not in done:
@@ -3047,18 +3170,29 @@ def parser():
     p.add_argument("--dex-tables", type=Path, default=None)
     p.add_argument("--moves-dir", type=Path, default=None)
     p.add_argument(
+        "--formats",
+        nargs="+",
+        default=["regma", "regmb"],
+        help="the formats whose sets are taken (Reg M-C: Week 15)",
+    )
+    p.add_argument(
         "--sets",
         type=int,
-        nargs=2,
-        default=(300, 199),
-        help="validation sets: Reg M-A, Reg M-B",
+        nargs="+",
+        default=[300, 199],
+        help="sets, one count per format (default: Reg M-A 300, Reg M-B 199)",
     )
     p.add_argument(
         "--max-games",
         type=int,
-        nargs=2,
+        nargs="+",
         default=None,
-        help="at most this many games (a timing run)",
+        help="at most this many games per format (a timing run)",
+    )
+    p.add_argument(
+        "--exact-best",
+        action="store_true",
+        help="value every choice against every likely reply (no first pass)",
     )
     p.add_argument(
         "--alternatives",
@@ -3165,6 +3299,13 @@ def parser():
     )
     p.add_argument(
         "--strength-samples", type=Path, default=Path("reports/strength_samples.jsonl")
+    )
+    p.add_argument(
+        "--strength-out",
+        type=Path,
+        default=None,
+        help="--fit-strength: save the fit here (default: strength.json beside the "
+        "policy, the one every run reads)",
     )
     p.add_argument(
         "--max-new",

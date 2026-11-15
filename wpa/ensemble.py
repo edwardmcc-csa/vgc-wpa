@@ -149,6 +149,13 @@ def noise(preds: np.ndarray, table: Table) -> dict:
 # --------------------------------------------------------------------------
 
 
+def which_model(fmt: str) -> str:
+    """The model a format's games use (`wpa.formats.model_for`)."""
+    from wpa.formats import model_for
+
+    return model_for(fmt)
+
+
 def _paths(models: Path, fmt: str, groups: str, k: int) -> tuple[Path, Path, Path]:
     d = Path(models) / fmt
     stem = f"{groups}.r{k:02d}"
@@ -238,7 +245,8 @@ def finish(a) -> None:  # pragma: no cover - on the full table
 
     lines = ["The averaged model (Week 10 Task 5; DEFINITIONS §10.2, revision 9)", ""]
     results = {}
-    for fmt, which in (("regma", "regma"), ("regmb", "pooled")):
+    for fmt in getattr(a, "formats", None) or ("regma", "regmb"):
+        which = which_model(fmt)
         raw = load_table(a.features, fmt, "validation")
         x = select(raw, a.groups)
         if which == "pooled":
@@ -323,7 +331,10 @@ def finish(a) -> None:  # pragma: no cover - on the full table
     lines.append("Gate: " + ("passed" if not fails else "FAILED: " + "; ".join(fails)))
     text = "\n".join(lines)
     print(text)
-    (Path(a.models) / "report.txt").write_text(text + "\n", encoding="utf-8")
+    from wpa.formats import report_name
+
+    formats = list(getattr(a, "formats", None) or ["regma", "regmb"])
+    (Path(a.models) / report_name(formats)).write_text(text + "\n", encoding="utf-8")
 
 
 def main() -> None:  # pragma: no cover
@@ -335,10 +346,18 @@ def main() -> None:  # pragma: no cover
         s.add_argument("--models", type=Path, required=True)
         s.add_argument("--groups", default="ABCDEFGHIJ")
         if name == "train":
-            s.add_argument("--format", choices=["regma", "pooled"], required=True)
+            s.add_argument(
+                "--format", choices=["regma", "pooled", "regmc"], required=True
+            )
         else:
             s.add_argument(
                 "--base", type=Path, default=None, help="the model to compare with"
+            )
+            s.add_argument(
+                "--formats",
+                nargs="+",
+                default=["regma", "regmb"],
+                help="the formats to finish (Reg M-C: on its own, Week 15)",
             )
     a = p.parse_args()
     train(a) if a.cmd == "train" else finish(a)

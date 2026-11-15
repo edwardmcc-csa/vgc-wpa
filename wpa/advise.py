@@ -32,6 +32,12 @@ Joint = tuple[Action, ...]
 Mix = list[tuple[Joint, float]]
 
 
+def _own(tools, fmt: str):
+    """The tools with `fmt`'s own models where it has them (Week 15); tools
+    without formats of their own (a stand-in) as they are."""
+    return tools.for_format(fmt) if hasattr(tools, "for_format") else tools
+
+
 def up_to_turn(log: str, turn: int | None) -> str:
     """The log up to the start of `turn` (its `|turn|` line), or of the last turn
     the log reaches when None; it then ends with an empty block, so the turn's
@@ -305,6 +311,7 @@ def advise(
     """The advice at the start of the last turn the log reaches (`up_to_turn`).
     `own_four`: the four the player brought, when known (the log shows only
     those that have come out)."""
+    tools = _own(tools, fmt)  # its own models where it has them (Week 15)
     from wpa import attribution as A
     from wpa import choices as C
     from wpa.policy_data import _timers_by_turn, turn_options
@@ -381,6 +388,7 @@ def advise_preview(
     lead model, Week 11). The log reaches turn 1's start (`preview_log`, or a
     game cut there). The back two are not valued. `prev`: each player's leads
     in the set's previous game (species)."""
+    tools = _own(tools, fmt)  # its own models where it has them (Week 15)
     from wpa import attribution as A
     from wpa.lead_model import pairs
 
@@ -453,6 +461,7 @@ def advise_bring(
     points between fours with the same leads, but for the four actually brought
     it predicted the result no better than for the others (it did better in
     50% of comparisons, in each format)."""
+    tools = _own(tools, fmt)  # its own models where it has them (Week 15)
     from wpa.team_sheets import sheets_from_log
 
     adv = advise_preview(tag, log, fmt, tools, role, prev)
@@ -500,6 +509,7 @@ def advise_replacement(
     both sides' newcomers come in (`Resolver.replace`), against the other's
     likely ones when they replace too. The log ends at the forced switch
     (`up_to_switch`)."""
+    tools = _own(tools, fmt)  # its own models where it has them (Week 15)
     from wpa import attribution as A
     from wpa import choices as C
     from wpa import replace_model as RM

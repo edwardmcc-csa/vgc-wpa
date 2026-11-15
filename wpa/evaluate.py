@@ -770,7 +770,11 @@ def _cmd_v2_report(a) -> None:
         f"=== {a.models.name} ({a.full}) on our decision table: validation split ==="
     ]
     results = {}
-    for fmt, which in (("regma", "regma"), ("regmb", "pooled")):
+    from wpa.formats import model_for, report_name
+
+    formats = list(getattr(a, "formats", None) or ["regma", "regmb"])
+    for fmt in formats:
+        which = model_for(fmt)
         d = a.models / which
         if not (d / f"{a.full}.pkl").exists():
             continue
@@ -819,7 +823,7 @@ def _cmd_v2_report(a) -> None:
     out.append("gate: " + ("FAILED" if fails else "passed"))
     text = "\n".join(out) + "\n"
     print(text)
-    (a.models / "report.txt").write_text(text, encoding="utf-8")
+    (a.models / report_name(formats)).write_text(text, encoding="utf-8")
 
 
 # --------------------------------------------------------------------------
