@@ -1,6 +1,6 @@
 # DEFINITIONS
 
-**Status:** approved by the product owner. Revision 12 — §15 adds Regulation M-C as a third format, and each format's rules come from one pinned copy of Showdown's code (PO, 14 Nov 2026). Revision 11 — §7 weighs each plausible action by its worth to the one choosing, at the strength learned on training games (PO, 13 Nov 2026). Revision 10 — §3 splits "your decision" into your choice and the position, and §4's average becomes the typical choice (PO, 10 Nov 2026). Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
+**Status:** approved by the product owner. Revision 13 — §4: cost vs. best is measured against every choice the rules allow, and the choice model predicts but never sets the standard (PO, 15 Nov 2026). Revision 12 — §15 adds Regulation M-C as a third format, and each format's rules come from one pinned copy of Showdown's code (PO, 14 Nov 2026). Revision 11 — §7 weighs each plausible action by its worth to the one choosing, at the strength learned on training games (PO, 13 Nov 2026). Revision 10 — §3 splits "your decision" into your choice and the position, and §4's average becomes the typical choice (PO, 10 Nov 2026). Revision 9 — §10.2's threshold raised to 3pp, and the reported `WP` is an average of models (PO, 6 Nov 2026). Revision 8 rewrote §3 as a three-way split, with §4's first line to match. Revision 7 added §15 (two formats).
 **Applies to:** milestones M4, M4b, M5, M7.
 
 This document is the contract. If code and this document disagree, the code is wrong.
@@ -46,10 +46,14 @@ Rationale (rev 10, PO, 10 Nov 2026): revision 8 called your choice plus the posi
 
 Beside the split in §3 we report the choice against two baselines, always both, never one alone:
 
-- **Cost vs. best** — against the best of the player's likely choices. This is the coaching number: "that switch cost you 14%."
+- **Cost vs. best** — against the best of **every choice the rules allow** the player at that decision point, each valued against the opponent's likely replies (§7). This is the coaching number: "that switch cost you 14%." A choice players never make is in the comparison like any other, so the tool can name a better play that players miss, and say what it would have gained. The report names the best choice and what it was worth, and says when it is one players rarely make.
 - **Cost vs. typical** — against the typical choice: this is **your choice** in §3. It is the fairness number, and it stops the tool telling a competent player they misplayed every single turn because they weren't a solver.
 
+**The choice model predicts; it never sets the standard** (rev 13). The choice model is how real players choose. It is used for three things only: the opponent's likely replies (§7), the typical choice (§3, the fairness number), and the order in which choices are searched when time is short. It is never the measure of a good choice: the advice and the bot choose by win chance alone, over every choice the rules allow. When the search must stop early (the bot's clock), it searches the likeliest choices first and says how many it searched.
+
 Rationale: "vs. best" alone is demoralising and makes good players look bad. "Vs. typical" alone hides real errors. Shipping both is a product requirement, not an implementation detail.
+
+Rationale (rev 13, PO, 15 Nov 2026): the model should not imitate the players it learns from; it should find the plays that would have improved their position. Until revision 12, cost vs. best and the advice compared the 10 choices the choice model found likeliest; at a Reg M-C decision point the rules allow a median of 90 joint choices (up to 306), so a better play outside the usual ones could not be found. Predicting the opponent still learns from players, because the best play depends on what they will do.
 
 ## 5. Information set — the critical decision
 
