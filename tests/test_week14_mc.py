@@ -781,3 +781,16 @@ def test_the_board_keeps_who_bound_it_from_the_log():
     )
     s2 = at_turn_start(log, 2)
     assert _mon(s2, 0)["bound"] == 8 and _mon(s2, 0)["bound_by"] == 0
+
+
+@needs_mc
+def test_a_pokemon_back_in_the_same_turn_ends_the_chain_of_who_replaced_whom(tools):
+    """Found when the overnight check hung on one game for hours: Golisopod
+    left (Emergency Exit) and came back in the same turn, and the chain of
+    who replaced whom went round in a circle (`_current` never ended)."""
+    rv, b, _asked = _exit_rv(tools)
+    w = R._World(1.0, b, R.Field(), set())
+    assert rv._switch(w, "p2", 0, 2) and rv._switch(w, "p2", 2, 0)
+    assert rv._current(w, ("p2", 0)) == ("p2", 0)
+    assert rv._current(w, ("p2", 2)) == ("p2", 0)
+    assert ("p2", 0) in w.replaced.values()  # it came in this turn (Stakeout)

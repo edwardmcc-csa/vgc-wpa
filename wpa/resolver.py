@@ -1058,6 +1058,9 @@ class Resolver:
         if n["hp_fraction"] <= 0:
             n["hp_fraction"] = 1.0  # first time in
         n.update(active=True, boosts={}, moved=False, last_move="", protect_streak=0)
+        # back in the same turn (Week 14: Emergency Exit, then a pivot): its own
+        # old link goes, so the chain of who replaced whom ends at it
+        w.replaced.pop((role, new), None)
         w.replaced[(role, old)] = (role, new)
         if entry:
             self._hazards(w, role, new)
@@ -1322,8 +1325,12 @@ class Resolver:
     # ---------------------------------------------------------------- acting
 
     def _current(self, w: _World, who: tuple[str, int]) -> tuple[str, int]:
+        seen = {who}
         while who in w.replaced:
             who = w.replaced[who]
+            if who in seen:  # never round in a circle (Week 14)
+                break
+            seen.add(who)
         return who
 
     def _act(self, w: _World, role: str, a: Action) -> list[_World]:
