@@ -1638,6 +1638,47 @@ and the replay report still keep 300, for speed.
    the resolver check marks what is left.
 6. **The models** (Week 15 adds this part of the runbook).
 
+
+## 28. Week 15: Reg M-C's own models, and every choice compared
+
+**What changed.**
+- **Every choice is compared** (DEFINITIONS revision 13, your decision of
+  15 Nov). The replay report and the analysis now compare your choice with
+  every play the rules allow, not just the 10 players usually make. The live
+  advice does the same.
+  - A quick first pass values every play against the opponent's 3 likeliest
+    replies. Then the best 12, with the usual 10, are valued in full.
+  - `--exact-best` values every play in full instead. It is slower and is
+    there for checking.
+  - `--alternatives 10` gives the old way.
+- **Reg M-C has its own models,** fitted on its games alone: the bring,
+  choice, lead and forced-switch models in `models_v4\regmc\`, and the win
+  model in `models_v4_avg\regmc\`. Reg M-A's and M-B's models are not touched.
+  The tool picks each game's format's own models by itself.
+
+**The runs** (about 12 hours; `build\w15\w15_run.cmd` does them all, into
+`build\w15\w15.log`). Its window shows each step as it starts, and a second
+window follows the log as it grows; close that one when the runs finish. For the next regulation, the same commands with its
+names (M-D: `logs_md`, `regmd`, `models_v4\regmd`):
+```
+python -m wpa.bring --logs logs_mc --out models_v4\regmc\bring.json
+python -m wpa.features --from-logs logs_mc --out features_v4b_mc --groups ABCDEFGHIJ --usage usage_stats --bring models_v4\regmc\bring.json --shards 16 --workers 6
+python -m wpa.ensemble train --features features_v4b_mc --models models_v4_avg --format regmc
+python -m wpa.ensemble finish --features features_v4b_mc --models models_v4_avg --formats regmc
+python -m wpa.policy --logs logs_mc --bring models_v4\regmc\bring.json --formats regmc --games 2000 --val-games 1000 --out models_v4\regmc\policy.json
+python -m wpa.lead_model --logs logs_mc --out models_v4\regmc\leads.json
+python -m wpa.replace_model --logs logs_mc --bring models_v4\regmc\bring.json --formats regmc --games 2000 --val-games 1000 --out models_v4\regmc\replace.json
+python -m wpa.features --from-logs logs_mc --out features_v4_preview_mc --groups ABCDEFGHIJ --usage usage_stats --bring models_v4\regmc\bring.json --blank --train-sample 0.2 --shards 16 --workers 6
+python -m wpa.evaluate v2-train --format regmc --groups ABCDEFGHIJ --features features_v4_preview_mc --models models_v4_preview --one-sided
+python -m wpa.evaluate v2-report --formats regmc --features features_v4_preview_mc --models models_v4_preview --full ABCDEFGHIJ
+python -m wpa.attribution --fit-strength --spread-hits --models models_v4_avg --moves-dir build --workers 6 --logs logs_mc --formats regmc --sets 40 --strength-samples reports\strength_samples_mc.jsonl --strength-out models_v4\regmc\strength.json
+```
+- **The reports to send me:** `models_v4_avg\report_regmc.txt` (the win model's
+  gate) and `models_v4\regmc\*.txt` (the other models against a uniform guess).
+- **The strength:** the last command measures Reg M-C's own strength into its own
+  file. The one in use stays the same for every format (DEFINITIONS §7) unless
+  you decide otherwise.
+
 ---
 
 ## If something goes wrong
