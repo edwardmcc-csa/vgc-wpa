@@ -172,3 +172,14 @@ def test_a_turns_advice_ranks_every_choice():
     tv2 = TV()
     AD._advice("t", 2, "p2", pt, tv2, FULL, mine, REPLIES, 1.0, every=True)
     assert all(a in R and b in CHOICES for a, b in tv2.asked[0])
+
+
+def test_each_record_also_keeps_the_best_of_the_usual_ten():
+    """So one run measures what revision 13 adds: the gain of the best of every
+    choice over the best of the 10 players usually make."""
+    alts, usual = A.choices_to_compare(FULL, None)
+    mine = [(CHOICES[3], 1.0)]
+    e_mine = A.expected(value, mine, LIKELY)
+    got = A.best_of_usual(value, alts, usual, LIKELY, e_mine)
+    assert got == pytest.approx(e_mine - 0.5)  # choice 0 is the usual best
+    assert A.best_of_usual(value, alts, usual, LIKELY, 0.95) == 0.0  # yours beats them

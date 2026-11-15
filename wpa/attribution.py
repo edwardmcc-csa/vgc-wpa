@@ -151,6 +151,20 @@ def best_choice(
     return alternatives[i][0][0]
 
 
+def best_of_usual(
+    value: Callable[[Joint, Joint], float],
+    alternatives: Sequence[Mix],
+    usual: set,
+    likely: Mix,
+    e_yours: float,
+) -> float:
+    """Cost against the best of the choices players usually make only (the
+    comparison before revision 13), from the same values: what revision 13
+    adds is the record's `vs_best` minus this."""
+    es = [expected(value, alt, likely) for alt in alternatives if alt[0][0] in usual]
+    return e_yours - max([e_yours, *es])
+
+
 def joint_json(j: Joint) -> list[dict]:
     """A joint choice as the records keep it."""
     return [asdict(a) for a in j]
@@ -2085,6 +2099,9 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
             # revision 13: a best choice players rarely make, and how many
             recs[-1]["best_rare"] = best is not None and best not in usual
             recs[-1]["compared"] = len(alts)
+            recs[-1]["vs_best_usual"] = best_of_usual(
+                tv.for_role(r), alts, usual, lk, b + sp.yours
+            )
     pairs = [(x, y) for x, _ in t1 for y, _ in t2]
     outs = [o for key in pairs for o in tv.outcomes.get(key, ())]
     tol = max(0.03, tools.resolution + 0.01)
