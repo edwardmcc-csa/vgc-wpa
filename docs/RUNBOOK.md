@@ -1676,8 +1676,20 @@ python -m wpa.attribution --fit-strength --spread-hits --models models_v4_avg --
 - **The reports to send me:** `models_v4_avg\report_regmc.txt` (the win model's
   gate) and `models_v4\regmc\*.txt` (the other models against a uniform guess).
 - **The strength:** the last command measures Reg M-C's own strength into its own
-  file. The one in use stays the same for every format (DEFINITIONS §7) unless
-  you decide otherwise.
+  file. Since DEFINITIONS revision 14 (16 Nov) that file is the one Reg M-C's
+  games use (9.6); Reg M-A and M-B keep `models_v4\strength.json` (6.55).
+- **Two checks on the corpus** (Week 15 Task 4, about an hour): whether the
+  busiest accounts shape the models, and the scores by rating band. It keeps the
+  models it trains in `--work`, so a rerun carries on.
+```
+python -m wpa.corpus_checks --raw battle_logs_mc\logs_gen9championsvgc2026regmcbo3.jsonl --logs logs_mc --features features_v4b_mc --format regmc --policy models_v4\regmc\policy.json --bring models_v4\regmc\bring.json --work build\w15\checks --out reports\corpus_checks_mc.txt
+```
+- **The strength by rating** (your direction of 16 Nov; measured, not yet in
+  use; about 9 hours): 150 training games in each rating band, the strength
+  fitted by the rating of the player choosing, into its own file.
+```
+python -m wpa.attribution --fit-strength --spread-hits --models models_v4_avg --moves-dir build --workers 6 --logs logs_mc --formats regmc --rating-bands 150 --strength-samples reports\strength_samples_mc_rating.jsonl --strength-out models_v4\regmc\strength_by_rating.json
+```
 
 ---
 
