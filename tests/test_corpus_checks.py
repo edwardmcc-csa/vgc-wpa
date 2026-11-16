@@ -13,23 +13,52 @@ from wpa import corpus_checks as K
 from wpa.features import Table
 
 
+def _log(r1, r2):
+    return f"|j|x\n|player|p1|A|1|{r1}\n|player|p2|B|2|{r2}\n|turn|1\n"
+
+
 def _games(tmp_path):
     rows = [
-        {"id": "g1", "rating": 1073, "players": ["Ash K", "misty"]},
-        {"id": "g2", "rating": 0, "players": ["ASH-K", "Brock"]},
-        {"id": "g3", "rating": None, "players": ["ashk", "Misty"]},
-        {"id": "g4", "rating": 1520, "players": ["gary", "brock"]},
+        {
+            "id": "g1",
+            "rating": 1073,
+            "players": ["Ash K", "misty"],
+            "log": _log(1123, 1027),
+        },
+        {"id": "g2", "rating": 0, "players": ["ASH-K", "Brock"], "log": _log("", "")},
+        {
+            "id": "g3",
+            "rating": None,
+            "players": ["ashk", "Misty"],
+            "log": _log(1210, ""),
+        },
+        {
+            "id": "g4",
+            "rating": 1520,
+            "players": ["gary", "brock"],
+            "log": _log(1530, 1490),
+        },
     ]
     p = tmp_path / "logs.jsonl"
     p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
     return K.read_games(p)
 
 
-def test_each_games_players_and_rating_are_read(tmp_path):
+def test_each_games_players_and_ratings_are_read(tmp_path):
     g = _games(tmp_path)
-    assert g["g1"] == K.Game(("ashk", "misty"), 1073)
-    assert g["g2"].rating is None  # no rating shown
+    assert g["g1"] == K.Game(("ashk", "misty"), (1123, 1027))
     assert g["g3"].players == ("ashk", "misty")  # the same account, however written
+    # each player's own rating, from the log's player lines (the replay page's
+    # one number is shown on far fewer games)
+    assert g["g2"].ratings == (None, None)
+    assert g["g3"].ratings == (1210, None)
+
+
+def test_a_games_rating_is_its_two_players_average_when_both_are_shown(tmp_path):
+    g = _games(tmp_path)
+    assert K.game_rating(g["g1"]) == 1075
+    assert K.game_rating(g["g3"]) is None  # one side only: not banded
+    assert K.ratings_from_log(_log(1500, 1400)) == (1500, 1400)
 
 
 def test_the_busiest_accounts_are_counted_on_the_games_given(tmp_path):

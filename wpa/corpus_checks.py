@@ -13,7 +13,9 @@
      move rates (the saved model's), so only the games fitted differ.
 2. **By rating band.** The ladder is mostly below the bot's target. The win
    model (the average of 10) and the choice model, as saved, scored on the
-   validation split by the rating its replay shows (about a third show one).
+   validation split by the game's rating: the average of the two players'
+   ratings, which the log's player lines show on most rated-ladder games (the
+   replay page's one number is shown on about a third).
 
 Accounts are named by number in the report, never by name. The test split is
 never read: the busiest accounts are counted on training games.
@@ -39,21 +41,16 @@ from typing import NamedTuple
 
 import numpy as np
 
+from wpa import ratings as R
 from wpa.features import Table
+from wpa.ratings import band, ordered_bands, ratings_from_log
 
-BANDS = (
-    (0, 1100, "under 1100"),
-    (1100, 1300, "1100 to 1299"),
-    (1300, 1500, "1300 to 1499"),
-    (1500, 10**6, "1500 and up"),
-)
-UNRATED = "no rating shown"
 SMALL = 100  # games: a band with fewer is marked a small sample
 
 
 class Game(NamedTuple):
     players: tuple[str, ...]
-    rating: int | None
+    ratings: tuple[int | None, int | None]  # p1's and p2's, as the log shows
 
 
 # --------------------------------------------------------------------------
@@ -67,7 +64,7 @@ def player_id(name: str) -> str:
 
 
 def read_games(path: Path | str) -> dict[str, Game]:
-    """Each game's two accounts and the rating its replay shows (None when it
+    """Each game's two accounts and each player's rating (None when the log
     shows none), from the download's `.jsonl` (`wpa.fetch_replays`)."""
     out = {}
     with open(path, encoding="utf-8") as f:
@@ -75,12 +72,16 @@ def read_games(path: Path | str) -> dict[str, Game]:
             if not line.strip():
                 continue
             r = json.loads(line)
-            rating = r.get("rating")
             out[r["id"]] = Game(
                 tuple(player_id(p) for p in r.get("players") or ()),
-                int(rating) if rating else None,
+                ratings_from_log(r.get("log") or ""),
             )
     return out
+
+
+def game_rating(game: Game) -> int | None:
+    """The game's rating: its two players' average, when the log shows both."""
+    return R.game_rating(game.ratings)
 
 
 def busiest(games: Mapping[str, Game], tags: Iterable[str], n: int) -> list:
@@ -96,18 +97,6 @@ def with_players(games: Mapping[str, Game], players: Collection[str]) -> set:
     """The games any of these accounts played in."""
     ps = set(players)
     return {t for t, g in games.items() if ps & set(g.players)}
-
-
-def band(rating: int | None) -> str:
-    if not rating:
-        return UNRATED
-    return next(name for lo, hi, name in BANDS if lo <= rating < hi)
-
-
-def ordered_bands(names: Iterable[str]) -> list[str]:
-    order = [name for _lo, _hi, name in BANDS] + [UNRATED]
-    present = set(names)
-    return [b for b in order if b in present]
 
 
 def units_with(table: Table, tags: Collection[str]) -> np.ndarray:
@@ -383,10 +372,12 @@ def _bands_win(a, games, lines: list) -> None:  # pragma: no cover
     model = load_averaged(a.models, model_for(a.format), a.groups, x.columns)
     assert model is not None, "the averaged model first (wpa.ensemble finish)"
     p = model.predict(x.X)
-    names = np.array([band(games[t].rating if t in games else None) for t in x.tag])
+    names = np.array(
+        [band(game_rating(games[t]) if t in games else None) for t in x.tag]
+    )
     lines += [
         "",
-        "2. By the rating a game's replay shows (validation split)",
+        "2. By the game's rating, its two players' average (validation split)",
         "",
         "  The win model (the average of 10): Brier [95%], v0's, the model against v0",
     ]
@@ -407,7 +398,7 @@ def _bands_win(a, games, lines: list) -> None:  # pragma: no cover
 
 def _bands_choice(s: dict, games, lines: list) -> None:  # pragma: no cover
     names = np.array(
-        [band(games[t].rating if t in games else None) for t in s["games"]]
+        [band(game_rating(games[t]) if t in games else None) for t in s["games"]]
     )
     lines += [
         "",
