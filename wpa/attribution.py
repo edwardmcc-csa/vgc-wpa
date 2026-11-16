@@ -43,6 +43,7 @@ from wpa.choices import Action, joint
 Joint = tuple[Action, ...]
 Mix = list[tuple[Joint, float]]
 REPLAY = "https://replay.pokemonshowdown.com/"
+FORMAT_NAMES = {"regma": "Reg M-A", "regmb": "Reg M-B", "regmc": "Reg M-C"}
 
 
 # --------------------------------------------------------------------------
@@ -2601,12 +2602,7 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
             continue
         s, curve = fits[f]
         inn = len(_in_fit(xs))
-        name = {
-            "regma": "Reg M-A",
-            "regmb": "Reg M-B",
-            "regmc": "Reg M-C",
-            "both": "Both",
-        }.get(f, f)
+        name = {**FORMAT_NAMES, "both": "Both"}.get(f, f)
         games_f = sum(n_games.values()) if f == "both" else n_games.get(f, 0)
         lines += [
             f"{name}: {games_f} games, {len(xs)} choices, "
@@ -3143,8 +3139,11 @@ def report(path: Path, top: int = 10) -> str:
     text = Path(path).read_text(encoding="utf-8")
     recs = [json.loads(x) for x in text.splitlines() if x.strip()]
     lines = ["Decision versus luck (DEFINITIONS §3 and §4)", ""]
-    for fmt, name in (("regma", "Reg M-A"), ("regmb", "Reg M-B")):
-        lines += _format_lines(name, [r for r in recs if r.get("format") == fmt], top)
+    present = {str(r.get("format")) for r in recs}
+    for fmt in [*FORMAT_NAMES, *sorted(present - set(FORMAT_NAMES))]:
+        if fmt in present:
+            rs = [r for r in recs if r.get("format") == fmt]
+            lines += _format_lines(FORMAT_NAMES.get(fmt, fmt), rs, top)
     return "\n".join(lines)
 
 

@@ -246,3 +246,23 @@ def test_reg_mcs_measured_strength_does_not_replace_the_one_in_use():
     assert A.strength_path(a).as_posix().endswith("models_v4/strength.json")
     b = A.parser().parse_args(["--strength-out", "models_v4/regmc/strength.json"])
     assert A.strength_path(b).as_posix() == "models_v4/regmc/strength.json"
+
+
+def test_the_summary_covers_reg_mc_too(tmp_path):
+    """The run's summary has a block for each format in the records: step 12
+    of the Week 15 runs measured Reg M-C, and its summary came out empty."""
+    import json
+
+    from tests.test_attribution import _rec
+
+    rows = []
+    for fmt in ("regma", "regmc"):
+        r1 = _rec(f"{fmt}-g1", 3, "p1", 0.4, 0.6, True, ())
+        r2 = _rec(f"{fmt}-g1", 3, "p2", 0.6, 0.4, True, ())
+        rows += [dict(r1, format=fmt), dict(r2, format=fmt)]
+    path = tmp_path / "a.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    text = A.report(path)
+    assert "Reg M-A: 1 games" in text
+    assert "Reg M-C: 1 games" in text
+    assert "Reg M-B" not in text  # none of its games in the records
