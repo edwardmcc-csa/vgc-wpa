@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+from typing import Any
 
 import pytest
 
@@ -16,7 +17,7 @@ from wpa.policy import FEATURES, PolicyModel
 
 
 def _tools(**kw) -> A.Tools:
-    base = dict(
+    base: dict[str, Any] = dict(
         dexes={},
         tables={},
         moves={},
@@ -239,13 +240,46 @@ def test_the_win_models_report_covers_the_formats_asked(tmp_path, monkeypatch):
     assert (tmp_path / "report.txt").read_text(encoding="utf-8") == "M-A and M-B\n"
 
 
-def test_reg_mcs_measured_strength_does_not_replace_the_one_in_use():
-    """DEFINITIONS §7: one strength serves every format (models_v4/strength.json).
-    Reg M-C's own is measured into its own file, for the report."""
+def test_reg_mcs_measured_strength_does_not_replace_the_shared_one():
+    """A fit for one format goes to its own file (`--strength-out`); the shared
+    one (models_v4/strength.json, Reg M-A's and M-B's) stays."""
     a = A.parser().parse_args([])
     assert A.strength_path(a).as_posix().endswith("models_v4/strength.json")
     b = A.parser().parse_args(["--strength-out", "models_v4/regmc/strength.json"])
     assert A.strength_path(b).as_posix() == "models_v4/regmc/strength.json"
+
+
+def _strengths(tmp_path):
+    shared = tmp_path / "models_v4"
+    (shared / "regmc").mkdir(parents=True)
+    (shared / "strength.json").write_text('{"strength": 6.55}', encoding="utf-8")
+    (shared / "regmc" / "strength.json").write_text(
+        '{"strength": 9.6}', encoding="utf-8"
+    )
+    return shared
+
+
+def test_each_format_has_its_own_strength_when_it_has_one(tmp_path):
+    """DEFINITIONS revision 14 (PO, 16 Nov 2026): each format's own strength,
+    learned on its own games; Reg M-C's is 9.6. Reg M-A and M-B keep the one
+    they share (6.55)."""
+    shared = _strengths(tmp_path)
+    a = argparse.Namespace(policy=shared / "policy.json", strength="fitted")
+    assert A.strength_for(a, "regmc") == pytest.approx(9.6)
+    assert A.strength_for(a, "regma") == pytest.approx(6.55)
+    own = A.own_models(a)
+    assert own["regmc"]["strength"] == pytest.approx(9.6)
+    t = _tools(by_format=own, strength=6.55)
+    assert t.for_format("regmc").strength == pytest.approx(9.6)
+    assert t.for_format("regma").strength == pytest.approx(6.55)
+
+
+def test_a_strength_asked_for_by_number_holds_for_every_format(tmp_path):
+    """`--strength 0` (revision 10's model) or any number: the same for all."""
+    shared = _strengths(tmp_path)
+    a = argparse.Namespace(policy=shared / "policy.json", strength="0")
+    assert A.strength_for(a, "regmc") == 0.0
+    assert "regmc" not in A.own_models(a)
 
 
 def test_the_summary_covers_reg_mc_too(tmp_path):

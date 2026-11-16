@@ -1045,11 +1045,11 @@ def analyse(
     prev = A.previous_leads([(tag, log) for tag, log, _f in games])
     end = "-hidden" if getattr(a, "hidden", False) else ""
     saved = {tag: a.out / f"{tag}{end}.jsonl" for tag, _l, _f in games}
-    want = A.strength_value(_options(a))  # analysed again at another strength
-    jobs = [
+    opts = _options(a)
+    jobs = [  # analysed again at another strength (each format's own, rev 14)
         (tag, log, fmt, True, prev.get(tag, {}))
         for tag, log, fmt in games
-        if a.fresh or stale(saved[tag], want)
+        if a.fresh or stale(saved[tag], A.strength_for(opts, fmt))
     ]
     if jobs:
         n = len(jobs)

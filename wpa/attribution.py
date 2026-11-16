@@ -529,11 +529,23 @@ class StrengthSample:
     """One choice a player made, for learning the strength: the likeliest of
     their choices (the candidates) with their chances from the plain model,
     each one's worth to them against the other side's likely choices, and which
-    candidate they took (-1: none of them)."""
+    candidate they took (-1: none of them). And whose choice it was (p1 or
+    p2; None in samples saved before 16 Nov), for the strength by rating."""
 
     chances: list[float]
     worth: list[float]
     taken: int
+    role: str | None = None
+
+
+def sample_row(s: StrengthSample) -> list:
+    """How a sample is saved (one game's samples per line)."""
+    return [s.chances, s.worth, s.taken, s.role]
+
+
+def sample_from_row(row: Sequence) -> StrengthSample:
+    """A saved sample; rows saved before 16 Nov have no role."""
+    return StrengthSample(list(row[0]), list(row[1]), int(row[2]), *row[3:4])
 
 
 def _in_fit(samples: Sequence[StrengthSample]) -> list[StrengthSample]:
@@ -587,6 +599,191 @@ def fit_strength(
         else:
             hi_s = mid
     return 0.5 * (lo_s + hi_s), curve
+
+
+# --------------------------------------------------------------------------
+# The strength by the rating of the player choosing (PO, 16 Nov 2026: "If the
+# opponents ELO is known, we should scale up/down accordingly"). Measured
+# first; DEFINITIONS §7 changes only with the PO's approval.
+# --------------------------------------------------------------------------
+
+CENTER = 1200  # the line's rating at its intercept (about the ladder's median)
+
+
+def _arrays(samples: Sequence[StrengthSample]):
+    """The samples in the fit as arrays: log chances and worth (padded rows get
+    no chance), and the candidate taken."""
+    xs = _in_fit(samples)
+    k = max((len(s.chances) for s in xs), default=1)
+    L = np.full((len(xs), k), -np.inf)
+    W = np.zeros((len(xs), k))
+    for i, s in enumerate(xs):
+        n = len(s.chances)
+        L[i, :n] = np.log(np.clip(np.asarray(s.chances, float), 1e-300, None))
+        W[i, :n] = s.worth
+    T = np.array([s.taken for s in xs], dtype=int)
+    return L, W, T
+
+
+def _loglik(L, W, T, strength) -> float:
+    """The log chance of the choices made, each at its own strength."""
+    z = L + np.asarray(strength, float).reshape(-1, 1) * W
+    zmax = z.max(axis=1, keepdims=True)
+    lse = zmax[:, 0] + np.log(np.exp(z - zmax).sum(axis=1))
+    return float((z[np.arange(len(T)), T] - lse).sum())
+
+
+def _fit_one(L, W, T, hi: float = 400.0) -> float:
+    """`fit_strength` on arrays: where the choice made averages zero against
+    the model's (the likelihood's peak), by bisection."""
+    if not len(T):
+        return 0.0
+
+    def slope(st: float) -> float:
+        z = L + st * W
+        q = np.exp(z - z.max(axis=1, keepdims=True))
+        q /= q.sum(axis=1, keepdims=True)
+        return float((W[np.arange(len(T)), T] - (q * W).sum(axis=1)).mean())
+
+    if slope(0.0) <= 0:
+        return 0.0
+    lo, top = 0.0, hi
+    if slope(top) > 0:
+        return float(top)
+    for _ in range(60):
+        mid = 0.5 * (lo + top)
+        lo, top = (mid, top) if slope(mid) > 0 else (lo, mid)
+    return 0.5 * (lo + top)
+
+
+def fit_strength_by_band(
+    samples: Sequence[StrengthSample], ratings: Sequence[int | None]
+) -> dict[str, tuple[float, int]]:
+    """The strength fitted on each rating band's choices: {band: (strength,
+    choices in the fit)}. `ratings`: the rating of the player making each
+    choice (None: not shown)."""
+    from wpa.ratings import band
+
+    by: dict[str, list[StrengthSample]] = {}
+    for s, r in zip(samples, ratings):
+        by.setdefault(band(r), []).append(s)
+    out = {}
+    for b, xs in by.items():
+        L, W, T = _arrays(xs)
+        out[b] = (_fit_one(L, W, T), len(T))
+    return out
+
+
+def fit_strength_line(
+    samples: Sequence[StrengthSample],
+    ratings: Sequence[int | None],
+    center: int = CENTER,
+) -> tuple[float, float]:
+    """strength = s0 + slope x (rating - center) / 100 (at least 0), by maximum
+    likelihood on the choices whose player's rating is shown: (s0, slope)."""
+    from scipy.optimize import minimize
+
+    pairs = [(s, r) for s, r in zip(samples, ratings) if r is not None]
+    xs = [s for s, _ in pairs]
+    keep = [0 <= s.taken < len(s.chances) for s in xs]
+    x = np.array([(r - center) / 100 for (_s, r), k in zip(pairs, keep) if k])
+    L, W, T = _arrays(xs)
+    if not len(T):
+        return 0.0, 0.0
+
+    def nll(v) -> float:
+        return -_loglik(L, W, T, np.maximum(0.0, v[0] + v[1] * x))
+
+    start = np.array([_fit_one(L, W, T), 0.0])
+    res = minimize(nll, start, method="Nelder-Mead", options={"xatol": 1e-3})
+    return float(res.x[0]), float(res.x[1])
+
+
+def strength_by_rating_lines(
+    samples: Sequence[StrengthSample],
+    ratings: Sequence[int | None],
+    games: Sequence[str],
+    draws: int = 200,
+    seed: int = 0,
+) -> tuple[list[str], dict]:
+    """The report's lines and the saved numbers: the strength per band with a
+    95% range from resampling games, and the line."""
+    from wpa.ratings import band, ordered_bands
+
+    by = fit_strength_by_band(samples, ratings)
+    rng = np.random.default_rng(seed)
+    g = np.asarray(games)
+    out: dict = {"by_band": {}, "center": CENTER}
+    lines = ["  by the rating of the player choosing (95% range, resampling games):"]
+    for b in ordered_bands(by):
+        idx = [i for i, r in enumerate(ratings) if band(r) == b]
+        ug = np.unique(g[idx])
+        per = {u: [i for i in idx if g[i] == u] for u in ug}
+        boots = []
+        for _ in range(draws):
+            pick = [i for u in rng.choice(ug, len(ug)) for i in per[u]]
+            boots.append(_fit_one(*_arrays([samples[i] for i in pick])))
+        lo, hi = np.percentile(boots, [2.5, 97.5]) if boots else (0.0, 0.0)
+        s_b, n = by[b]
+        out["by_band"][b] = {
+            "strength": s_b,
+            "range": [float(lo), float(hi)],
+            "choices": n,
+            "games": int(len(ug)),
+        }
+        lines.append(
+            f"    {b}: {len(ug)} games, {n} choices; strength {s_b:.1f} "
+            f"[{lo:.1f}, {hi:.1f}]"
+        )
+    s0, slope = fit_strength_line(samples, ratings)
+    out["line"] = {"s0": s0, "slope_per_100": slope}
+    lines.append(
+        f"  as a line: {s0:.1f} at {CENTER}, {slope:+.2f} for each 100 rating points"
+    )
+    return lines, out
+
+
+def sample_by_rating(
+    logs: Path, splits: Mapping[str, str], fmt: str, per_band: int, split: str = "train"
+) -> dict[str, list[tuple[str, str]]]:
+    """Up to `per_band` games of each rating band (the game's rating, its two
+    players' average), whole sets in a fixed order (a hash of the set id), so
+    the higher bands are filled although most games are below them. Games
+    whose log does not show both ratings are left out. Never the test split."""
+    if split == "test":
+        raise ValueError("the test split is never read here")
+    import hashlib
+
+    from wpa.features import unit_of
+    from wpa.formats import format_of
+    from wpa.policy_data import _iter_logs
+    from wpa.ratings import BANDS, band, game_rating, ratings_from_log
+
+    units: dict[str, list] = {}
+    for tag, log in _iter_logs(logs):
+        if splits.get(tag) != split:
+            continue  # the test split is never read
+        try:
+            if format_of(tag) != fmt:
+                continue
+        except Exception:
+            continue
+        rating = game_rating(ratings_from_log(log))
+        if rating is None:
+            continue
+        unit, n = unit_of(tag, log)
+        units.setdefault(unit, []).append((n, tag, log, rating))
+    out: dict[str, list[tuple[str, str]]] = {name: [] for _lo, _hi, name in BANDS}
+    order = sorted(
+        units,
+        key=lambda u: hashlib.sha256(f"wpa-strength-rating:{u}".encode()).hexdigest(),
+    )
+    for u in order:
+        games = sorted(units[u])
+        b = band(games[0][3])
+        if len(out[b]) < per_band:
+            out[b] += [(tag, log) for _n, tag, log, _r in games]
+    return out
 
 
 def strength_value(a, s: str | None = None) -> float:
@@ -1140,7 +1337,31 @@ def own_models(a) -> dict:
             path = Path(shared).parent / fmt / Path(shared).name
             if path.exists():
                 out.setdefault(fmt, {})[key] = kinds[key].load(path)
+        if _own_strength_file(a, fmt) is not None:  # DEFINITIONS rev 14
+            out.setdefault(fmt, {})["strength"] = strength_for(a, fmt)
     return out
+
+
+def _own_strength_file(a, fmt: str) -> Path | None:
+    """A format's own fitted strength, when the run asks for the fitted one."""
+    if str(getattr(a, "strength", "0") or "0") != "fitted" or not getattr(
+        a, "policy", None
+    ):
+        return None
+    path = Path(a.policy).parent / fmt / "strength.json"
+    return path if path.exists() else None
+
+
+def strength_for(a, fmt: str) -> float:
+    """The opponent model's strength for one format's games (DEFINITIONS §7,
+    revision 14, PO 16 Nov 2026): the format's own fitted strength
+    (`<policy folder>/<format>/strength.json`) when the run asks for the fitted
+    one and the format has its own; otherwise `strength_value` (Reg M-A and
+    M-B share theirs)."""
+    path = _own_strength_file(a, fmt)
+    if path is not None:
+        return float(json.loads(path.read_text(encoding="utf-8"))["strength"])
+    return strength_value(a)
 
 
 @dataclass
@@ -2378,6 +2599,7 @@ def strength_samples(
                         [p for _, p in cands[r]],
                         worth(ts.tv.for_role(r), cands[r], lks[other]),
                         joints.index(made[r]) if made[r] in joints else -1,
+                        r,
                     )
                 )
         except Exception:  # pragma: no cover - a turn left out of the fit
@@ -2550,10 +2772,28 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
     only when asked (--strength fitted)."""
     from multiprocessing import Pool
 
+    from wpa.ratings import ratings_from_log
     from wpa.resolver_check import done_tags
 
+    bands = getattr(a, "rating_bands", None)
+    if bands and not getattr(a, "strength_out", None):
+        raise SystemExit(
+            "--rating-bands measures; give it its own --strength-out, so the "
+            "strength in use (strength.json) stays as it is"
+        )
     splits = json.loads(Path(a.splits).read_text(encoding="utf-8"))["games"]
-    games = sample_sets(a.logs, splits, per_format(a, a.sets), split="train")
+    if bands:  # the strength by rating (PO, 16 Nov): games band by band
+        games = {
+            f: [
+                g
+                for gs in sample_by_rating(a.logs, splits, f, bands).values()
+                for g in gs
+            ]
+            for f in getattr(a, "formats", None) or ["regma", "regmb"]
+        }
+    else:
+        games = sample_sets(a.logs, splits, per_format(a, a.sets), split="train")
+    shown = {tag: ratings_from_log(log) for gs in games.values() for tag, log in gs}
     path = Path(a.strength_samples)
     path.parent.mkdir(parents=True, exist_ok=True)
     done = done_tags(path)  # also mends a line cut off when a run stopped
@@ -2574,22 +2814,28 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
             for i, (tag, fmt, got) in enumerate(
                 pool.imap_unordered(_one_strength, jobs), 1
             ):
-                rows = [[s.chances, s.worth, s.taken] for s in got]
-                f.write(json.dumps({"tag": tag, "format": fmt, "samples": rows}) + "\n")
+                rows = [sample_row(s) for s in got]
+                line = {"tag": tag, "format": fmt, "samples": rows}
+                line["ratings"] = list(shown.get(tag, (None, None)))
+                f.write(json.dumps(line) + "\n")
                 f.flush()
                 if i % 10 == 0:
                     print(f"{i}/{len(jobs)} games", flush=True)
     if len(jobs) < left:
         print(f"{left - len(jobs)} games left: the same command carries on")
-    by: dict[str, list[StrengthSample]] = {f: [] for f in per_format(a, a.sets)}
+    by: dict[str, list[StrengthSample]] = {f: [] for f in games}
     n_games: dict[str, int] = {f: 0 for f in by}
+    rated: list[tuple[StrengthSample, int | None, str]] = []  # with its player's
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             d = json.loads(line)
             n_games[d["format"]] = n_games.get(d["format"], 0) + 1
-            by.setdefault(d["format"], []).extend(
-                StrengthSample(c, w, k) for c, w, k in d["samples"]
-            )
+            got = [sample_from_row(row) for row in d["samples"]]
+            by.setdefault(d["format"], []).extend(got)
+            pair = d.get("ratings") or [None, None]
+            for s in got:
+                if s.role in ("p1", "p2"):
+                    rated.append((s, pair[0 if s.role == "p1" else 1], d["tag"]))
     both = [s for xs in by.values() for s in xs]
     fits = {f: fit_strength(xs) for f, xs in (*by.items(), ("both", both)) if xs}
     lines = [
@@ -2615,6 +2861,14 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
             "  the curve (strength: the choice made against the model's, points):",
             "    " + ", ".join(f"{x:.0f}: {100 * m:+.1f}" for x, m in curve[::5]),
         ]
+    extra: dict = {}
+    if bands and rated:
+        more, extra = strength_by_rating_lines(
+            [s for s, _r, _g in rated],
+            [r for _s, r, _g in rated],
+            [g for *_x, g in rated],
+        )
+        lines += more
     text = "\n".join(lines)
     print(text)
     if "both" in fits:
@@ -2626,6 +2880,7 @@ def fit_strength_run(a) -> None:  # pragma: no cover - runs on the corpus
                     "by_format": {f: fits[f][0] for f in fits if f != "both"},
                     "games": sum(n_games.values()),
                     "choices": len(both),
+                    **extra,
                 }
             )
             + "\n",
@@ -3305,6 +3560,14 @@ def parser():
         default=None,
         help="--fit-strength: save the fit here (default: strength.json beside the "
         "policy, the one every run reads)",
+    )
+    p.add_argument(
+        "--rating-bands",
+        type=int,
+        default=None,
+        help="with --fit-strength: this many training games in each rating band, "
+        "and the strength by the rating of the player choosing (needs its own "
+        "--strength-out)",
     )
     p.add_argument(
         "--max-new",
