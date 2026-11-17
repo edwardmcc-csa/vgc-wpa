@@ -1684,9 +1684,11 @@ python -m wpa.attribution --fit-strength --spread-hits --models models_v4_avg --
 ```
 python -m wpa.corpus_checks --raw battle_logs_mc\logs_gen9championsvgc2026regmcbo3.jsonl --logs logs_mc --features features_v4b_mc --format regmc --policy models_v4\regmc\policy.json --bring models_v4\regmc\bring.json --work build\w15\checks --out reports\corpus_checks_mc.txt
 ```
-- **The strength by rating** (your direction of 16 Nov; measured, not yet in
-  use; about 9 hours): 150 training games in each rating band, the strength
-  fitted by the rating of the player choosing, into its own file.
+- **The strength by rating** (your direction of 16 Nov; in use since
+  DEFINITIONS revision 15, 17 Nov; about 9 hours): 150 training games in each
+  rating band, the strength fitted by the rating of the player choosing, into
+  its own file. The analysis, the replay report and the advice use its line for
+  every player whose rating the log shows.
 ```
 python -m wpa.attribution --fit-strength --spread-hits --models models_v4_avg --moves-dir build --workers 6 --logs logs_mc --formats regmc --rating-bands 150 --strength-samples reports\strength_samples_mc_rating.jsonl --strength-out models_v4\regmc\strength_by_rating.json
 ```
