@@ -120,3 +120,156 @@ def test_the_measurement_never_overwrites_the_strength_in_use():
     assert a.rating_bands == 150
     with pytest.raises(SystemExit, match="strength-out"):
         A.fit_strength_run(a)  # without its own --strength-out: refused
+
+
+# --------------------------------------------------------------------------
+# DEFINITIONS revision 15 (PO, 17 Nov 2026): the strength for a player's
+# choices follows that player's rating where the log shows it
+# --------------------------------------------------------------------------
+
+LINE = {"s0": 8.7, "slope": 0.32, "center": 1200}
+
+
+def _tools(**kw) -> A.Tools:
+    base: dict = dict(
+        dexes={},
+        tables={},
+        moves={},
+        calc=None,
+        store=None,
+        bring=None,
+        policy=None,
+        predict={},
+    )
+    base.update(kw)
+    return A.Tools(**base)
+
+
+def test_the_strength_follows_the_rating_held_within_1000_to_1700():
+    t = _tools(strength=9.6, rating_line=LINE)
+    assert t.strength_at(1500) == pytest.approx(8.7 + 0.32 * 3)
+    assert t.strength_at(1200) == pytest.approx(8.7)
+    assert t.strength_at(1750) == pytest.approx(8.7 + 0.32 * 5)  # held at 1700
+    assert t.strength_at(800) == pytest.approx(8.7 - 0.32 * 2)  # held at 1000
+    assert t.strength_at(None) == pytest.approx(9.6)  # no rating: the format's own
+    plain = _tools(strength=6.55)  # Reg M-A and M-B: not measured
+    assert plain.strength_at(1500) == pytest.approx(6.55)
+    assert _tools(strength=0.0, rating_line=LINE).strength_at(1500) == 0.0  # rev 10
+
+
+def test_each_player_in_a_game_gets_the_strength_of_their_own_rating():
+    t = _tools(strength=9.6, rating_line=LINE)
+    g = t.for_game(_log(1500, ""))
+    assert g.by_role == pytest.approx({"p1": 8.7 + 0.96, "p2": 9.6})
+    assert g.strength == 9.6  # the format's own stays, for the records
+    assert _tools(strength=6.55).for_game(_log(1500, 1100)).by_role is None
+
+
+def test_the_rating_line_is_found_beside_the_formats_own_strength(tmp_path):
+    shared = tmp_path / "models_v4"
+    (shared / "regmc").mkdir(parents=True)
+    (shared / "strength.json").write_text('{"strength": 6.55}', encoding="utf-8")
+    (shared / "regmc" / "strength.json").write_text(
+        '{"strength": 9.6}', encoding="utf-8"
+    )
+    (shared / "regmc" / "strength_by_rating.json").write_text(
+        json.dumps(
+            {
+                "strength": 9.0,
+                "center": 1200,
+                "line": {"s0": 8.7, "slope_per_100": 0.32},
+            }
+        ),
+        encoding="utf-8",
+    )
+    import argparse
+
+    a = argparse.Namespace(policy=shared / "policy.json", strength="fitted")
+    own = A.own_models(a)
+    assert own["regmc"]["rating_line"] == pytest.approx(LINE)
+    assert own["regmc"]["strength"] == pytest.approx(9.6)  # unrated: still 9.6
+    b = argparse.Namespace(policy=shared / "policy.json", strength="0")
+    assert "regmc" not in A.own_models(b)  # a strength by number holds for all
+
+
+def test_each_side_is_weighed_at_its_own_strength():
+    R = [(Action(0, "move", move=f"r{k}"),) for k in range(2)]
+
+    def value(ours, theirs):  # option 1 is worth more to either side
+        return 0.7 if ours == R[1] else 0.3
+
+    class TV:
+        def for_role(self, r):
+            return value
+
+    plain = {"p1": [(R[0], 0.5), (R[1], 0.5)], "p2": [(R[0], 0.5), (R[1], 0.5)]}
+    got = A.strong_mixes(TV(), plain, {"p1": 0.0, "p2": 10.0})
+    assert dict(got["p1"])[R[1]] == pytest.approx(0.5)  # strength 0: as it was
+    assert dict(got["p2"])[R[1]] > 0.9  # strength 10: the better option
+    same = A.strong_mixes(TV(), plain, 10.0)  # one number for both, as before
+    assert dict(same["p1"])[R[1]] == pytest.approx(dict(got["p2"])[R[1]])
+
+
+@pytest.mark.parametrize("entry", ["analyse_game", "turn_setups", "public_setups"])
+def test_every_way_into_a_game_takes_its_players_ratings(entry, monkeypatch):
+    seen = []
+
+    def for_game(self, log):
+        seen.append(log)
+        raise LookupError("stop here")
+
+    monkeypatch.setattr(A.Tools, "for_game", for_game)
+    with pytest.raises(LookupError):
+        out = getattr(A, entry)("tag", "the log", "regmc", _tools())
+        list(out)  # a generator starts when read
+    assert seen == ["the log"]
+
+
+def test_the_advice_takes_the_players_ratings(monkeypatch):
+    from wpa import advise as AD
+
+    seen = []
+
+    def for_game(self, log):
+        seen.append(log)
+        raise LookupError("stop here")
+
+    monkeypatch.setattr(A.Tools, "for_game", for_game)
+    for call in (
+        lambda: AD.advise("tag", "the log", "regmc", _tools(), "p1"),
+        lambda: AD.advise_preview("tag", "the log", "regmc", _tools(), "p1"),
+        lambda: AD.advise_replacement("tag", "the log", "regmc", _tools(), "p1"),
+    ):
+        with pytest.raises(LookupError):
+            call()
+    assert seen == ["the log"] * 3
+
+
+def test_a_game_analysed_without_the_rating_line_is_analysed_again(tmp_path):
+    from wpa import replay as RP
+
+    path = tmp_path / "g.jsonl"
+    path.write_text(
+        json.dumps({"kind": "turn", "strength": 9.6}) + "\n", encoding="utf-8"
+    )
+    assert not RP.stale(path, 9.6)
+    assert RP.stale(path, 9.6, LINE)  # revision 15: by rating now
+    path.write_text(
+        json.dumps({"kind": "turn", "strength": 9.6, "strength_line": LINE}) + "\n",
+        encoding="utf-8",
+    )
+    assert not RP.stale(path, 9.6, LINE)
+
+
+def test_the_summary_says_the_strengths_follow_the_ratings(tmp_path):
+    from tests.test_attribution import _rec
+
+    rows = []
+    for role, by in (("p1", 9.66), ("p2", 8.06)):
+        r: dict = dict(_rec("regmc-g1", 3, role, 0.4, 0.6, True, ()), format="regmc")
+        r.update(strength=9.6, strength_by_role={"p1": 9.66, "p2": 8.06})
+        rows.append(r)
+    path = tmp_path / "a.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    head = next(x for x in A.report(path).splitlines() if x.startswith("Reg M-C"))
+    assert "by each player's rating: 8.06 to 9.66" in head

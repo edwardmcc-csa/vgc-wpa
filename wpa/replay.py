@@ -1018,9 +1018,10 @@ def _options(a: argparse.Namespace) -> argparse.Namespace:  # pragma: no cover
     )
 
 
-def stale(path: Path, strength: float) -> bool:
+def stale(path: Path, strength: float, line: dict | None = None) -> bool:
     """Whether a game's saved records must be made again: none saved, or made
-    at another opponent model strength (records before revision 11: 0)."""
+    at another opponent model strength (records before revision 11: 0), or
+    with another strength by rating (revision 15; `line`, None: none)."""
     path = Path(path)
     if not path.exists():
         return True
@@ -1029,10 +1030,11 @@ def stale(path: Path, strength: float) -> bool:
         for x in path.read_text(encoding="utf-8").splitlines()
         if x.strip()
     ]
-    used = {
-        float(r.get("strength", 0.0)) for r in recs if r.get("kind", "turn") == "turn"
-    }
-    return any(abs(u - strength) > 1e-9 for u in used)
+    turns = [r for r in recs if r.get("kind", "turn") == "turn"]
+    used = {float(r.get("strength", 0.0)) for r in turns}
+    if any(abs(u - strength) > 1e-9 for u in used):
+        return True
+    return any((r.get("strength_line") or None) != (line or None) for r in turns)
 
 
 def analyse(
@@ -1049,7 +1051,8 @@ def analyse(
     jobs = [  # analysed again at another strength (each format's own, rev 14)
         (tag, log, fmt, True, prev.get(tag, {}))
         for tag, log, fmt in games
-        if a.fresh or stale(saved[tag], A.strength_for(opts, fmt))
+        if a.fresh
+        or stale(saved[tag], A.strength_for(opts, fmt), A.rating_line_for(opts, fmt))
     ]
     if jobs:
         n = len(jobs)

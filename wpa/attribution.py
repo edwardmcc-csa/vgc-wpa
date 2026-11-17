@@ -483,6 +483,20 @@ def worth(
     return [expected(value, [(j, 1.0)], theirs) for j, _ in mine]
 
 
+# a strength for both sides, or one per side (DEFINITIONS §7, revision 15)
+Strength = float | Mapping[str, float]
+
+
+def _side(strength: Strength, r: str) -> float:
+    return float(strength[r] if isinstance(strength, Mapping) else strength)
+
+
+def _none(strength: Strength) -> bool:
+    if isinstance(strength, Mapping):
+        return not any(strength.values())
+    return not strength
+
+
 def strengthened(
     value: Callable[[Joint, Joint], float], mine: Mix, theirs: Mix, strength: float
 ) -> Mix:
@@ -492,21 +506,22 @@ def strengthened(
     return strengthen(mine, worth(value, mine, theirs), strength)
 
 
-def strong_mixes(tv, likely_: Mapping[str, Mix], strength: float) -> dict[str, Mix]:
+def strong_mixes(tv, likely_: Mapping[str, Mix], strength: Strength) -> dict[str, Mix]:
     """Both sides' likely choices weighed by their worth, each against the
     other side's likely choices as the plain model gives them (one step of
     reasoning, so neither depends on the other's weighing). `tv`: p1's values,
-    with `for_role` (TurnValues)."""
-    if not strength:
+    with `for_role` (TurnValues). `strength`: one for both sides, or each
+    side's own (revision 15: by the player's rating)."""
+    if _none(strength):
         return {r: list(m) for r, m in likely_.items()}
     return {
-        r: strengthened(tv.for_role(r), likely_[r], likely_[o], strength)
+        r: strengthened(tv.for_role(r), likely_[r], likely_[o], _side(strength, r))
         for r, o in (("p1", "p2"), ("p2", "p1"))
     }
 
 
 def strong_taken(
-    tv, taken: Mapping[str, Mix], likely_: Mapping[str, Mix], strength: float
+    tv, taken: Mapping[str, Mix], likely_: Mapping[str, Mix], strength: Strength
 ) -> dict[str, Mix]:
     """Each side's taken choice (`taken_mixture`) at a strength. Where the log
     hides part of it (a Pokemon knocked out before it moved), the hidden part
@@ -514,10 +529,10 @@ def strong_taken(
     the other side's plain likely choices. Averaged plainly, a player whose
     choice the log hides would be judged against a smarter typical choice than
     their own average. A choice the log shows whole stays as it is."""
-    if not strength:
+    if _none(strength):
         return {r: list(m) for r, m in taken.items()}
     return {
-        r: strengthened(tv.for_role(r), taken[r], likely_[o], strength)
+        r: strengthened(tv.for_role(r), taken[r], likely_[o], _side(strength, r))
         if len(taken[r]) > 1
         else list(taken[r])
         for r, o in (("p1", "p2"), ("p2", "p1"))
@@ -1300,12 +1315,49 @@ class Tools:
     # in place of the shared ones: {format: {"bring" | "policy" | "leads" |
     # "replace": model}} (`own_models`)
     by_format: dict = field(default_factory=dict)
+    # DEFINITIONS revision 15: the strength by the rating of the player choosing,
+    # {"s0", "slope", "center"} (a format's own, `own_models`); and, for one
+    # game, each player's strength by their rating (`for_game`)
+    rating_line: dict | None = None
+    by_role: dict | None = None
 
     def for_format(self, fmt: str) -> Tools:
         """These tools with `fmt`'s own models where it has them (DEFINITIONS
         §15: models are fitted per format); itself when it has none."""
         own = self.by_format.get(fmt)
         return dataclasses.replace(self, **own) if own else self
+
+    def strength_at(self, rating: int | None) -> float:
+        """The strength for the choices of a player with this rating (revision
+        15): the line, the rating held within RATING_LO to RATING_HI; without a
+        rating or a line, the format's own strength."""
+        line = self.rating_line
+        if rating is None or not line or not self.strength:
+            return self.strength
+        r = min(max(rating, RATING_LO), RATING_HI)
+        return max(0.0, line["s0"] + line["slope"] * (r - line["center"]) / 100)
+
+    def for_game(self, log: str) -> Tools:
+        """These tools for one game: each player's strength by the rating the
+        log shows them with (revision 15); itself when the format has no line."""
+        if not self.rating_line or not self.strength:
+            return self
+        from wpa.ratings import ratings_from_log
+
+        r1, r2 = ratings_from_log(log)
+        return dataclasses.replace(
+            self, by_role={"p1": self.strength_at(r1), "p2": self.strength_at(r2)}
+        )
+
+    @property
+    def main_strength(self) -> Strength:
+        """The strength the analysis uses: each player's own, else one for both."""
+        return self.by_role or self.strength
+
+
+# the ratings the line is used within (revision 15: where the measurement has
+# its data; 30 training games above 1700)
+RATING_LO, RATING_HI = 1000, 1700
 
 
 # the models a format can have of its own, beside the shared file of each
@@ -1339,7 +1391,30 @@ def own_models(a) -> dict:
                 out.setdefault(fmt, {})[key] = kinds[key].load(path)
         if _own_strength_file(a, fmt) is not None:  # DEFINITIONS rev 14
             out.setdefault(fmt, {})["strength"] = strength_for(a, fmt)
+            line = rating_line_for(a, fmt)
+            if line:  # revision 15
+                out[fmt]["rating_line"] = line
     return out
+
+
+def rating_line_for(a, fmt: str) -> dict | None:
+    """A format's strength by rating (revision 15): the line measured into
+    `<policy folder>/<format>/strength_by_rating.json`, when the run asks for
+    the fitted strength; None otherwise."""
+    if _own_strength_file(a, fmt) is None:
+        return None
+    path = Path(a.policy).parent / fmt / "strength_by_rating.json"
+    if not path.exists():
+        return None
+    d = json.loads(path.read_text(encoding="utf-8"))
+    line = d.get("line")
+    if not line:
+        return None
+    return {
+        "s0": float(line["s0"]),
+        "slope": float(line["slope_per_100"]),
+        "center": float(d.get("center", CENTER)),
+    }
 
 
 def _own_strength_file(a, fmt: str) -> Path | None:
@@ -1524,7 +1599,9 @@ def turn_setups(
     from wpa.policy_data import _timers_by_turn, game_tools, turn_options
     from wpa.state_timing import loser_has_pokemon_left
 
-    tools = tools.for_format(fmt)  # its own models where it has them (Week 15)
+    # its own models where it has them (Week 15); each player's strength by
+    # their rating (revision 15)
+    tools = tools.for_format(fmt).for_game(log)
     dex, table = tools.dexes[fmt], tools.tables[fmt]
     sheets, spreads, odds = game_tools(tag, log, fmt, tools.store, tools.bring, dex)
     if set(sheets) != {"p1", "p2"}:
@@ -1964,7 +2041,9 @@ def public_setups(tag: str, log: str, fmt: str, tools: Tools):
     (`tools.predict_public`). Team preview and forced switches keep each
     player's own WPs, so each player's game chains, but are not split. The
     records say "sheets": "hidden"."""
-    tools = tools.for_format(fmt)  # its own models where it has them (Week 15)
+    # its own models where it has them (Week 15); each player's strength by
+    # their rating (revision 15)
+    tools = tools.for_format(fmt).for_game(log)
     from dataclasses import replace
 
     from wpa import choices as C
@@ -2276,7 +2355,9 @@ def analyse_game(
     """One record per decision point (team preview, each turn and each forced
     switch, each player) of one game."""
     out: list[dict] = []
-    tools = tools.for_format(fmt)  # its own models where it has them (Week 15)
+    # its own models where it has them (Week 15); each player's strength by
+    # their rating (revision 15)
+    tools = tools.for_format(fmt).for_game(log)
     setups = (
         public_setups(tag, log, fmt, tools)
         if tools.hidden is not None
@@ -2352,8 +2433,10 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
     plain = {"p1": l1, "p2": l2}
     # each side's likely choices: the plain model, or weighed by their worth
     # (the stronger model, Week 12 Task 3); measured strengths besides
-    strengths = [tools.strength, *tools.measure_strengths]
-    strong = {s: strong_mixes(tv, plain, s) for s in dict.fromkeys(strengths)}
+    # "main": the strength reported (each side's own, revision 15)
+    strengths: dict = {"main": getattr(tools, "main_strength", tools.strength)}
+    strengths.update({s: s for s in tools.measure_strengths})
+    strong = {k: strong_mixes(tv, plain, s) for k, s in strengths.items()}
     # the choices to compare (revision 13): a first pass against their
     # likeliest replies, then the best of it and the usual ones in full
     for r, other in (("p1", "p2"), ("p2", "p1")):
@@ -2365,7 +2448,7 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
             return (x, y) if r == "p1" else (y, x)
 
         if not tools.exact_best and len(alts) > len(usual) + FINALISTS:
-            lk = strong[tools.strength][other]
+            lk = strong["main"][other]
             top = sorted(lk, key=lambda x: -x[1])[:SCREEN]
             tv.prepare([pair(x, y) for alt in alts for x, _ in alt for y, _ in top])
             alts = finalists(tv.for_role(r), alts, usual, lk)
@@ -2375,8 +2458,8 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         mixes[r] = (*mixes[r][:3], alts, *mixes[r][4:], len(mixes[r][3]))
     # the taken choices, their hidden parts weighed as the likely choices are
     taken_s = {
-        s: strong_taken(tv, {q: mixes[q][0] for q in ("p1", "p2")}, plain, s)
-        for s in dict.fromkeys(strengths)
+        k: strong_taken(tv, {q: mixes[q][0] for q in ("p1", "p2")}, plain, s)
+        for k, s in strengths.items()
     }
     recs = []
     for r, other in (("p1", "p2"), ("p2", "p1")):
@@ -2387,7 +2470,7 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
         average = [a for a in alts or () if len(a) != 1 or a[0][0] in usual]
         b, a = (ts.before, ts.after) if r == "p1" else (1 - ts.before, 1 - ts.after)
 
-        def split(s: float) -> Split:
+        def split(s) -> Split:
             mine = taken_s[s][r]
             return decompose(
                 tv.for_role(r),
@@ -2402,13 +2485,17 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
                 average=[mine if alt is taken else alt for alt in average] or None,
             )
 
-        sp = split(tools.strength)
+        sp = split("main")
         board = ts.after_board if r == "p1" else 1 - ts.after_board
         recs.append(
             dict(ts.base, role=r, unknown=unknown, after_board=board, **asdict(sp))
         )
         if tools.strength:
             recs[-1]["strength"] = tools.strength
+        by_role = getattr(tools, "by_role", None)
+        if by_role:  # revision 15: each player's, by their rating
+            recs[-1]["strength_by_role"] = dict(by_role)
+            recs[-1]["strength_line"] = dict(tools.rating_line or {})
         if tools.measure_strengths:
             recs[-1]["at_strength"] = {
                 f"{s:g}": {
@@ -2419,7 +2506,7 @@ def _analyse_turn(ts: TurnSetup, tools: Tools, with_alternatives: bool) -> list[
                 for x in (split(s),)
             }
         if alts:
-            lk = strong[tools.strength][other]
+            lk = strong["main"][other]
             best = best_choice(tv.for_role(r), alts, lk, b + sp.yours)
             recs[-1]["best"] = joint_json(best) if best else None
             # revision 13: a best choice players rarely make, and how many
@@ -3108,6 +3195,9 @@ def _format_lines(name: str, rs: Sequence[Mapping], top: int) -> list[str]:
         head += (
             f"; opponent model strength {', '.join(f'{s:.3g}' for s in sorted(used))}"
         )
+    by = [v for r in ok for v in (r.get("strength_by_role") or {}).values()]
+    if by:  # revision 15
+        head += f" (by each player's rating: {min(by):.3g} to {max(by):.3g})"
     if skipped:
         head += f"; left out: {skipped}"
     lines = [
