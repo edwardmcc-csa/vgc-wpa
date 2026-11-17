@@ -125,6 +125,116 @@ def rank_all(
 
 
 @dataclass
+class Search:
+    """`rank_within`'s ranking and what it valued."""
+
+    ranked: list[tuple[Joint, float, float]]  # best first, as `rank_all`
+    compared: int  # every choice the rules allow
+    full: int  # valued against every reply
+    screened: int  # valued against the likeliest replies only
+    stopped: bool  # the time ran out before the search was done
+
+
+def rank_within(
+    value: Callable[[Joint, Joint], float],
+    full: Mix,
+    replies: Mix,
+    prepare: Callable[[list], Any],
+    stop: Callable[[], bool],
+    known: Sequence[Joint] = (),
+    screen: int | None = None,
+    finalists: int | None = None,
+    pairs: int = 12,
+) -> Search:
+    """`rank_all` within a time (the bot, Week 16 Task 2): the same passes,
+    each going the likeliest choices first (the second, the best of the first
+    pass first) in batches of about `pairs` pairs, and stopping when `stop()`
+    says the time is up. A pass values at least one batch unless something is
+    valued already. With time to spare, the ranking is `rank_all`'s. When the
+    time runs out: the choices valued against every reply first (with `known`,
+    choices already valued so: the replies' weighing values the likely ones),
+    then those valued against the likeliest replies, then the rest, likeliest
+    first, with no value (NaN). Nothing is dropped."""
+    from wpa.attribution import FINALISTS, SCREEN, USUAL, expected
+
+    screen = SCREEN if screen is None else screen
+    finalists = FINALISTS if finalists is None else finalists
+    order = sorted(full, key=lambda x: -x[1])
+    chance = dict(order)
+    stopped = False
+    valued_any = bool(known)
+
+    def batches(js: list[Joint], ys: Mix) -> list[Joint]:
+        nonlocal stopped, valued_any
+        done: list[Joint] = []
+        step = max(1, pairs // max(1, len(ys)))
+        for k in range(0, len(js), step):
+            if valued_any and stop():
+                stopped = True
+                break
+            part = js[k : k + step]
+            prepare([(j, y) for j in part for y, _ in ys])
+            done += part
+            valued_any = True
+        return done
+
+    def full_value(j: Joint) -> float:
+        return expected(value, [(j, 1.0)], replies)
+
+    if len(order) <= USUAL + finalists:
+        first: dict[Joint, float] = {}
+        vals = {j: full_value(j) for j in batches([j for j, _ in order], replies)}
+    else:
+        top = sorted(replies, key=lambda x: -x[1])[:screen]
+        total = sum(q for _, q in top)
+        top = [(y, q / total) for y, q in top]
+        done = batches([j for j, _ in order], top)
+        first = {j: expected(value, [(j, 1.0)], top) for j in done}
+        best = sorted(first, key=lambda j: -first[j])[:finalists]
+        final = list(dict.fromkeys([*(j for j, _ in order[:USUAL]), *best]))
+        final = [j for j in sorted(final, key=lambda j: -first.get(j, -1.0))]
+        vals = {}
+        if not stopped:
+            vals = {j: full_value(j) for j in batches(final, replies)}
+    if stopped:  # every play already valued against every reply counts
+        vals.update({j: full_value(j) for j in known if j in chance and j not in vals})
+    got = sorted(((j, vals[j], chance[j]) for j in vals), key=lambda x: -x[1])
+    rest = sorted((j for j in first if j not in vals), key=lambda j: -first[j])
+    got += [(j, first[j], chance[j]) for j in rest]
+    seen = set(vals) | set(first)
+    got += [(j, float("nan"), p) for j, p in order if j not in seen]
+    return Search(got, len(order), len(vals), len(rest), stopped)
+
+
+def strong_within(
+    tv, plain: Mapping[str, Mix], strength, role: str, stop: Callable[[], bool]
+) -> tuple[Mix, list[Joint] | None]:
+    """The other side's likely replies weighed by their worth (`strong_mixes`),
+    within a time: against the player's likely choices, likeliest first, each
+    against every one of their replies; when `stop()` says the time is up,
+    against those valued so far. With time to spare, `strong_mixes`'s. Returns
+    their weighed replies and the player's likely choices they were weighed
+    against, each now valued against every one of them (None at strength 0:
+    nothing to weigh)."""
+    from wpa.attribution import _none, _side, strengthened
+
+    other = "p2" if role == "p1" else "p1"
+    theirs, ours = plain[other], plain[role]
+    s = 0.0 if _none(strength) else _side(strength, other)
+    if not s:
+        return list(theirs), None
+    used: list[int] = []
+    for i in sorted(range(len(ours)), key=lambda k: -ours[k][1]):
+        if used and stop():
+            break
+        j = ours[i][0]
+        tv.prepare([(j, y) if role == "p1" else (y, j) for y, _ in theirs])
+        used.append(i)
+    part = [x for i, x in enumerate(ours) if i in set(used)]
+    return strengthened(tv.for_role(other), theirs, part, s), [ours[i][0] for i in used]
+
+
+@dataclass
 class Advice:
     tag: str
     turn: int
@@ -146,6 +256,14 @@ class Advice:
     # how many choices were compared: at a turn, every one the rules allow
     # (DEFINITIONS §4, revision 13); 0 when not counted
     compared: int = 0
+    # within a time (the bot, Week 16): how many were valued against every
+    # reply, how many against the likeliest replies only, whether the time ran
+    # out, and how many of the player's likely choices their replies were
+    # weighed against (all of them, unless the time ran out first)
+    valued: int = 0
+    screened: int = 0
+    stopped: bool = False
+    weighed: int = 0
 
 
 @dataclass
@@ -310,13 +428,11 @@ def _point(tag: str, log: str, fmt: str, tools, role: str, at: str) -> _Point:
     )
 
 
-def advise(
-    tag: str, log: str, fmt: str, tools, role: str, own_four: set[int] | None = None
-) -> Advice:
-    """The advice at the start of the last turn the log reaches (`up_to_turn`).
-    `own_four`: the four the player brought, when known (the log shows only
-    those that have come out)."""
-    tools = _own(tools, fmt, log)  # own models (Week 15); by rating (rev 15)
+def _turn_mixes(tag: str, log: str, fmt: str, tools, role: str, own_four):
+    """A turn's start from `role`'s side: the decision point, its values (not
+    yet resolved), the turn, each side's every choice with the choice model's
+    chances (`full`), their likely ones (`plain`), and the share of the other
+    side's chance taken exactly. `tools` already the format's own."""
     from wpa import attribution as A
     from wpa import choices as C
     from wpa.policy_data import _timers_by_turn, turn_options
@@ -370,7 +486,65 @@ def advise(
         plain[q], k = A.likely(full[q], tools.top, tools.draws, f"{tag} {turn} {q}")
         if q == other:
             kept = k
-    strong = A.strong_mixes(tv, plain, getattr(tools, "main_strength", tools.strength))
+    return pt, tv, turn, full, plain, kept
+
+
+def typical_turn(
+    tag: str, log: str, fmt: str, tools, role: str, own_four: set[int] | None = None
+) -> Mix:
+    """How players typically choose at the turn's start: the choice model's
+    chances over every choice the rules allow, none valued (the bot's opponent
+    "the choice model", Week 16 Task 3)."""
+    tools = _own(tools, fmt, log)
+    return _turn_mixes(tag, log, fmt, tools, role, own_four)[3][role]
+
+
+def advise(
+    tag: str,
+    log: str,
+    fmt: str,
+    tools,
+    role: str,
+    own_four: set[int] | None = None,
+    stop: Callable[[], bool] | None = None,
+) -> Advice:
+    """The advice at the start of the last turn the log reaches (`up_to_turn`).
+    `own_four`: the four the player brought, when known (the log shows only
+    those that have come out). `stop`: within a time (the bot, Week 16), the
+    search goes the likeliest plays first and ends when it says the time is up
+    (`strong_within`, `rank_within`); the typical choice is not valued."""
+    tools = _own(tools, fmt, log)  # own models (Week 15); by rating (rev 15)
+    from wpa import attribution as A
+
+    other = "p2" if role == "p1" else "p1"
+    pt, tv, turn, full, plain, kept = _turn_mixes(tag, log, fmt, tools, role, own_four)
+    strength = getattr(tools, "main_strength", tools.strength)
+    if stop is not None:  # within a time (Week 16 Task 2)
+        replies, used = strong_within(tv, plain, strength, role, stop)
+        weighed = len(plain[role]) if used is None else len(used)
+
+        def prepare(pairs) -> None:  # the resolver takes (p1's, p2's)
+            tv.prepare([(j, y) if role == "p1" else (y, j) for j, y in pairs])
+
+        s = rank_within(
+            tv.for_role(role), full[role], replies, prepare, stop, known=used or ()
+        )
+        return Advice(
+            tag,
+            turn,
+            role,
+            pt.wp,
+            s.ranked,
+            sorted(replies, key=lambda x: -x[1]),
+            kept,
+            pt.hidden,
+            compared=s.compared,
+            valued=s.full,
+            screened=s.screened,
+            stopped=s.stopped or weighed < len(plain[role]),
+            weighed=weighed,
+        )
+    strong = A.strong_mixes(tv, plain, strength)
     replies, mine = strong[other], strong[role]
     if tools.alternatives is None:  # every choice the rules allow (rev 13)
         return _advice(
@@ -483,6 +657,27 @@ def advise_bring(
     return replace(adv, choices=choices, kind="bring")
 
 
+def draw_bring(leads, bring, fmt: str, sheet: Sequence, rng) -> Pick:
+    """Team preview as players typically choose it (the bot's opponent "the
+    choice model", Week 16 Task 3): the leads drawn from the lead model's
+    chances, and the back two from the bring model's chances for the fours
+    that hold them. `sheet`: the player's sheet (`SheetMon`s)."""
+    from wpa.bring import set_chances
+    from wpa.lead_model import pairs
+
+    n = len(sheet)
+    ps = np.asarray(leads.chances(sheet, fmt, None), dtype=float)
+    lead = pairs(n)[int(rng.choice(len(ps), p=ps / ps.sum()))]
+    species = tuple(getattr(m, "species", m) for m in sheet)
+    odds = bring.odds(fmt, species, None) if bring is not None else [1.0] * n
+    fours = sorted(
+        set_chances(list(odds), set(lead)).items(), key=lambda x: sorted(x[0])
+    )
+    w = np.array([q for _, q in fours], dtype=float)
+    four = fours[int(rng.choice(len(fours), p=w / w.sum()))][0]
+    return Pick(tuple(lead), tuple(sorted(four - set(lead))))
+
+
 def up_to_switch(log: str, turn: int | None) -> str:
     """The log up to the forced switch after `turn` (or after the last turn the
     log reaches, when None): its end of turn (`|upkeep`), with an empty block
@@ -515,6 +710,29 @@ def advise_replacement(
     likely ones when they replace too. The log ends at the forced switch
     (`up_to_switch`)."""
     tools = _own(tools, fmt, log)  # own models (Week 15); by rating (rev 15)
+    from wpa import attribution as A
+
+    pt, turn, full = _replacement_mixes(tag, log, fmt, tools, role, own_four)
+    tv = A.TurnValues(A.SwitchIns(pt.rv), pt.sides, pt.fld, pt.bw)
+    other = "p2" if role == "p1" else "p1"
+    return _advice(
+        tag, turn, role, pt, tv, full[role], full[role], full[other], 1.0, "replacement"
+    )
+
+
+def typical_replacement(
+    tag: str, log: str, fmt: str, tools, role: str, own_four: set[int] | None = None
+) -> Mix:
+    """Who players typically send in at a forced switch: the forced-switch
+    model's chances, none valued (the bot's opponent "the choice model")."""
+    tools = _own(tools, fmt, log)
+    return _replacement_mixes(tag, log, fmt, tools, role, own_four)[2][role]
+
+
+def _replacement_mixes(tag: str, log: str, fmt: str, tools, role: str, own_four):
+    """A forced switch from `role`'s side: the decision point, the turn, and
+    each side's choices with the forced-switch model's chances (a side that
+    does not replace: one empty choice). `tools` already the format's own."""
     from wpa import attribution as A
     from wpa import choices as C
     from wpa import replace_model as RM
@@ -585,10 +803,7 @@ def advise_replacement(
         full[q] = [(jn, float(p)) for jn, p in full[q]]
     if full[role] == [((), 1.0)]:
         raise ReplayError(f"you had no Pokemon to send in after turn {turn}")
-    tv = A.TurnValues(A.SwitchIns(pt.rv), pt.sides, pt.fld, pt.bw)
-    return _advice(
-        tag, turn, role, pt, tv, full[role], full[role], full[other], 1.0, "replacement"
-    )
+    return pt, turn, full
 
 
 def _advice(
@@ -654,6 +869,7 @@ def species_name(name: str, dex, known: set[str]) -> str:
 TIERS = {
     "regma": "[Gen 9 Champions] VGC 2026 Reg M-A",
     "regmb": "[Gen 9 Champions] VGC 2026 Reg M-B",
+    "regmc": "[Gen 9 Champions] VGC 2026 Reg M-C",
 }
 
 

@@ -26,7 +26,7 @@ import gzip
 import json
 import re
 import subprocess
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -88,6 +88,16 @@ class SheetMon:
     ability: str  # id
     moves: tuple[str, ...]  # ids
     nature: str  # "" when the sheet does not show it (Reg M-A)
+    # its stat points (hp atk def spa spd spe), when the sheet shows them: a
+    # player's own team paste does (Week 16); an open team sheet does not
+    sps: tuple[int, ...] | None = None
+
+
+def _points(evs: Mapping[str, int] | None) -> tuple[int, ...] | None:
+    """A sheet's stat points in stat order, or None when it shows none."""
+    if not evs or not any(evs.values()):
+        return None
+    return tuple(int(evs.get(k, 0)) for k in ("hp", "atk", "def", "spa", "spd", "spe"))
 
 
 def sheets_from_log(log: str) -> dict[str, tuple[SheetMon, ...]]:
@@ -104,6 +114,7 @@ def sheets_from_log(log: str) -> dict[str, tuple[SheetMon, ...]]:
                     to_id(m.ability),
                     tuple(to_id(x) for x in m.moves),
                     m.nature,
+                    _points(m.evs),
                 )
                 for i, m in enumerate(mons, start=1)
             )

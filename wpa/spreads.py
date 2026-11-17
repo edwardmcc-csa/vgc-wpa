@@ -124,9 +124,13 @@ def prior(usage: Mapping[str, list[Spread]], mon, dex, base_stats=None) -> list[
     stone (the statistics list Megas apart), else its own, else (a form the
     statistics count under its species, such as Sinistcha-Masterpiece) its
     species'. A nature shown on the sheet (Reg M-B) keeps only spreads with
-    that nature."""
+    that nature. A sheet that shows its stat points (the player's own team
+    paste, Week 16) is that spread, known."""
     from wpa.team_sheets import form_of
 
+    known = getattr(mon, "sps", None)
+    if known and _id(mon.nature):
+        return [Spread(_id(mon.nature), tuple(known), 1.0)]  # type: ignore[arg-type]
     keys = [mon.species]
     entry = None
     if dex is not None:
