@@ -216,6 +216,25 @@ def test_protect_blocks_the_attack_and_counts_up(dex, moves, calc):
     assert all(o.sides["p1"][1]["boosts"] == {"atk": 2} for o in outs)
 
 
+def test_protect_blocks_an_allys_attack_too(dex, moves, calc):
+    """Week 16 (the resolver check on the bot's games): Showdown's Protect
+    blocks every move with the protect flag aimed at the protected Pokemon,
+    its ally's too; the resolver let the ally's through."""
+    for move, target in (("dragonclaw", ("ally", 1)), ("earthquake", None)):
+        acts = {
+            "p1": (
+                Action(0, "move", move=move, target=target),
+                Action(1, "move", move="protect"),
+            ),
+            "p2": (
+                Action(0, "move", move="protect"),
+                Action(1, "move", move="protect"),
+            ),
+        }
+        outs = resolver(dex, moves, calc).resolve(board(), R.Field(), acts)
+        assert all(o.sides["p1"][1]["hp_fraction"] == 1.0 for o in outs), move
+
+
 def test_a_second_protect_in_a_row_works_a_third_of_the_time(dex, moves, calc):
     b = board()
     b["p2"][0]["protect_streak"] = 1

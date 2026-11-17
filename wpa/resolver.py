@@ -1765,14 +1765,16 @@ class Resolver:
             and self.ability(*tgt, w.sides[tgt[0]][tgt[1]]) == "soundproof"
         ):
             return True  # Soundproof: any sound move but its own, an ally's too
-        if tgt[0] == role:
-            return False
+        # Protect, Wide Guard and Quick Guard block an ally's moves too
+        # (Showdown's onTryHit for each has no ally check; Week 16)
         if tgt in w.protected and "protect" in flags and not m.get("breaksProtect"):
             return True
         if spread and (tgt[0], "wideguard") in w.guards:
             return True
         if (tgt[0], "quickguard") in w.guards and self._priority(w, role, a) > 0:
             return True
+        if tgt[0] == role:
+            return False  # Psychic Terrain spares an ally's priority move
         if (
             w.fld.terrain == "psychicterrain"
             and self._priority(w, role, a) > 0
