@@ -1690,6 +1690,15 @@ python -m wpa.corpus_checks --raw battle_logs_mc\logs_gen9championsvgc2026regmcb
 ```
 python -m wpa.attribution --fit-strength --spread-hits --models models_v4_avg --moves-dir build --workers 6 --logs logs_mc --formats regmc --rating-bands 150 --strength-samples reports\strength_samples_mc_rating.jsonl --strength-out models_v4\regmc\strength_by_rating.json
 ```
+- **The test split, opened once** (your approval of 16 Nov; the sixth opening,
+  logged in `models\test_openings.json`): every model in use for the format,
+  with the gate's checks, into `reports\test_regmc.txt`. Try it first with
+  `--try-on-validation`, which opens nothing. It refuses to run without
+  `--po-approved`.
+```
+python -m wpa.final_test --format regmc --po-approved "16 Nov 2026" --try-on-validation --out reports\test_regmc_trial.txt
+python -m wpa.final_test --format regmc --po-approved "16 Nov 2026" --out reports\test_regmc.txt
+```
 
 ---
 
