@@ -1702,6 +1702,79 @@ python -m wpa.final_test --format regmc --po-approved "16 Nov 2026" --try-on-val
 python -m wpa.final_test --format regmc --po-approved "16 Nov 2026" --out reports\test_regmc.txt
 ```
 
+## 29. Week 16: the bot plays on the local server
+
+**What it is.** The engine as a player (`wpa\bot.py`): it plays whole Reg M-C
+games on a Showdown server on its own, inside Showdown's clock (90 seconds for
+team preview, at most 55 a turn, 7 minutes in all).
+- **Team preview:** the advice's four and leads. It denies open team sheets,
+  so the opponent's sets are believed from the usage statistics and what the
+  game shows. Its own sets, stat points included, it knows.
+- **Each turn:** the best play by win chance, searched the likeliest plays
+  first. The search stops when the turn's time is up and plays the best it
+  has: a sixth of the clock left, never over 45 seconds.
+- **Each forced switch:** the advice's newcomer.
+- **Only legal choices:** each choice is looked up among those Showdown's own
+  request allows. One it cannot find is replaced by a legal choice at random,
+  and the reason is kept. If the advice fails, a legal choice is sent and the
+  failure kept: it never stalls.
+
+**The week's runs** (about 14 hours; `build\w16\w16_bot.cmd` does them all,
+into `build\w16\w16.log`). Close any other Showdown server window first:
+the script starts the Reg M-C server in its own window, and a second window
+follows the log. By hand, the steps are these.
+
+**Step 1: start the Reg M-C server** in its own window, and leave it running.
+Only one server can use port 8000.
+```
+cd pokemon-showdown-mc
+node pokemon-showdown start --no-security 8000
+```
+The matches stop with a plain message if no server answers, or if the one
+that does has no Reg M-C.
+
+**Step 2: the matches,** in a second window, from the project folder.
+```
+python -m wpa.matches --make-pool build\w15\team_pool_raw.json
+python -m wpa.matches --vs random --untimed --games 12 --workers 6
+python -m wpa.matches --vs random --games 200 --workers 6
+python -m wpa.matches --vs strongest --games 200 --workers 6
+python -m wpa.matches --vs typical --games 200 --workers 4
+python -m wpa.matches --vs engine0 --games 200 --workers 3
+```
+- The first command makes the pool: the 40 commonest teams of training games
+  rated 1500 and up, each Pokemon with the stat points the statistics make
+  likeliest for its nature (`reports\bot\pool_regmc.json`).
+- The second measures the full advice with the clock off (Task 2's "measure
+  first"): 12 games, the bot taking as long as it needs.
+- Then 200 games against each opponent: random choices, the strongest move,
+  the choice model (as people typically play), and the engine at strength 0.
+  Both sides draw from the pool, and every pairing is played from both sides.
+- Each worker plays one game at a time, with Showdown's clock on. Each game is
+  a few minutes: against random about 3 hours on 6 workers. The engine
+  opponents think too, so they use fewer workers and run overnight.
+- A stopped run carries on where it was: run the same command again.
+
+**Step 3: the results.**
+```
+python -m wpa.matches --vs random --summary
+```
+It prints the win rate with its 95% interval, and the counts the gate asks
+for: crashes, illegal choices (Showdown refused a choice), timeouts (a choice
+over the turn's limit, or a game lost on time). Also how often the clock
+stopped the search, the seconds a turn, and the bot's own win chance against
+the results (its calibration on these games). Each game's row, with every
+choice, is in `reports\bot\<opponent>\part-*.jsonl`; each game's log, with
+both teams exactly, in `battle_logs_bot\<opponent>\`.
+
+**Step 4: the resolver check on the bot's games** (under an hour). Every set
+is known exactly there, so an HP miss is a rules gap, not a guessed spread.
+```
+python -m wpa.matches --vs random --for-resolver-check
+python -m wpa.resolver_check --logs reports\bot\random\resolver\shards --sample reports\bot\random\resolver\resolver_sample.json --out-dir reports\bot\random\resolver\check
+```
+The first command packs the kept games and prints the second.
+
 ---
 
 ## If something goes wrong

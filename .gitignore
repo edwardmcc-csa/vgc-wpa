@@ -57,3 +57,6 @@ models_v4_avg/
 my_team.txt
 features_v4b_mc/
 features_v4_preview_mc/
+
+# Week 16: the bot's games on the local server (Runbook Section 29)
+battle_logs_bot/
