@@ -1775,6 +1775,22 @@ python -m wpa.resolver_check --logs reports\bot\random\resolver\shards --sample 
 ```
 The first command packs the kept games and prints the second.
 
+**Play the bot yourself.** Double-click `build\w16\play_bot.cmd` (it starts
+the Reg M-C server if none is running), or by hand:
+```
+python -m wpa.play
+```
+- Wait for "Ready", then open http://localhost:8000 in your browser. It opens
+  Showdown's own page, connected to the server on your computer. Pick any name
+  (no password is needed there).
+- Challenge "WPA Bot" to [Gen 9 Champions] VGC 2026 Reg M-C with your team.
+  The bot denies open team sheets and thinks up to 45 seconds a turn. Type
+  `/timer on` in the battle for Showdown's clock.
+- It plays a team from the pool at random each game; `--team 5` keeps it to
+  the pool's fifth team. The window says which team it has.
+- Each game is kept in `battle_logs_bot\you\`, with the bot's own sheet.
+  Close the window to stop.
+
 ---
 
 ## If something goes wrong
