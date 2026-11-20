@@ -794,14 +794,29 @@ def _cols_j() -> list[str]:
     return [f"j_{s}_{k}" for s in SIDES for k in _J_SIDE]
 
 
-def _usable_moves(mon: SheetMon, st: Mapping) -> tuple[str, ...]:
-    """Its sheet moves, or only the locked one while a Choice item holds it."""
+def _usable_moves(
+    mon: SheetMon, st: Mapping, dex: Dex | None = None
+) -> tuple[str, ...]:
+    """Its sheet moves, or only the locked one while a Choice item holds it.
+    With `dex` (Week 17): not a move with no PP left, unless every one is out
+    (Struggle is not modelled)."""
     from wpa.decisions import CHOICE_ITEMS
 
     locked = st.get("last_move") or ""
     if st.get("item") in CHOICE_ITEMS and locked in mon.moves:
         return (locked,)
-    return mon.moves
+    used = st.get("pp_used") or {}
+    if dex is None or not used:
+        return mon.moves
+    left = tuple(m for m in mon.moves if not no_pp_left(m, used, dex.moves))
+    return left or mon.moves
+
+
+def no_pp_left(move: str, used: Mapping[str, int], moves: Mapping) -> bool:
+    """The move has used all its PP (`moves`: each move's PP in battle, from the
+    format's own rule; unknown, never out)."""
+    pp = (moves.get(move) or {}).get("pp")
+    return bool(pp) and used.get(move, 0) >= pp
 
 
 def _has_own_stone(mon: SheetMon, dex: Dex) -> bool:

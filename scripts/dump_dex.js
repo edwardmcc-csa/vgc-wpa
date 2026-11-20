@@ -29,6 +29,20 @@ for (const s of dex.species.all()) {
 		requiredItems: s.requiredItems || null,
 	};
 }
+// A move's PP in battle, as the format's own rule gives it (Week 17): Showdown's
+// calculatePP with 3 PP Ups (none for a move that takes none), or the mod's own
+// (Champions: (pp / 5 + 1) x 4).
+const scripts = (dex.data && dex.data.Scripts) || {};
+const battlePP = m => {
+	const ups = m.noPPBoosts || m.id === 'trumpcard' ? 0 : 3;
+	if (typeof scripts.calculatePP === 'function') {
+		return scripts.calculatePP.call({ gen: dex.gen }, m, ups);
+	}
+	if (m.noPPBoosts) return m.pp;
+	let pp = (m.pp * (5 + ups)) / 5;
+	if (dex.gen <= 2 && m.pp === 40) pp -= ups;
+	return pp;
+};
 const moves = {};
 for (const m of dex.moves.all()) {
 	moves[m.id] = {
@@ -39,6 +53,7 @@ for (const m of dex.moves.all()) {
 		target: m.target,
 		type: m.type,
 		flags: Object.keys(m.flags || {}),
+		pp: battlePP(m),
 	};
 }
 const items = {};

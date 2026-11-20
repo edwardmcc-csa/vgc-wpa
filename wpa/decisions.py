@@ -586,7 +586,8 @@ class _Board:
         move = to_id(p[3])
         self._mover = self._index(p[2][:2], p[2])
         self._mover_at = (p[2][:2], p[2][2:3])
-        if m.get("charging") == move and "[still]" not in p[4:]:
+        released = m.get("charging") == move and "[still]" not in p[4:]
+        if released:
             m.pop("charging", None)  # the charged move goes off
         if move != "destinybond":
             m.pop("destinybond", None)  # it ends when the Pokemon moves again
@@ -611,6 +612,13 @@ class _Board:
         m["last_move"] = move
         if not called:
             m["rev_moves"].add(move)
+        # its PP (Week 17): one for each use, a failed one too; none for a
+        # charged move going off, a move another called, a locked repeat
+        # (Outrage), or Struggle. Pressure's extra PP is not counted.
+        locked = any("lockedmove" in x for x in p[4:])
+        if not (called or released or locked or move == "struggle"):
+            used = m.setdefault("pp_used", {})
+            used[move] = used.get(move, 0) + 1
         if move in PROTECT_MOVES:
             m["protect_streak"] += 1
             self._protecting = m
@@ -817,6 +825,7 @@ class _Board:
                 "rev_item": m["rev_item"],
                 "rev_ability": m["rev_ability"],
                 **({"perish": m["perish"]} if m.get("perish") else {}),
+                **({"pp_used": dict(m["pp_used"])} if m.get("pp_used") else {}),
                 **({"hits": m["hits"]} if m.get("hits") else {}),
                 **({"sub_up": m["sub_up"]} if m.get("sub_up") else {}),
                 **({"gender": m["gender"]} if m.get("gender") else {}),

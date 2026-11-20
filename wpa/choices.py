@@ -32,6 +32,8 @@ logged without its target; an animation line may show it, and otherwise the
 target stays hidden. `check` counts how many of the choices the log does show
 are in the list.
 
+A move with no PP left is not offered (Week 17), unless every move is out.
+
 Not yet tracked, so offered even when the game would refuse: Taunt, Encore,
 Disable, Torment, Imprison, and trapping (Shadow Tag, Arena Trap, bound moves).
 """
@@ -107,7 +109,7 @@ def options(
         ally = next((k for k in actives if k != i), None)
         mega_ok = not side_megaed and not st.get("mega") and _has_own_stone(mon, dex)
         acts: list[Action] = []
-        moves, can_switch = _locked(mon, st, _usable_moves(mon, st))
+        moves, can_switch = _locked(mon, st, _usable_moves(mon, st, dex))
         # no status moves with an Assault Vest, or while taunted (unless that
         # is all it has: Struggle is not modelled)
         no_status = st.get("item") == "assaultvest" or bool(

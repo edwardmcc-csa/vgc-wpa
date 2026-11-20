@@ -39,6 +39,7 @@ from pathlib import Path
 
 from wpa.choices import Action
 from wpa.decisions import PROTECT_MOVES, STATS, to_id
+from wpa.features import no_pp_left
 from wpa.spreads import (
     ALLY_BOOSTS,
     Spread,
@@ -1581,6 +1582,10 @@ class Resolver:
         protect_used = mv in PROTECT_LIKE
         first_turn = not st["moved"]
         again = st.get("last_move") == mv  # Ally Switch's chance (`_ally_switch`)
+        if st.get("charging") != mv:  # its PP (Week 17); a charge going off: none
+            used = dict(st.get("pp_used") or {})  # new: worlds may share it
+            used[mv] = used.get(mv, 0) + 1
+            st["pp_used"] = used
         st["moved"], st["last_move"] = True, mv
         st["last_target"] = a.target  # for Instruct (`_instruct`)
         w.hit, w.dealt, w.subbed, w.chances = set(), 0, set(), []
@@ -2423,6 +2428,8 @@ class Resolver:
             return
         if "failencore" in (self.move(x["last_move"]).get("flags") or []):
             return
+        if no_pp_left(x["last_move"], x.get("pp_used") or {}, self.moves):
+            return  # Week 17: nothing left to repeat (the PO's game 629)
         if self._mental_herb(x):
             return
         x["encore"] = x["last_move"]
