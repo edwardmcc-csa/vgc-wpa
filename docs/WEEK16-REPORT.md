@@ -165,8 +165,10 @@ question for Week 17 (see the brief).
 Protect best (0.965), just ahead of Last Respects and Aqua Jet (0.951 each). It
 thought the game was 94% won. It expected your Raichu to use Volt Tackle (47%)
 and gave Fake Out only 17%. You used Fake Out on Whimsicott, and Ice Beam took
-Whimsicott out. Your read was right. The top plays were within 1.5 points of
-each other, and Protect's edge rested on a reply you didn't make.
+Whimsicott out. The top plays were within 1.5 points of each other, and
+Protect's edge rested on a reply you didn't make. I have not confirmed that an
+attack wins against every reply (the engine rated the attacks 95%, not 100%),
+so this is not yet a guaranteed-win test case.
 
 **The Froslass game (624), team preview.** Its lead values were all within 2.3
 points (0.469 to 0.492). The leads with a Mega (Froslass, Delphox) were in the
