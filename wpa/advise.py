@@ -520,10 +520,16 @@ def _turn_mixes(
         )
         full[q] = A.mixture({i: list(zip(opts[i], chances[i])) for i in opts})
     if lasts is not None:
+        from wpa.policy_data import side_and_weather
         from wpa.shortcuts import last_play
 
         theirs = tt[role].theirs
-        lasts.update(j for j, _ in full[role] if last_play(j, theirs, tools.moves[fmt]))
+        side, weather = side_and_weather(timers[role].get(turn))
+        lasts.update(
+            j
+            for j, _ in full[role]
+            if last_play(j, theirs, tools.moves[fmt], side, weather)
+        )
     plain, kept = {}, 1.0
     for q in ("p1", "p2"):
         plain[q], k = A.likely(full[q], tools.top, tools.draws, f"{tag} {turn} {q}")

@@ -1,9 +1,10 @@
 """Week 17, Task 2: shortcuts in the move list (the PO's request of 17 Nov).
 
 Plays that cannot work are taken out of the bot's search, for both sides: Fake
-Out or First Impression after a Pokemon's first turn out, Tailwind while its own
-side's is up, a weather move while that weather is already set. Plays that
-rarely make sense but sometimes do are valued last, never removed: a damaging
+Out or First Impression after a Pokemon's first turn out. Plays that rarely
+make sense but sometimes do are valued last, never removed (the PO, 20 Nov:
+Tailwind while its own is up, and a weather move in that weather, to play
+around a switch-in or an opposing weather setter, are among them): a damaging
 move into one's own partner (Sneasler's White Herb Close Combat for Unburden,
 U-turn out of Perish Song), and a status move into a target that already has
 one (into a Sucker Punch user; Yawn into a sleeping or drowsy target, which
@@ -53,26 +54,27 @@ def test_fake_out_and_first_impression_work_only_on_the_first_turn_out(move):
     assert S.cannot_work(b, ours, set(), None, MOVES) is None
 
 
-def test_tailwind_cannot_be_set_while_its_own_is_up():
+def test_tailwind_while_its_own_is_up_is_valued_last_not_removed():
+    """The PO, 20 Nov: kept possible (by Showdown's rules a second Tailwind
+    fails unless the opponent's Court Change moves the first one away)."""
     ours = [_mon()]
-    assert S.cannot_work(_move("tailwind"), ours, {"tailwind"}, None, MOVES) == (
-        "tailwind_up"
-    )
-    assert S.cannot_work(_move("tailwind"), ours, set(), None, MOVES) is None
+    a = _move("tailwind")
+    assert S.cannot_work(a, ours, {"tailwind"}, None, MOVES) is None
+    assert S.value_last(a, [], MOVES, our_side={"tailwind"})
+    assert not S.value_last(a, [], MOVES, our_side=set())
 
 
-def test_a_weather_move_fails_while_that_weather_is_set():
+def test_a_weather_move_in_that_weather_is_valued_last_not_removed():
+    """The PO, 20 Nov: a switch-in's weather ability, or a faster weather move,
+    can change the weather before it goes off, so it stays possible."""
     ours = [_mon()]
-    assert S.cannot_work(_move("raindance"), ours, set(), "raindance", MOVES) == (
-        "weather_set"
-    )
-    assert S.cannot_work(_move("sunnyday"), ours, set(), "raindance", MOVES) is None
-    # under a primal weather every weather move fails
-    assert S.cannot_work(_move("sunnyday"), ours, set(), "primordialsea", MOVES) == (
-        "weather_set"
-    )
-    # Chilly Reception still switches the user out: never removed
-    assert S.cannot_work(_move("chillyreception"), ours, set(), "snow", MOVES) is None
+    rain = _move("raindance")
+    assert S.cannot_work(rain, ours, set(), "raindance", MOVES) is None
+    assert S.value_last(rain, [], MOVES, weather="raindance")
+    assert not S.value_last(_move("sunnyday"), [], MOVES, weather="raindance")
+    assert S.value_last(_move("sunnyday"), [], MOVES, weather="primordialsea")
+    # Chilly Reception also switches the user out: an ordinary play
+    assert not S.value_last(_move("chillyreception"), [], MOVES, weather="snow")
 
 
 def test_a_switch_is_never_removed():

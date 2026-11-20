@@ -85,6 +85,19 @@ def game_tools(tag: str, log: str, fmt: str, store, bring, dex):
     return sheets, spreads, odds
 
 
+def side_and_weather(j) -> tuple[set[str], str | None]:
+    """The side's conditions up (those the choice model knows) and the field's
+    weather, from a side's timers at a turn's start (`j`, or None)."""
+    from wpa.features import _field
+
+    side = {
+        e
+        for e, tt, lo, _h in (j.ours if j else ())
+        if tt == "side" and lo > 0 and e in SIDE_KEYS
+    }
+    return side, (_field(j)["weather"] if j else None)
+
+
 def turn_options(
     t: C.Turn,
     j,
@@ -107,11 +120,7 @@ def turn_options(
     from wpa.features import _field
 
     role = t.role
-    our_side = {
-        e
-        for e, tt, lo, _h in (j.ours if j else ())
-        if tt == "side" and lo > 0 and e in SIDE_KEYS
-    }
+    our_side, weather = side_and_weather(j)
     trickroom = any(
         e == "trickroom" and lo > 0 for e, _t, lo, _h in (j.field if j else ())
     )
@@ -127,7 +136,6 @@ def turn_options(
         if calc is not None
         else None
     )
-    weather = _field(j)["weather"] if j else None
     out = {}
     for idx, o in C.options(t.ours, t.theirs, sheets[role], dex).items():
         if o and shortcuts is not None:

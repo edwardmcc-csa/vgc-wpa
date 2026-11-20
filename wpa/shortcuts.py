@@ -1,19 +1,21 @@
 """Shortcuts in the move list (Week 17, Task 2; the PO's request of 17 Nov).
 
 The bot's search compares every play the rules allow (DEFINITIONS §4, revision
-13), likeliest first. Two kinds of shortcut, each with its own switch:
+13), likeliest first. Two kinds of shortcut:
 
 * **Plays that cannot work** are taken out, for both sides (`cannot_work`):
   Fake Out or First Impression after a Pokemon's first turn out
-  (`first_turn_only`); Tailwind while its own side's is up (`tailwind_up`); a
-  weather move while that weather is set, or any under a primal weather
-  (`weather_set`). A Pokemon keeps all its options if every one would go.
+  (`first_turn_only`). A Pokemon keeps all its options if every one would go.
 * **Plays that rarely make sense but sometimes do** are valued last, never
   removed (`value_last`): a damaging move into one's own partner (Sneasler's
   White Herb Close Combat for Unburden, U-turn out of Perish Song; Pollen Puff,
-  which heals a partner, is not one), and a status move into a target that
-  already has one (into a Sucker Punch user; Yawn into a sleeping or drowsy
-  target, which makes the Pokemon switched in there drowsy).
+  which heals a partner, is not one); a status move into a target that already
+  has one (into a Sucker Punch user; Yawn into a sleeping or drowsy target,
+  which makes the Pokemon switched in there drowsy); and (the PO, 20 Nov)
+  Tailwind while its own is up, and a weather move in that weather (or any
+  under a primal weather), to play around a switch-in's weather ability or an
+  opposing weather setter. By Showdown's rules a second Tailwind fails unless
+  the opponent's Court Change moves the first away.
 
 They change only the order and the size of the search, never a play's value.
 The replay report and the training tables do not use them: players do make
@@ -27,7 +29,7 @@ from collections.abc import Collection, Mapping, Sequence
 from wpa.choices import Action
 from wpa.damage import WEATHER
 
-RULES = ("first_turn_only", "tailwind_up", "weather_set")
+RULES = ("first_turn_only",)
 FIRST_TURN_ONLY = {"fakeout", "firstimpression"}
 PRIMAL = {"desolateland", "primordialsea", "deltastream"}
 # weather moves that do something else as well (Chilly Reception switches out)
@@ -51,25 +53,13 @@ def cannot_work(
     rules: Collection[str] = RULES,
 ) -> str | None:
     """The rule that rules out action `a` (by the Pokemon `ours[a.user]`), or
-    None. `our_side`: its side's conditions up; `weather`: the field's (the
-    board's name, as `wpa.features._field` gives it)."""
+    None. `our_side` and `weather` (the board's name, as
+    `wpa.features._field` gives it) are kept for rules that need them."""
     if a.kind != "move":
         return None
-    m = moves.get(a.move) or {}
     st = ours[a.user] if a.user < len(ours) else {}
     if "first_turn_only" in rules and a.move in FIRST_TURN_ONLY and st.get("moved"):
         return "first_turn_only"
-    if (
-        "tailwind_up" in rules
-        and m.get("sideCondition") == "tailwind"
-        and "tailwind" in our_side
-    ):
-        return "tailwind_up"
-    if "weather_set" in rules and m.get("weather") and a.move not in WEATHER_PLUS:
-        if weather and weather.lower() in PRIMAL:
-            return "weather_set"
-        if _weather_name(m["weather"]) == _weather_name(weather):
-            return "weather_set"
     return None
 
 
@@ -91,13 +81,35 @@ def keep(
     return [w is None for w in why]
 
 
-def value_last(a: Action, theirs: Sequence[Mapping], moves: Mapping) -> bool:
-    """Action `a` is one to value last: a damaging move into its own partner,
-    or a status move into a target that already has a status (Yawn: or is
-    drowsy)."""
-    if a.kind != "move" or a.target is None:
+def _same_weather(move: Mapping, weather: str | None) -> bool:
+    if not move.get("weather") or not weather:
+        return False
+    return weather.lower() in PRIMAL or _weather_name(move["weather"]) == (
+        _weather_name(weather)
+    )
+
+
+def value_last(
+    a: Action,
+    theirs: Sequence[Mapping],
+    moves: Mapping,
+    our_side: Collection[str] = (),
+    weather: str | None = None,
+) -> bool:
+    """Action `a` is one to value last: a damaging move into its own partner;
+    a status move into a target that already has a status (Yawn: or is
+    drowsy); Tailwind while its own side's is up (`our_side`); a weather move
+    in that weather (`weather`, the field's), unless it does more (Chilly
+    Reception)."""
+    if a.kind != "move":
         return False
     m = moves.get(a.move) or {}
+    if m.get("sideCondition") == "tailwind" and "tailwind" in our_side:
+        return True
+    if a.move not in WEATHER_PLUS and _same_weather(m, weather):
+        return True
+    if a.target is None:
+        return False
     if a.target[0] == "ally":
         hits = m.get("category") in ("Physical", "Special")
         return hits and a.move not in HEALS_ALLY
@@ -109,6 +121,12 @@ def value_last(a: Action, theirs: Sequence[Mapping], moves: Mapping) -> bool:
     return False
 
 
-def last_play(j: Sequence[Action], theirs: Sequence[Mapping], moves: Mapping) -> bool:
+def last_play(
+    j: Sequence[Action],
+    theirs: Sequence[Mapping],
+    moves: Mapping,
+    our_side: Collection[str] = (),
+    weather: str | None = None,
+) -> bool:
     """A play (one action a Pokemon) is valued last if any of its actions is."""
-    return any(value_last(a, theirs, moves) for a in j)
+    return any(value_last(a, theirs, moves, our_side, weather) for a in j)
