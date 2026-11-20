@@ -843,19 +843,31 @@ class TurnValues:
         self.outcomes: dict[tuple[Joint, Joint], list] = {}
         self._value: dict[tuple[Joint, Joint], float] = {}
 
-    def prepare(self, pairs: Sequence[tuple[Joint, Joint]]) -> None:
+    def prepare(
+        self,
+        pairs: Sequence[tuple[Joint, Joint]],
+        stop: Callable[[], bool] | None = None,
+    ) -> bool:
         """Resolve every pair not yet resolved and value all their boards in one
-        batch (the model is far quicker on one large batch than many small)."""
+        batch (the model is far quicker on one large batch than many small).
+        `stop` (within a time, Week 17): looked at between pairs; once it says
+        the time is up, the pairs resolved so far are valued and the rest left.
+        True when every pair was valued."""
         todo = [k for k in dict.fromkeys(pairs) if k not in self._value]
         if not todo:
-            return
+            return True
         got = {}
+        whole = True
         for p1, p2 in todo:
+            if got and stop is not None and stop():
+                whole = False
+                break
             got[(p1, p2)] = self.resolver.resolve(
                 copy.deepcopy(dict(self.sides)),
                 copy.deepcopy(self.fld),
                 {"p1": p1, "p2": p2},
             )
+        todo = [k for k in todo if k in got]
         empty = [k for k in todo if not got[k]]
         if empty:
             raise ValueError(f"the resolver gave no boards for {empty[0]}")
@@ -880,6 +892,7 @@ class TurnValues:
             i += len(outs)
             self.outcomes[k] = outs
             self._value[k] = float((ps * w).sum() / ps.sum())
+        return whole
 
     def __call__(self, p1: Joint, p2: Joint) -> float:
         if (p1, p2) not in self._value:

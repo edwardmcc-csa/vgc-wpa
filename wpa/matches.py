@@ -235,7 +235,11 @@ def summary(rows: Sequence[Mapping]) -> str:
             out.append(
                 f"  {len(left_out)} game{s} left out: the opponent's side stopped"
             )
-        decisions = [d for r in rs for d in r.get("decisions", [])]
+        every = [d for r in rs for d in r.get("decisions", [])]
+        # Week 17: a choice dropped because its request had passed sent nothing
+        decisions = [d for d in every if d["kind"] != "stale"]
+        hard = sum(1 for d in decisions if d["kind"] == "late")
+        dropped = len(every) - len(decisions)
         illegal = sum(
             1 for r in rs for e in r.get("errors", []) if "[Invalid choice]" in e
         )
@@ -249,6 +253,11 @@ def summary(rows: Sequence[Mapping]) -> str:
         out.append(
             f"  Crashes: {crashes}. Illegal choices: {illegal}. Timeouts: {late}."
         )
+        if hard or dropped:
+            out.append(
+                f"  Answered by the hard limit: {hard}. "
+                f"Dropped, their request passed: {dropped}"
+            )
         out.append(
             f"  Choices not exactly the engine's (replaced by a legal one): "
             f"{swapped} of {len(decisions)}; searches stopped by the clock: "

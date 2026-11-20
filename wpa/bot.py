@@ -11,7 +11,10 @@ game shows. Its own sets, stat points included, it knows.
 Only choices Showdown's own request allows are sent: the engine's choice is
 looked up among them (`order_for`); one it cannot find is replaced by a legal
 choice at random, and the reason kept. The bot never stalls: if the advice
-fails, a legal choice is sent and the failure kept.
+fails, a legal choice is sent and the failure kept. Week 17: if the advice
+has not answered 50 seconds into a turn, a legal choice is sent then
+(`answer_within`), and a choice whose request has passed is never sent
+(`Requests`), so one late turn cannot put the bot out of step.
 
 This module needs poke_env (as `wpa.battle` does) but not vgc_bench."""
 
@@ -391,6 +394,55 @@ class Deadline:
         return now + 1.5 * self.longest > self.end
 
 
+HARD_LIMIT = 50  # Week 17: a legal choice by then, whatever the advice is doing
+
+
+def request_id(request: Mapping | None) -> Any:
+    """Showdown's id for a request (`rqid`); None when it has none."""
+    return (request or {}).get("rqid")
+
+
+class Requests:
+    """Which request each game's choice is being worked out for (Week 17: back
+    in step). A choice is sent only while its request is still the latest: a
+    newer request (Showdown chose for the bot after a late turn, or asked
+    again), or the hard limit giving it up, makes it stale. Its search sees
+    that at its next look at the clock and stops, and nothing is sent
+    (`NOTHING`: poke_env sends no empty message)."""
+
+    class _Nothing:
+        message = ""
+
+    NOTHING = _Nothing()
+
+    def __init__(self) -> None:
+        self._now: dict[str, tuple[object, Any]] = {}
+
+    def begin(self, tag: str, request: Mapping | None) -> object:
+        token = object()
+        self._now[tag] = (token, request_id(request))
+        return token
+
+    def current(self, tag: str, token: object, request: Mapping | None) -> bool:
+        now = self._now.get(tag)
+        return now is not None and now[0] is token and now[1] == request_id(request)
+
+    def abandon(self, tag: str) -> None:
+        self._now.pop(tag, None)
+
+
+async def answer_within(work, limit: float | None, fallback) -> tuple[Any, bool]:
+    """`work()` in a thread, waited for at most `limit` seconds (None: no
+    limit). Returns (its answer, False), or (`fallback()`, True) when it has
+    not answered in time. The thread cannot be stopped from outside: it is left
+    to finish, and its search stops itself at its next look at the clock."""
+    task = asyncio.ensure_future(asyncio.to_thread(work))
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), limit), False
+    except TimeoutError:
+        return fallback(), True
+
+
 class Clock:
     """One game's clock as the bot counts it, and as Showdown last told it."""
 
@@ -448,6 +500,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         self.four: dict[str, set[int]] = {}
         self.plan: dict[str, dict[int, int]] = {}
         self.clocks: dict[str, Clock] = {}
+        self.requests = Requests()
 
     def set_team(self, packed: str) -> None:
         """The team for its next game."""
@@ -495,9 +548,29 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
     # turns and switches ---------------------------------------------------
 
     def choose_move(self, battle):
-        return asyncio.to_thread(self._decide, battle)
+        return self._answer(battle)
 
-    def _decide(self, battle):
+    async def _answer(self, battle):
+        """The advice's choice, or a legal one if it has not answered within the
+        hard limit (Week 17); nothing for a request that has passed."""
+        tag, start = battle.battle_tag, time.monotonic()
+        token = self.requests.begin(tag, battle.last_request)
+
+        def fallback():
+            self.requests.abandon(tag)  # its search stops, and sends nothing
+            order = random_order(battle)
+            why = f"the advice had not answered in {HARD_LIMIT} s"
+            self._record(battle, "late", start, order.message, why)
+            self.clocks.setdefault(tag, Clock()).spend(time.monotonic() - start)
+            return order
+
+        limit = HARD_LIMIT if self.timed else None
+        order, _late = await answer_within(
+            lambda: self._decide(battle, token), limit, fallback
+        )
+        return order
+
+    def _decide(self, battle, token=None):
         from wpa.advise import advise, advise_replacement, up_to_switch, up_to_turn
         from wpa.replay import with_sheets
 
@@ -509,7 +582,12 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         clock = self.clocks.setdefault(tag, Clock())
         left = clock.left(lines)
         budget = think_time(left) if self.timed else None
-        stop = Deadline(budget - (time.monotonic() - start)) if budget else None
+        stop = None
+        if budget:
+            deadline = Deadline(budget - (time.monotonic() - start))
+
+            def stop() -> bool:  # the time is up, or the request has passed
+                return deadline() or not self._live(tag, token, battle)
         try:
             log = with_sheets(live_log(lines, role), role, self.paste)
             kind = decision_kind(log, battle.force_switch)
@@ -546,7 +624,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
                 else {}
             )
             order, w = order_for(joint, battle, idents, foes)
-            if kind == "turn":
+            if kind == "turn" and self._live(tag, token, battle):
                 places = own_places(battle.last_request, idents)
                 self.plan[tag] = {
                     places[a.user]: a.switch_to
@@ -558,6 +636,11 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         why = "; ".join(x for x in (why, w) if x)
         if order is None:  # pragma: no cover - nothing fits: Showdown's default
             order, why = random_order(battle), why or "no legal choice was found"
+        if not self._live(tag, token, battle):  # its request has passed
+            self._record(
+                battle, "stale", start, "", "the request passed while it thought"
+            )
+            return Requests.NOTHING
         self._record(
             battle,
             kind,
@@ -575,6 +658,10 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         )
         clock.spend(time.monotonic() - start)
         return order
+
+    def _live(self, tag: str, token, battle) -> bool:
+        """Its request is still the one to answer (always, outside `_answer`)."""
+        return token is None or self.requests.current(tag, token, battle.last_request)
 
     def _record(self, battle, kind, start, message, why, **more) -> None:
         self.records.append(

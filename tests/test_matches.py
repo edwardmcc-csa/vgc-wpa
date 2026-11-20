@@ -175,3 +175,18 @@ def test_the_engine_opponents_own_fallbacks_are_counted(tmp_path):
     assert M.opponent_note(tmp_path).endswith("1 of 2")
     assert M.done_games(tmp_path) == set()  # not the bot's rows
     assert M.opponent_note(tmp_path / "none") == ""
+
+
+def test_the_summary_counts_the_hard_limit_and_the_choices_dropped():
+    """Week 17: a turn answered by the hard limit (50 s, a legal choice) is not
+    a timeout, but it is counted; a choice dropped because its request had
+    passed sent nothing, so it is neither a choice nor a timeout."""
+    ds = [
+        {"kind": "turn", "seconds": 20.0, "why": "", "stopped": True},
+        {"kind": "late", "seconds": 50.0, "why": "the advice had not answered"},
+        {"kind": "stale", "seconds": 70.0, "why": "the request passed"},
+    ]
+    text = M.summary([_row(decisions=ds)])
+    assert "Timeouts: 0" in text
+    assert "Answered by the hard limit: 1. Dropped, their request passed: 1" in text
+    assert "replaced by a legal one): 1 of 2" in text

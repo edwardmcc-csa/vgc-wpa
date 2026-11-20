@@ -149,8 +149,10 @@ def rank_within(
     """`rank_all` within a time (the bot, Week 16 Task 2): the same passes,
     each going the likeliest choices first (the second, the best of the first
     pass first) in batches of about `pairs` pairs, and stopping when `stop()`
-    says the time is up. A pass values at least one batch unless something is
-    valued already. With time to spare, the ranking is `rank_all`'s. When the
+    says the time is up (looked at before every batch, the first too, and by
+    `prepare` between pairs: a batch it cuts short, saying False, is not
+    counted). With nothing valued, the likeliest play comes first (Week 17).
+    With time to spare, the ranking is `rank_all`'s. When the
     time runs out: the choices valued against every reply first (with `known`,
     choices already valued so: the replies' weighing values the likely ones),
     then those valued against the likeliest replies, then the rest, likeliest
@@ -162,20 +164,20 @@ def rank_within(
     order = sorted(full, key=lambda x: -x[1])
     chance = dict(order)
     stopped = False
-    valued_any = bool(known)
 
     def batches(js: list[Joint], ys: Mix) -> list[Joint]:
-        nonlocal stopped, valued_any
+        nonlocal stopped
         done: list[Joint] = []
         step = max(1, pairs // max(1, len(ys)))
         for k in range(0, len(js), step):
-            if valued_any and stop():
+            if stop():  # nothing valued yet: the likeliest play (Week 17)
                 stopped = True
                 break
             part = js[k : k + step]
-            prepare([(j, y) for j in part for y, _ in ys])
+            if prepare([(j, y) for j in part for y, _ in ys]) is False:
+                stopped = True  # cut short between pairs: not counted
+                break
             done += part
-            valued_any = True
         return done
 
     def full_value(j: Joint) -> float:
@@ -207,12 +209,20 @@ def rank_within(
 
 
 def strong_within(
-    tv, plain: Mapping[str, Mix], strength, role: str, stop: Callable[[], bool]
+    tv,
+    plain: Mapping[str, Mix],
+    strength,
+    role: str,
+    stop: Callable[[], bool],
+    pairs: int = 12,
 ) -> tuple[Mix, list[Joint] | None]:
     """The other side's likely replies weighed by their worth (`strong_mixes`),
     within a time: against the player's likely choices, likeliest first, each
     against every one of their replies; when `stop()` says the time is up,
-    against those valued so far. With time to spare, `strong_mixes`'s. Returns
+    against those valued so far. The time is looked at before each batch of
+    about `pairs` pairs and between pairs (Week 17: one choice against every
+    reply took up to 145 s); with none weighed, their replies are taken as
+    they come. With time to spare, `strong_mixes`'s. Returns
     their weighed replies and the player's likely choices they were weighed
     against, each now valued against every one of them (None at strength 0:
     nothing to weigh)."""
@@ -225,11 +235,18 @@ def strong_within(
         return list(theirs), None
     used: list[int] = []
     for i in sorted(range(len(ours)), key=lambda k: -ours[k][1]):
-        if used and stop():
-            break
         j = ours[i][0]
-        tv.prepare([(j, y) if role == "p1" else (y, j) for y, _ in theirs])
+        asks = [(j, y) if role == "p1" else (y, j) for y, _ in theirs]
+        whole = True
+        for k in range(0, len(asks), pairs):
+            if stop() or tv.prepare(asks[k : k + pairs], stop) is False:
+                whole = False
+                break
+        if not whole:
+            break
         used.append(i)
+    if not used:  # nothing weighed in time: their replies as they come
+        return list(theirs), []
     part = [x for i, x in enumerate(ours) if i in set(used)]
     return strengthened(tv.for_role(other), theirs, part, s), [ours[i][0] for i in used]
 
@@ -523,8 +540,10 @@ def advise(
         replies, used = strong_within(tv, plain, strength, role, stop)
         weighed = len(plain[role]) if used is None else len(used)
 
-        def prepare(pairs) -> None:  # the resolver takes (p1's, p2's)
-            tv.prepare([(j, y) if role == "p1" else (y, j) for j, y in pairs])
+        def prepare(pairs) -> bool:  # the resolver takes (p1's, p2's)
+            return tv.prepare(
+                [(j, y) if role == "p1" else (y, j) for j, y in pairs], stop
+            )
 
         s = rank_within(
             tv.for_role(role), full[role], replies, prepare, stop, known=used or ()
