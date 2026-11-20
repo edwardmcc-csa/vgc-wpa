@@ -104,6 +104,7 @@ _VOLATILE_LINES = frozenset(
         "-end",
         "-activate",
         "-prepare",
+        "-anim",
         "-enditem",
         "-damage",
         "-ability",
@@ -467,6 +468,10 @@ class _Board:
             m.pop("confused", None)
         elif t == "-prepare" and what:
             m["charging"] = what
+        elif t == "-anim" and what and m.get("charging") == what:
+            # it went off in the same action (Electro Shot in rain, Solar Beam
+            # in sun): no charge is left (Week 17)
+            m.pop("charging", None)
         elif t == "-enditem" and what == "powerherb":
             m.pop("charging", None)  # it went off at once
         elif t == "-start" and what == "encore":

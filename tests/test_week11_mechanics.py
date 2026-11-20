@@ -317,3 +317,25 @@ def test_a_side_that_has_shown_fewer_than_four_still_has_pokemon(tools):
     outs = R.Resolver(dex, moves, calc, sheets, spreads).resolve(b, R.Field(), acts)
     assert any(o.sides["p2"][0]["fainted"] for o in outs)
     assert all(o.winner is None for o in outs)
+
+
+def test_a_charging_move_that_goes_off_at_once_leaves_no_charge():
+    """Week 17 (the PO's games against the bot): in rain Electro Shot charges and
+    goes off in the same action (Showdown logs `[still]`, `-prepare`, then
+    `-anim` and the hit). The board kept it charging, so the next turn the
+    engine believed that Pokemon could only use Electro Shot again."""
+    rain = """|t:|1
+|move|p1b: Rock|Electro Shot||[still]
+|-prepare|p1b: Rock|Electro Shot
+|-boost|p1b: Rock|spa|1
+|-anim|p1b: Rock|Electro Shot|p2a: Inci
+|-damage|p2a: Inci|40/100"""
+    log = game(rain, "|upkeep", "|t:|2\n|turn|2")
+    assert "charging" not in _mon(at_turn_start(log, 2), 1)
+    # without rain it charges, and the next turn it must go off
+    dry = """|t:|1
+|move|p1b: Rock|Electro Shot||[still]
+|-prepare|p1b: Rock|Electro Shot
+|-boost|p1b: Rock|spa|1"""
+    log = game(dry, "|upkeep", "|t:|2\n|turn|2")
+    assert _mon(at_turn_start(log, 2), 1)["charging"] == "electroshot"
