@@ -86,11 +86,23 @@ def game_tools(tag: str, log: str, fmt: str, store, bring, dex):
 
 
 def turn_options(
-    t: C.Turn, j, sheets, spreads, dex, moves, rates, calc, odds
+    t: C.Turn,
+    j,
+    sheets,
+    spreads,
+    dex,
+    moves,
+    rates,
+    calc,
+    odds,
+    shortcuts: Counter | None = None,
+    rules=None,
 ) -> dict[int, tuple[list, np.ndarray]]:
     """For each Pokemon of `t.role` active at the start of the turn: its options
     and their facts (`wpa.policy.option_features`), as the opponent would see
-    them. `j`: the role's timers at the turn start."""
+    them. `j`: the role's timers at the turn start. `shortcuts` (the bot's
+    search, Week 17): plays that cannot work are left out, and counted in it by
+    rule (`wpa.shortcuts`; `rules`: which, all by default)."""
     from wpa.bring import marginals
     from wpa.features import _field
 
@@ -115,8 +127,22 @@ def turn_options(
         if calc is not None
         else None
     )
+    weather = _field(j)["weather"] if j else None
     out = {}
     for idx, o in C.options(t.ours, t.theirs, sheets[role], dex).items():
+        if o and shortcuts is not None:
+            from wpa import shortcuts as SC
+
+            ok = SC.keep(
+                o,
+                t.ours,
+                our_side,
+                weather,
+                moves,
+                shortcuts,
+                SC.RULES if rules is None else rules,
+            )
+            o = [a for a, k in zip(o, ok) if k]
         if o:
             X = np.array(
                 [

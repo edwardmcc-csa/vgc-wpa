@@ -23,6 +23,7 @@ import math
 import random
 import sys
 import time
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -34,9 +35,11 @@ OPPONENTS = {
     "strongest": "the strongest move",
     "typical": "the choice model (as people typically play)",
     "engine0": "the engine at strength 0",
+    # Week 17, Task 2: the bot head to head with itself without the shortcuts
+    "nocuts": "the same engine without the shortcuts",
 }
 LIMITS = {"preview": 90, "turn": 55, "replacement": 55, "pivot": 55}
-VS_CODE = {"random": 1, "strongest": 2, "typical": 3, "engine0": 4}
+VS_CODE = {"random": 1, "strongest": 2, "typical": 3, "engine0": 4, "nocuts": 5}
 
 
 # --------------------------------------------------------------------------
@@ -263,6 +266,17 @@ def summary(rows: Sequence[Mapping]) -> str:
             f"{swapped} of {len(decisions)}; searches stopped by the clock: "
             f"{stopped} of {len(turns)}"
         )
+        cuts: Counter = Counter()
+        for d in turns:
+            cuts.update(d.get("removed") or {})
+        fired = sum(1 for d in turns if d.get("removed"))
+        last = sum(d.get("last", 0) for d in turns)
+        if cuts or last:
+            rules = ", ".join(f"{k} {n}" for k, n in sorted(cuts.items()))
+            out.append(
+                f"  Shortcuts: plays left out {rules or 'none'} "
+                f"(on {fired} of {len(turns)} turns); valued last {last}"
+            )
         cut = [d for d in turns if d.get("stopped") and d.get("compared")]
         if cut:
             left = [
@@ -386,6 +400,8 @@ def _opponent(vs: str, packed: str, name: str, port: int, w: int):  # pragma: no
     tools = _tools()
     if vs == "typical":
         return O.TypicalBot(tools, packed, FMT, seed=w, **kw)
+    if vs == "nocuts":
+        return O.EngineBot(tools, packed, FMT, shortcuts=False, **kw)
     return O.EngineBot(O.at_strength_zero(tools), packed, FMT, **kw)
 
 
@@ -451,6 +467,7 @@ async def _play_bot(
                 server_configuration=_server(a.port),
                 start_timer_on_battle_start=not a.untimed,
                 timed=not a.untimed,
+                shortcuts=not a.no_shortcuts,
                 log_level=40,
             )
         else:
@@ -523,6 +540,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, default=Path("reports/bot"))
     p.add_argument("--logs", type=Path, default=Path("battle_logs_bot"))
     p.add_argument("--summary", action="store_true", help="the results so far")
+    p.add_argument(
+        "--no-shortcuts",
+        action="store_true",
+        help="the bot without the move-list shortcuts (Week 17, Task 2)",
+    )
     p.add_argument(
         "--untimed",
         action="store_true",

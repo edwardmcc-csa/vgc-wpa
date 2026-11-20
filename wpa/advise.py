@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections import Counter
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -145,6 +146,7 @@ def rank_within(
     screen: int | None = None,
     finalists: int | None = None,
     pairs: int = 12,
+    last: Collection[Joint] = (),
 ) -> Search:
     """`rank_all` within a time (the bot, Week 16 Task 2): the same passes,
     each going the likeliest choices first (the second, the best of the first
@@ -161,7 +163,9 @@ def rank_within(
 
     screen = SCREEN if screen is None else screen
     finalists = FINALISTS if finalists is None else finalists
-    order = sorted(full, key=lambda x: -x[1])
+    # plays to value last (`wpa.shortcuts.value_last`, Week 17) go after the
+    # rest, whatever their odds
+    order = sorted(full, key=lambda x: (x[0] in last, -x[1]))
     chance = dict(order)
     stopped = False
 
@@ -281,6 +285,10 @@ class Advice:
     screened: int = 0
     stopped: bool = False
     weighed: int = 0
+    # the shortcuts (Week 17): plays left out by rule, both sides; how many of
+    # the player's plays were valued last
+    removed: dict = field(default_factory=dict)
+    last: int = 0
 
 
 @dataclass
@@ -445,11 +453,23 @@ def _point(tag: str, log: str, fmt: str, tools, role: str, at: str) -> _Point:
     )
 
 
-def _turn_mixes(tag: str, log: str, fmt: str, tools, role: str, own_four):
+def _turn_mixes(
+    tag: str,
+    log: str,
+    fmt: str,
+    tools,
+    role: str,
+    own_four,
+    fired: Counter | None = None,
+    lasts: set | None = None,
+):
     """A turn's start from `role`'s side: the decision point, its values (not
     yet resolved), the turn, each side's every choice with the choice model's
     chances (`full`), their likely ones (`plain`), and the share of the other
-    side's chance taken exactly. `tools` already the format's own."""
+    side's chance taken exactly. `tools` already the format's own. With
+    `fired` (the bot's shortcuts, Week 17): plays that cannot work are left
+    out on both sides and counted in it by rule, and `role`'s plays to value
+    last are put in `lasts`."""
     from wpa import attribution as A
     from wpa import choices as C
     from wpa.policy_data import _timers_by_turn, turn_options
@@ -489,6 +509,7 @@ def _turn_mixes(tag: str, log: str, fmt: str, tools, role: str, own_four):
             rates,
             tools.calc,
             pt.odds,
+            shortcuts=fired,
         )
         opts, chances = A.only_brought(
             *A.expand_pivots(
@@ -498,6 +519,11 @@ def _turn_mixes(tag: str, log: str, fmt: str, tools, role: str, own_four):
             four[q],
         )
         full[q] = A.mixture({i: list(zip(opts[i], chances[i])) for i in opts})
+    if lasts is not None:
+        from wpa.shortcuts import last_play
+
+        theirs = tt[role].theirs
+        lasts.update(j for j, _ in full[role] if last_play(j, theirs, tools.moves[fmt]))
     plain, kept = {}, 1.0
     for q in ("p1", "p2"):
         plain[q], k = A.likely(full[q], tools.top, tools.draws, f"{tag} {turn} {q}")
@@ -524,17 +550,24 @@ def advise(
     role: str,
     own_four: set[int] | None = None,
     stop: Callable[[], bool] | None = None,
+    shortcuts: bool = False,
 ) -> Advice:
     """The advice at the start of the last turn the log reaches (`up_to_turn`).
     `own_four`: the four the player brought, when known (the log shows only
     those that have come out). `stop`: within a time (the bot, Week 16), the
     search goes the likeliest plays first and ends when it says the time is up
-    (`strong_within`, `rank_within`); the typical choice is not valued."""
+    (`strong_within`, `rank_within`); the typical choice is not valued.
+    `shortcuts` (the bot, Week 17): plays that cannot work left out on both
+    sides, plays that rarely make sense valued last (`wpa.shortcuts`)."""
     tools = _own(tools, fmt, log)  # own models (Week 15); by rating (rev 15)
     from wpa import attribution as A
 
     other = "p2" if role == "p1" else "p1"
-    pt, tv, turn, full, plain, kept = _turn_mixes(tag, log, fmt, tools, role, own_four)
+    fired: Counter | None = Counter() if shortcuts else None
+    lasts: set | None = set() if shortcuts else None
+    pt, tv, turn, full, plain, kept = _turn_mixes(
+        tag, log, fmt, tools, role, own_four, fired, lasts
+    )
     strength = getattr(tools, "main_strength", tools.strength)
     if stop is not None:  # within a time (Week 16 Task 2)
         replies, used = strong_within(tv, plain, strength, role, stop)
@@ -546,7 +579,13 @@ def advise(
             )
 
         s = rank_within(
-            tv.for_role(role), full[role], replies, prepare, stop, known=used or ()
+            tv.for_role(role),
+            full[role],
+            replies,
+            prepare,
+            stop,
+            known=used or (),
+            last=lasts or (),
         )
         return Advice(
             tag,
@@ -562,6 +601,8 @@ def advise(
             screened=s.screened,
             stopped=s.stopped or weighed < len(plain[role]),
             weighed=weighed,
+            removed=dict(fired or {}),
+            last=len(lasts or ()),
         )
     strong = A.strong_mixes(tv, plain, strength)
     replies, mine = strong[other], strong[role]

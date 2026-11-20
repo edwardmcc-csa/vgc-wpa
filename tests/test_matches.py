@@ -190,3 +190,26 @@ def test_the_summary_counts_the_hard_limit_and_the_choices_dropped():
     assert "Timeouts: 0" in text
     assert "Answered by the hard limit: 1. Dropped, their request passed: 1" in text
     assert "replaced by a legal one): 1 of 2" in text
+
+
+def test_the_summary_counts_how_often_the_shortcuts_fire():
+    """Week 17, Task 2: how often each rule left a play out, and how many plays
+    were valued last."""
+    ds = [
+        {"kind": "turn", "seconds": 20.0, "removed": {"first_turn_only": 6}, "last": 2},
+        {
+            "kind": "turn",
+            "seconds": 20.0,
+            "removed": {"first_turn_only": 2, "tailwind_up": 3},
+            "last": 0,
+        },
+    ]
+    text = M.summary([_row(decisions=ds)])
+    assert (
+        "Shortcuts: plays left out first_turn_only 8, tailwind_up 3 "
+        "(on 2 of 2 turns); valued last 2" in text
+    )
+
+
+def test_the_head_to_head_opponent_is_the_engine_without_shortcuts():
+    assert "nocuts" in M.OPPONENTS and "nocuts" in M.VS_CODE

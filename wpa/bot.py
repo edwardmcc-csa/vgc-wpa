@@ -477,7 +477,8 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
     time it had and the clock left, how many plays were compared, valued
     against every reply and against the likeliest only, whether the time ran
     out, and why the choice sent is not exactly the engine's (empty when it
-    is)."""
+    is). `shortcuts` (Week 17): the move-list shortcuts on (`wpa.shortcuts`);
+    each turn's record counts the plays they left out and valued last."""
 
     def __init__(
         self,
@@ -487,6 +488,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         *,
         records=None,
         timed: bool = True,
+        shortcuts: bool = True,
         **kw,
     ):
         kw.setdefault("battle_format", f"gen9championsvgc2026{fmt}")
@@ -494,6 +496,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         super().__init__(team=packed, **kw)
         self.tools, self.fmt, self.paste = tools, fmt, paste_from_packed(packed)
         self.timed = timed
+        self.shortcuts = shortcuts  # the move-list shortcuts (Week 17, Task 2)
         self.records: list[dict] = records if records is not None else []
         self.lines: dict[str, list[str]] = {}
         self.idents: dict[str, list[str]] = {}
@@ -588,6 +591,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
 
             def stop() -> bool:  # the time is up, or the request has passed
                 return deadline() or not self._live(tag, token, battle)
+
         try:
             log = with_sheets(live_log(lines, role), role, self.paste)
             kind = decision_kind(log, battle.force_switch)
@@ -601,6 +605,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
                     role,
                     self.four.get(tag),
                     stop=stop,
+                    shortcuts=self.shortcuts,
                 )
             elif kind == "replacement":
                 adv = advise_replacement(
@@ -655,6 +660,8 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
             stopped=adv.stopped if adv else False,
             weighed=adv.weighed if adv else 0,
             wp=round(adv.wp, 4) if adv else None,
+            removed=dict(getattr(adv, "removed", {}) or {}),
+            last=getattr(adv, "last", 0) if adv else 0,
         )
         clock.spend(time.monotonic() - start)
         return order
