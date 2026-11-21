@@ -107,3 +107,15 @@ _SHEET = tuple(json.loads('["a", "b", "c", "d", "e", "f"]'))
 @pytest.fixture(autouse=True)
 def _poke_env():
     pytest.importorskip("poke_env")
+
+
+def test_every_bot_takes_its_request_s_token():
+    """Week 17: the bot answers each request through one door (`_answer`),
+    which hands `_decide` the request's token. The choice-model opponent had
+    its own `_decide` without it, and failed on every request in the first
+    gate run (20 Nov): 63 of its 200 games stopped and the rest were won on
+    its time."""
+    import inspect
+
+    for cls in (O.EngineBot, O.TypicalBot):
+        assert "token" in inspect.signature(cls._decide).parameters, cls

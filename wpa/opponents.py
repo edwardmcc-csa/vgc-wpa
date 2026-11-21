@@ -191,7 +191,7 @@ class TypicalBot(EngineBot):  # pragma: no cover - plays on a server
         self._record(battle, "preview", start, msg, why)
         return msg
 
-    def _decide(self, battle):
+    def _decide(self, battle, token=None):
         from wpa.advise import (
             typical_replacement,
             typical_turn,
@@ -240,6 +240,11 @@ class TypicalBot(EngineBot):  # pragma: no cover - plays on a server
         else:
             order, w = random_order(battle), ""
         why = "; ".join(x for x in (why, w) if x)
+        if not self._live(tag, token, battle):  # its request has passed
+            from wpa.bot import Requests
+
+            self._record(battle, "stale", start, "", "the request passed")
+            return Requests.NOTHING
         self._record(battle, kind, start, order.message, why)
         return order
 
