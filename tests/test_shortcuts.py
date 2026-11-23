@@ -170,8 +170,8 @@ def test_plays_valued_last_are_searched_last_whatever_their_odds():
 
 def test_the_bot_keeps_only_the_late_fake_out_removal_by_default():
     """The PO, 22 Nov, after the head-to-head (93 of 200, 40% to 53%): keep
-    the removal of plays that cannot work; the order that values some plays
-    last is off unless asked for (`--value-last`)."""
+    the removal of plays that cannot work; of the plays valued last, only late
+    Tailwind (the PO, 23 Nov) unless asked for (`--value-last`)."""
     import inspect
 
     from wpa import advise as AD
@@ -184,3 +184,41 @@ def test_the_bot_keeps_only_the_late_fake_out_removal_by_default():
     assert inspect.signature(AD.advise).parameters["value_last"].default is False
     assert M.parser().parse_args(["--vs", "random"]).value_last is False
     assert M.parser().parse_args(["--vs", "random", "--value-last"]).value_last
+    assert S.DEFAULT_LAST == ("late_tailwind",)
+    assert set(S.DEFAULT_LAST) < set(S.LAST_RULES)
+
+
+def test_tailwind_with_one_foe_left_is_valued_last():
+    """The PO, 23 Nov: Tailwind when the other side has one Pokemon left (game
+    629 turn 17). In the gate's 600 games the bot used it there as often as
+    anywhere (2.4% of its moves); 1500+ players halve it (1.0%, from 2.1%)."""
+    a = _move("tailwind")
+    assert S.last_kind(a, [], MOVES, foes_left=1) == "late_tailwind"
+    assert S.last_kind(a, [], MOVES, foes_left=2) is None
+    assert S.last_kind(a, [], MOVES, our_side={"tailwind"}) == "tailwind_up"
+    assert S.last_kind(_move("closecombat", ("ally", 1)), [], MOVES) == ("ally_attack")
+    j = (a, _move("closecombat", ("foe", 0), user=1))
+    assert S.last_play(j, [], MOVES, foes_left=1)
+    assert not S.last_play(j, [], MOVES, foes_left=1, kinds=())
+    ally = (_move("closecombat", ("ally", 1)),)
+    assert not S.last_play(ally, [], MOVES, kinds=S.DEFAULT_LAST)
+    assert S.last_play(ally, [], MOVES, kinds=S.LAST_RULES)
+
+
+def test_a_play_valued_last_loses_a_near_tie():
+    """Replayed, the bot's late Tailwinds were valued within a point of other
+    plays (0.998 against 0.995 and the like): the win model's own noise is
+    about a point. A play valued last is not chosen over another play within
+    that margin; a clear best still is."""
+    nan = float("nan")
+    tw, other, far = ("tailwind",), ("icebeam",), ("protect",)
+    ranked = [(tw, 0.998, 0.2), (other, 0.995, 0.3), (far, 0.9, 0.1), (("x",), nan, 0)]
+    got = S.prefer_over_last(ranked, {tw})
+    assert [j for j, _v, _p in got] == [other, tw, far, ("x",)]
+    assert S.prefer_over_last(ranked, {tw}, margin=0.001) == ranked
+    assert S.prefer_over_last(ranked, set()) == ranked
+    clear = [(tw, 0.998, 0.2), (far, 0.9, 0.1)]
+    assert S.prefer_over_last(clear, {tw}) == clear
+    assert S.NOISE == 0.01
+    # only plays valued against every reply are compared, not those screened
+    assert S.prefer_over_last(ranked, {tw}, valued=1) == ranked

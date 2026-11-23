@@ -462,6 +462,7 @@ def _turn_mixes(
     own_four,
     fired: Counter | None = None,
     lasts: set | None = None,
+    last_kinds: Collection[str] = (),
 ):
     """A turn's start from `role`'s side: the decision point, its values (not
     yet resolved), the turn, each side's every choice with the choice model's
@@ -469,7 +470,8 @@ def _turn_mixes(
     side's chance taken exactly. `tools` already the format's own. With
     `fired` (the bot's shortcuts, Week 17): plays that cannot work are left
     out on both sides and counted in it by rule, and `role`'s plays to value
-    last are put in `lasts`."""
+    last by the rules `last_kinds` (`wpa.shortcuts.LAST_RULES`) are put in
+    `lasts`."""
     from wpa import attribution as A
     from wpa import choices as C
     from wpa.policy_data import _timers_by_turn, turn_options
@@ -525,10 +527,13 @@ def _turn_mixes(
 
         theirs = tt[role].theirs
         side, weather = side_and_weather(timers[role].get(turn))
+        foes_left = 4 - sum(1 for m in theirs if m.get("fainted"))
         lasts.update(
             j
             for j, _ in full[role]
-            if last_play(j, theirs, tools.moves[fmt], side, weather)
+            if last_play(
+                j, theirs, tools.moves[fmt], side, weather, foes_left, last_kinds
+            )
         )
     plain, kept = {}, 1.0
     for q in ("p1", "p2"):
@@ -565,16 +570,27 @@ def advise(
     search goes the likeliest plays first and ends when it says the time is up
     (`strong_within`, `rank_within`); the typical choice is not valued.
     `shortcuts` (the bot, Week 17): plays that cannot work left out on both
-    sides (`wpa.shortcuts`); `value_last` as well: plays that rarely make
-    sense valued last (off since the head-to-head of 21 Nov, the PO's call)."""
+    sides (`wpa.shortcuts`), and Tailwind with one foe left valued last (the
+    PO, 23 Nov); `value_last`: every play that rarely makes sense valued last
+    (off since the head-to-head of 21 Nov, the PO's call)."""
     tools = _own(tools, fmt, log)  # own models (Week 15); by rating (rev 15)
     from wpa import attribution as A
 
     other = "p2" if role == "p1" else "p1"
     fired: Counter | None = Counter() if shortcuts else None
-    lasts: set | None = set() if shortcuts and value_last else None
+    lasts: set | None = set() if shortcuts else None
+    from wpa.shortcuts import DEFAULT_LAST, LAST_RULES
+
     pt, tv, turn, full, plain, kept = _turn_mixes(
-        tag, log, fmt, tools, role, own_four, fired, lasts
+        tag,
+        log,
+        fmt,
+        tools,
+        role,
+        own_four,
+        fired,
+        lasts,
+        LAST_RULES if value_last else DEFAULT_LAST,
     )
     strength = getattr(tools, "main_strength", tools.strength)
     if stop is not None:  # within a time (Week 16 Task 2)
@@ -595,12 +611,14 @@ def advise(
             known=used or (),
             last=lasts or (),
         )
+        from wpa.shortcuts import prefer_over_last
+
         return Advice(
             tag,
             turn,
             role,
             pt.wp,
-            s.ranked,
+            prefer_over_last(s.ranked, lasts or (), valued=s.full),
             sorted(replies, key=lambda x: -x[1]),
             kept,
             pt.hidden,
@@ -615,9 +633,16 @@ def advise(
     strong = A.strong_mixes(tv, plain, strength)
     replies, mine = strong[other], strong[role]
     if tools.alternatives is None:  # every choice the rules allow (rev 13)
-        return _advice(
+        adv = _advice(
             tag, turn, role, pt, tv, full[role], mine, replies, kept, every=True
         )
+        if lasts:  # the shortcuts' near-tie rule (Week 17)
+            from wpa.shortcuts import prefer_over_last
+
+            adv = replace(
+                adv, choices=prefer_over_last(adv.choices, lasts, valued=adv.valued)
+            )
+        return adv
     choices, _ = A.trim(full[role], 1.0, tools.alternatives)  # the old way
     return _advice(tag, turn, role, pt, tv, choices, mine, replies, kept)
 
