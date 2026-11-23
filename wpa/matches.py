@@ -13,7 +13,13 @@ stopped part way carries on where it was. Each game's log, with both teams
 exactly, goes to `battle_logs_bot/<vs>/` for the resolver check.
 
     python -m wpa.matches --vs random --games 200 --workers 6
-    python -m wpa.matches --vs random --summary"""
+    python -m wpa.matches --vs random --summary
+
+Choosing the bot's team (Week 18, Task 5): one run per candidate, the bot always
+playing the pool's team N, the engine itself on the other side; then the table.
+
+    python -m wpa.matches --vs engine --team 14 --games 80 --workers 3
+    python -m wpa.matches --vs engine --table"""
 
 from __future__ import annotations
 
@@ -37,9 +43,34 @@ OPPONENTS = {
     "engine0": "the engine at strength 0",
     # Week 17, Task 2: the bot head to head with itself without the shortcuts
     "nocuts": "the same engine without the shortcuts",
+    # Week 18, Task 5: the same strength on both sides, so the team is what differs
+    "engine": "the engine itself",
 }
 LIMITS = {"preview": 90, "turn": 55, "replacement": 55, "pivot": 55}
-VS_CODE = {"random": 1, "strongest": 2, "typical": 3, "engine0": 4, "nocuts": 5}
+VS_CODE = {
+    "random": 1,
+    "strongest": 2,
+    "typical": 3,
+    "engine0": 4,
+    "nocuts": 5,
+    "engine": 6,
+}
+
+
+def format_id(fmt: str) -> str:
+    """Showdown's name of a Champions regulation: regmc, regmd, ..."""
+    return f"gen9championsvgc2026{fmt}"
+
+
+def format_label(fmt: str) -> str:
+    """How Showdown lists it: "Reg M-C" for regmc."""
+    return f"Reg M-{fmt[-1].upper()}"
+
+
+def _use_format(fmt: str) -> None:
+    """The regulation this process plays (`--format`; Reg M-C by default)."""
+    global FORMAT, FMT
+    FORMAT, FMT = format_id(fmt), fmt
 
 
 # --------------------------------------------------------------------------
@@ -85,6 +116,20 @@ def pairings(n_teams: int, games: int, seed: int = 16) -> list[tuple[int, int]]:
     out: list[tuple[int, int]] = []
     for a, b in every[: (games + 1) // 2]:
         out += [(a, b), (b, a)]
+    return out[:games]
+
+
+def team_games(team: int, n_teams: int, games: int, seed: int = 18):
+    """The games of one candidate (Week 18, Task 5): the bot always plays the
+    pool's team `team` (from 0); its opponent plays each of the pool's teams
+    once, in a shuffled order, then each once more, and so on (the same every
+    run), so a run stopped part way still has the whole field."""
+    rng = random.Random(seed)
+    out: list[tuple[int, int]] = []
+    while len(out) < games:
+        order = list(range(n_teams))
+        rng.shuffle(order)
+        out += [(team, t) for t in order]
     return out[:games]
 
 
@@ -316,6 +361,36 @@ def summary(rows: Sequence[Mapping]) -> str:
     return "\n".join(out)
 
 
+def round_robin(folder: Path, pool: Sequence[Mapping], vs: str) -> str:
+    """The candidates' table (Week 18, Task 5): from each `<vs>-team<N>` run in
+    `folder`, the bot's wins with team N, its 95% interval, best first. As in
+    the summary, a game whose opponent's side stopped, or that crashed, is
+    left out."""
+    lines = []
+    for run in sorted(Path(folder).glob(f"{vs}-team*")):
+        number = run.name[len(f"{vs}-team") :]
+        if not number.isdigit():
+            continue
+        rows = [
+            r
+            for r in rows_of(run)
+            if r.get("inactive") != "opponent" and not r.get("crashed")
+        ]
+        wins, n = sum(1 for r in rows if r.get("won")), len(rows)
+        lo, hi = wilson(wins, n)
+        rate = wins / n if n else 0.0
+        species = ", ".join(pool[int(number) - 1]["species"])
+        text = (
+            f"Team {number}: {wins} of {n} ({_pct(rate)}, 95% interval "
+            f"{_pct(lo)} to {_pct(hi)}) - {species}"
+        )
+        lines.append((-rate, -wins, text))
+    if not lines:
+        return ""
+    head = f"Each candidate as the bot's team, against {OPPONENTS[vs]} with the pool:"
+    return "\n".join([head] + [x for *_k, x in sorted(lines)])
+
+
 # --------------------------------------------------------------------------
 # Playing
 # --------------------------------------------------------------------------
@@ -335,20 +410,22 @@ async def _formats(port: int) -> str:  # pragma: no cover - asks the server
 
 
 def check_server(port: int) -> None:  # pragma: no cover - asks the server
-    """Stop with a plain message unless a Showdown server with Reg M-C answers."""
+    """Stop with a plain message unless a Showdown server with the format
+    answers."""
+    label = format_label(FMT)
     import asyncio
 
     try:
         formats = asyncio.run(_formats(port))
     except Exception:
         raise SystemExit(
-            f"No Showdown server answers on port {port}: start the Reg M-C one "
+            f"No Showdown server answers on port {port}: start the {label} one "
             "(Runbook Section 29, step 1)"
         ) from None
-    if "VGC 2026 Reg M-C" not in formats:
+    if f"VGC 2026 {label}" not in formats:
         raise SystemExit(
-            f"The Showdown server on port {port} has no Reg M-C: close it and "
-            "start the one in pokemon-showdown-mc (Runbook Section 29, step 1)"
+            f"The Showdown server on port {port} has no {label}: close it and "
+            "start the one that has (Runbook Section 29, step 1)"
         )
 
 
@@ -372,8 +449,12 @@ def _tools():  # pragma: no cover - loads the models
 
 
 def run_name(a) -> str:
-    """A run's folder: the opponent, and "-untimed" for the measuring run."""
-    return a.vs + ("-untimed" if getattr(a, "untimed", False) else "")
+    """A run's folder: the opponent, "-untimed" for the measuring run, and
+    "-team<N>" for a candidate's run (Week 18)."""
+    name = a.vs + ("-untimed" if getattr(a, "untimed", False) else "")
+    if getattr(a, "team", None):
+        name += f"-team{a.team}"
+    return name
 
 
 def _names(run: str, w: int) -> tuple[str, str]:
@@ -402,6 +483,8 @@ def _opponent(vs: str, packed: str, name: str, port: int, w: int):  # pragma: no
         return O.TypicalBot(tools, packed, FMT, seed=w, **kw)
     if vs == "nocuts":
         return O.EngineBot(tools, packed, FMT, shortcuts=False, **kw)
+    if vs == "engine":
+        return O.EngineBot(tools, packed, FMT, **kw)
     return O.EngineBot(O.at_strength_zero(tools), packed, FMT, **kw)
 
 
@@ -519,7 +602,10 @@ def _worker(a, w: int, side: str) -> None:  # pragma: no cover
     import asyncio
 
     pool = json.loads(Path(a.pool).read_text(encoding="utf-8"))
-    every = list(enumerate(pairings(len(pool), a.games, a.seed)))
+    if a.team:  # one candidate's run (Week 18, Task 5)
+        every = list(enumerate(team_games(a.team - 1, len(pool), a.games)))
+    else:
+        every = list(enumerate(pairings(len(pool), a.games, a.seed)))
     mine = [g for g in every if g[0] % a.workers == w]
     out = Path(a.out) / run_name(a)
     out.mkdir(parents=True, exist_ok=True)
@@ -541,6 +627,22 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, default=Path("reports/bot"))
     p.add_argument("--logs", type=Path, default=Path("battle_logs_bot"))
     p.add_argument("--summary", action="store_true", help="the results so far")
+    p.add_argument(
+        "--team",
+        type=int,
+        default=None,
+        help="the bot always plays the pool's team N, 1 to 40 (Week 18, Task 5)",
+    )
+    p.add_argument(
+        "--table",
+        action="store_true",
+        help="the candidates' win rates, from every --team run so far",
+    )
+    p.add_argument(
+        "--format",
+        default="regmc",
+        help="the regulation: regmc (the default), regmd, ...",
+    )
     p.add_argument(
         "--no-shortcuts",
         action="store_true",
@@ -578,6 +680,7 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
 
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     a = parser().parse_args(argv)
+    _use_format(a.format)
     if a.make_pool:
         from wpa.spreads import UsageStore
         from wpa.team_sheets import load_dexes
@@ -593,6 +696,14 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
         )
         print(f"The pool: {len(raw)} teams, in {a.pool}")
         return
+    if a.table:
+        pool = json.loads(Path(a.pool).read_text(encoding="utf-8"))
+        print(round_robin(Path(a.out), pool, a.vs) or "No candidate's games yet.")
+        return
+    if a.team is not None:
+        n = len(json.loads(Path(a.pool).read_text(encoding="utf-8")))
+        if not 1 <= a.team <= n:
+            raise SystemExit(f"--team must be 1 to {n}")
     if a.summary:
         folder = Path(a.out) / run_name(a)
         print(summary(rows_of(folder)) or "No games played yet.")
@@ -615,8 +726,9 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     check_server(a.port)
     run = a.run or str(int(time.time()) % 100000)
     left = a.games - len(done_games(Path(a.out) / run_name(a)))
+    which = f" with the pool's team {a.team}" if a.team else ""
     print(
-        f"Playing {left} games against {OPPONENTS[a.vs]} on {a.workers} workers "
+        f"Playing {left} games{which} against {OPPONENTS[a.vs]} on {a.workers} workers "
         f"(each game a few minutes; a stopped run carries on where it was)."
     )
     base = [sys.executable, "-m", "wpa.matches", *(argv or sys.argv[1:]), "--run", run]
