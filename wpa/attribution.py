@@ -1333,6 +1333,7 @@ class Tools:
     # game, each player's strength by their rating (`for_game`)
     rating_line: dict | None = None
     by_role: dict | None = None
+    bring_pairs: Any = None  # the four against their six (Week 17, Task 5)
 
     def for_format(self, fmt: str) -> Tools:
         """These tools with `fmt`'s own models where it has them (DEFINITIONS
@@ -1402,6 +1403,12 @@ def own_models(a) -> dict:
             path = Path(shared).parent / fmt / Path(shared).name
             if path.exists():
                 out.setdefault(fmt, {})[key] = kinds[key].load(path)
+        bring = getattr(a, "bring", None)
+        pairs = Path(bring).parent / fmt / "bring_pairs.json" if bring else None
+        if pairs is not None and pairs.exists():  # Week 17, Task 5
+            from wpa.bring import MatchupTerm
+
+            out.setdefault(fmt, {})["bring_pairs"] = MatchupTerm.load(pairs)
         if _own_strength_file(a, fmt) is not None:  # DEFINITIONS rev 14
             out.setdefault(fmt, {})["strength"] = strength_for(a, fmt)
             line = rating_line_for(a, fmt)

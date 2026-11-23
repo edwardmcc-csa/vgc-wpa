@@ -702,8 +702,9 @@ def advise_bring(
 ) -> Advice:
     """Team preview as the app asks it: four to pick, the first two leading.
     The leads are ranked as `advise_preview` ranks them. With each pair of
-    leads, the back two players most often bring with them (the bring model):
-    the model does not rank back twos. On the 892 games of the resolver check's
+    leads, the back two players most often bring with them (the bring model,
+    and since Week 17 against the opponent's six: `bring_odds`); the win
+    model does not rank back twos. On the 892 games of the resolver check's
     sample (validation, Week 12), its win chance at turn 1's start moved 6 to 8
     points between fours with the same leads, but for the four actually brought
     it predicted the result no better than for the others (it did better in
@@ -712,17 +713,32 @@ def advise_bring(
     from wpa.team_sheets import sheets_from_log
 
     adv = advise_preview(tag, log, fmt, tools, role, prev)
-    mons = sheets_from_log(log)[role]
-    odds = (
-        tools.bring.odds(fmt, tuple(m.species for m in mons), None)
-        if tools.bring is not None
-        else [1.0] * len(mons)
-    )
+    sh = sheets_from_log(log)
+    mons = sh[role]
+    theirs = [m.species for m in sh.get("p2" if role == "p1" else "p1", [])]
+    odds = bring_odds(tools, fmt, [m.species for m in mons], theirs)
     choices: list[tuple[Any, float, float]] = []
     for j, v, p in adv.choices:
         leads = tuple(sorted(int(a.switch_to or 0) for a in j))
         choices.append((Pick(leads, usual_back(odds, leads)), v, p))
     return replace(adv, choices=choices, kind="bring")
+
+
+def bring_odds(
+    tools, fmt: str, mine: Sequence[str], theirs: Sequence[str]
+) -> list[float]:
+    """Each of the player's six's odds of being brought (the bring model), moved
+    by the opponent's six where the format has the matchup term and all six
+    are known (Week 17, Task 5: `wpa.bring.MatchupTerm`)."""
+    odds = (
+        tools.bring.odds(fmt, tuple(mine), None)
+        if tools.bring is not None
+        else [1.0] * len(mine)
+    )
+    term = getattr(tools, "bring_pairs", None)
+    if term is not None and len(theirs) == 6:
+        odds = term.adjust(odds, mine, theirs)
+    return odds
 
 
 def draw_bring(leads, bring, fmt: str, sheet: Sequence, rng) -> Pick:

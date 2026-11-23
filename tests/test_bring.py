@@ -119,3 +119,50 @@ def test_examples_carry_last_games_four_by_player_within_a_set():
     assert p1_g2.brought == frozenset({0, 2, 3, 4})
     assert p1_g2.prev == frozenset({0, 1, 3, 4})  # Whim, Rock, Bench, Five last game
     assert p1_g2.leads == frozenset({0, 2})
+
+
+# --- Week 17, Task 5: the four against the opponent's six ------------------
+
+
+def _rows():
+    mine = ("a", "b", "c", "d", "e", "f")
+    vs_x = ("x", "p", "q", "r", "s", "t")
+    vs_y = ("y", "p", "q", "r", "s", "t")
+    rows = []
+    for _ in range(50):  # "a" always comes against x, never against y
+        rows.append((mine, vs_x, frozenset({0, 1, 2, 3})))
+        rows.append((mine, vs_y, frozenset({1, 2, 3, 4})))
+    return mine, vs_x, vs_y, rows
+
+
+def test_the_matchup_term_learns_who_is_brought_against_whom(tmp_path):
+    mine, vs_x, vs_y, rows = _rows()
+    term = B.fit_matchup(rows, rows, betas=(0, 1, 2))
+    assert term.beta > 0
+    even = [1.0] * 6
+    up = term.adjust(even, mine, vs_x)
+    down = term.adjust(even, mine, vs_y)
+    assert up[0] > 1.0 > down[0]  # "a" against x, and against y
+    path = tmp_path / "bring_pairs.json"
+    term.save(path)
+    assert B.MatchupTerm.load(path).adjust(even, mine, vs_x) == pytest.approx(up)
+
+
+def test_team_preview_s_odds_use_the_opponent_s_six_where_the_format_has_it():
+    from types import SimpleNamespace
+
+    from wpa import advise as AD
+
+    mine, vs_x, vs_y, rows = _rows()
+
+    class Flat:
+        def odds(self, fmt, sheet, prev):
+            return [1.0] * len(sheet)
+
+    plain = SimpleNamespace(bring=Flat(), bring_pairs=None)
+    assert AD.bring_odds(plain, "regmc", mine, vs_x) == [1.0] * 6
+    term = B.fit_matchup(rows, rows, betas=(0, 1, 2))
+    tools = SimpleNamespace(bring=Flat(), bring_pairs=term)
+    assert AD.bring_odds(tools, "regmc", mine, vs_x)[0] > 1.0
+    # their six not known (fewer than six): as before
+    assert AD.bring_odds(tools, "regmc", mine, vs_x[:3]) == [1.0] * 6

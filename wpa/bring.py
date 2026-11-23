@@ -243,6 +243,167 @@ def evaluate(model: BringModel, examples: Sequence[Example]) -> dict[str, dict]:
     return out
 
 
+# --------------------------------------------------------------------------
+# Week 17, Task 5: the four against the opponent's six
+# --------------------------------------------------------------------------
+
+Matchup = tuple[tuple[str, ...], tuple[str, ...], frozenset[int]]
+
+
+@dataclass
+class MatchupTerm:
+    """How the opponent's six move each Pokemon's odds of being brought: its
+    odds times exp(beta x the mean, over their six, of log(how often it is
+    brought against that species / how often it is brought at all)), the
+    rates from training games (smoothed toward its own rate by `smooth`
+    sides). On Reg M-C's validation games (Week 17) it picks the four brought
+    twice as often as the bring model alone (18% against 10%; among the
+    winners 20% against 10%)."""
+
+    pairs: dict[str, list[float]]  # "own|theirs" -> [brought, on the sheet]
+    own: dict[str, list[float]]  # "own" -> [brought, on the sheet]
+    beta: float = 0.0
+    smooth: float = 20.0
+
+    def term(self, a: str, theirs: Sequence[str]) -> float:
+        took, on = self.own.get(a, (0.0, 0.0))
+        base = (took + 1) / (on + 3)
+        logs = []
+        for b in theirs:
+            t, n = self.pairs.get(f"{a}|{b}", (0.0, 0.0))
+            logs.append(math.log((t + self.smooth * base) / (n + self.smooth) / base))
+        return sum(logs) / len(logs) if logs else 0.0
+
+    def adjust(
+        self, odds: Sequence[float], mine: Sequence[str], theirs: Sequence[str]
+    ) -> list[float]:
+        return [
+            o * math.exp(self.beta * self.term(a, theirs)) for o, a in zip(odds, mine)
+        ]
+
+    def save(self, path: Path | str) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(
+            json.dumps(
+                {
+                    "pairs": self.pairs,
+                    "own": self.own,
+                    "beta": self.beta,
+                    "smooth": self.smooth,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def load(cls, path: Path | str) -> MatchupTerm:
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls(d["pairs"], d["own"], d["beta"], d["smooth"])
+
+
+def _four_log_chance(odds: Sequence[float], four: frozenset[int]) -> float:
+    return math.log(max(set_chances(odds, ()).get(four, 0.0), 1e-12))
+
+
+def fit_matchup(
+    rows: Sequence[Matchup],
+    tune: Sequence[Matchup],
+    betas: Sequence[float] = (0, 1, 2, 3, 4, 6, 8, 12),
+    base=None,
+) -> MatchupTerm:
+    """The rates from `rows` (sheet, their sheet, the four brought), and beta
+    the one of `betas` that gives `tune`'s fours the highest mean log chance
+    (on top of `base`'s odds, `fmt, sheet -> odds`; even odds without one)."""
+    pairs: dict[str, list[float]] = {}
+    own: dict[str, list[float]] = {}
+    for mine, theirs, four in rows:
+        for i, a in enumerate(mine):
+            o = own.setdefault(a, [0.0, 0.0])
+            o[0] += i in four
+            o[1] += 1
+            for b in set(theirs):
+                q = pairs.setdefault(f"{a}|{b}", [0.0, 0.0])
+                q[0] += i in four
+                q[1] += 1
+    term = MatchupTerm(pairs, own)
+
+    def score(beta: float) -> float:
+        term.beta = beta
+        total = 0.0
+        for mine, theirs, four in tune:
+            odds = base(mine) if base else [1.0] * len(mine)
+            total += _four_log_chance(term.adjust(odds, mine, theirs), four)
+        return total
+
+    term.beta = max(betas, key=score)
+    return term
+
+
+def matchup_rows(
+    logs: Iterable[tuple[str, str]], splits: dict[str, str]
+) -> dict[str, list[Matchup]]:
+    """By split, each side of each game whose four all appeared: its sheet, the
+    opponent's sheet, and the four."""
+    out: dict[str, list[Matchup]] = {}
+    for tag, log in logs:
+        if tag not in splits:
+            continue
+        sh, got = sheets(log), brought_from_log(log)
+        for role, sheet in sh.items():
+            other = sh.get("p2" if role == "p1" else "p1")
+            mine = got.get(role, set())
+            if (
+                len(sheet) == SHEET
+                and other
+                and len(other) == SHEET
+                and len(mine) == BRING
+            ):
+                out.setdefault(splits[tag], []).append(
+                    (tuple(sheet), tuple(other), frozenset(mine))
+                )
+    return out
+
+
+def main_matchup(a) -> None:
+    """`--matchup`: the term for one format's games (`--format`), saved at
+    `--out` beside that format's bring model (`bring.json`)."""
+    splits = json.loads(a.splits.read_text(encoding="utf-8"))["games"]
+    rows = matchup_rows(_iter_logs(a.logs), splits)
+    train, val = rows.get("train", []), rows.get("validation", [])
+    fmt = a.format
+    bring = BringModel.load(a.out.parent / "bring.json")
+
+    def base(mine):
+        return bring.odds(fmt, tuple(mine), None)
+
+    cut = len(train) * 9 // 10
+    term = fit_matchup(train[:cut], train[cut:], base=base)
+    term = fit_matchup(train, (), betas=(term.beta,))
+    term.save(a.out)
+    lines = [
+        f"matchup term ({fmt}): {len(train)} training sides; beta {term.beta} "
+        f"(chosen on training's last tenth)"
+    ]
+    for name, rs in (("validation", val),):
+        for label, t in (("bring model", None), ("with their six", term)):
+            ll = hit = 0.0
+            for mine, theirs, four in rs:
+                odds = base(mine)
+                if t is not None:
+                    odds = t.adjust(odds, mine, theirs)
+                sets = set_chances(odds, ())
+                ll += math.log(max(sets.get(four, 0.0), 1e-12))
+                hit += max(sets, key=sets.get) == four
+            n = max(1, len(rs))
+            lines.append(
+                f"{name} ({len(rs)} sides): {label}: mean log chance of the four "
+                f"brought {ll / n:.3f}; likeliest four right {hit / n:.1%}"
+            )
+    text = "\n".join(lines) + "\n"
+    print(text)
+    a.out.with_suffix(".txt").write_text(text, encoding="utf-8")
+
+
 def examples_from_logs(
     logs: Iterable[tuple[str, str]], splits: dict[str, str]
 ) -> dict[str, list[Example]]:
@@ -298,7 +459,17 @@ def main() -> None:
     p.add_argument("--logs", type=Path, default=Path("logs_sets"))
     p.add_argument("--splits", type=Path, default=Path("splits.json"))
     p.add_argument("--out", type=Path, default=Path("models_v4") / "bring.json")
+    p.add_argument(
+        "--matchup",
+        action="store_true",
+        help="the term for the opponent's six (Week 17), saved at --out, beside "
+        "the format's bring.json",
+    )
+    p.add_argument("--format", default="regmc", help="with --matchup: the format")
     a = p.parse_args()
+    if a.matchup:
+        main_matchup(a)
+        return
     splits = json.loads(a.splits.read_text(encoding="utf-8"))["games"]
     ex = examples_from_logs(_iter_logs(a.logs), splits)
     model = fit(ex["train"])
