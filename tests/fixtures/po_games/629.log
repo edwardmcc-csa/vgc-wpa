@@ -1,0 +1,278 @@
+|init|battle
+|title|PO vs. WPA Bot
+|j|☆PO
+|j|☆WPA Bot
+|t:|1794981518
+|gametype|doubles
+|player|p1|PO|102|
+|player|p2|WPA Bot|265|
+|gen|9
+|tier|[Gen 9 Champions] VGC 2026 Reg M-C
+|rule|Species Clause: Limit one of each Pokemon
+|rule|Item Clause: Limit 1 of each item
+|clearpoke
+|poke|p1|Raichu, L50, F|
+|poke|p1|Golisopod, L50, F|
+|poke|p1|Basculegion-F, L50, F|
+|poke|p1|Archaludon, L50, F|
+|poke|p1|Pelipper, L50, F|
+|poke|p1|Sneasler, L50, F|
+|poke|p2|Charizard, L50, M|
+|poke|p2|Sneasler, L50, F|
+|poke|p2|Salamence, L50, M|
+|poke|p2|Kingambit, L50, F|
+|poke|p2|Basculegion, L50, M|
+|poke|p2|Whimsicott, L50, F|
+|teampreview|4
+|showteam|p2|Charizard||CharizarditeY|Blaze|HeatWave,WeatherBall,SolarBeam,Protect|Modest|2,0,0,32,0,32|M|||50|]Sneasler||WhiteHerb|Unburden|GunkShot,CloseCombat,RockSlide,Protect|Adamant|2,32,0,0,0,32|F|||50|]Salamence||Salamencite|Intimidate|HyperVoice,DracoMeteor,Flamethrower,Protect|Modest|2,0,0,32,0,32|M|||50|]Kingambit||ChopleBerry|Defiant|KowtowCleave,SuckerPunch,LowKick,IronHead|Adamant|32,31,0,0,2,1|F|||50|]Basculegion||LifeOrb|Adaptability|WaveCrash,LastRespects,AquaJet,Protect|Jolly|2,32,0,0,0,32|M|||50|]Whimsicott||FocusSash|Prankster|Moonblast,Tailwind,Encore,Protect|Timid|2,0,0,32,0,32|F|||50|
+|showteam|p1|Raichu|||||||F|||50|]Golisopod|||||||F|||50|]Basculegion-F|||||||F|||50|]Archaludon|||||||F|||50|]Pelipper|||||||F|||50|]Sneasler|||||||F|||50|
+|
+|t:|1794981553
+|teamsize|p1|4
+|teamsize|p2|4
+|start
+|switch|p1a: Basculegion|Basculegion-F, L50, F|100/100
+|switch|p1b: Raichu|Raichu, L50, F|100/100
+|switch|p2a: Salamence|Salamence, L50, M|100/100
+|switch|p2b: Kingambit|Kingambit, L50, F|100/100
+|-ability|p2a: Salamence|Intimidate|boost
+|-unboost|p1a: Basculegion|atk|1
+|-unboost|p1b: Raichu|atk|1
+|turn|1
+|
+|t:|1794981596
+|detailschange|p1b: Raichu|Raichu-Mega-X, L50, F
+|-mega|p1b: Raichu|Raichu|Raichunite X
+|-fieldstart|move: Electric Terrain|[from] ability: Electric Surge|[of] p1b: Raichu
+|detailschange|p2a: Salamence|Salamence-Mega, L50, M
+|-mega|p2a: Salamence|Salamence|Salamencite
+|move|p1b: Raichu|Fake Out|p2b: Kingambit
+|-resisted|p2b: Kingambit|1
+|-damage|p2b: Kingambit|97/100
+|move|p2a: Salamence|Hyper Voice|p1b: Raichu|[spread] p1a,p1b
+|-resisted|p1b: Raichu|1
+|-damage|p1a: Basculegion|53/100
+|-damage|p1b: Raichu|74/100
+|move|p1a: Basculegion|Ice Beam|p2a: Salamence
+|-supereffective|p2a: Salamence|2
+|-damage|p2a: Salamence|0 fnt
+|faint|p2a: Salamence
+|cant|p2b: Kingambit|flinch
+|
+|upkeep
+|
+|t:|1794981596
+|switch|p2a: Basculegion|Basculegion, L50, M|100/100
+|turn|2
+|
+|t:|1794981635
+|switch|p1a: Archaludon|Archaludon, L50, F|100/100
+|move|p2a: Basculegion|Aqua Jet|p1b: Raichu
+|-damage|p1b: Raichu|33/100
+|-damage|p2a: Basculegion|90/100|[from] item: Life Orb
+|move|p2b: Kingambit|Sucker Punch|p1b: Raichu
+|-damage|p1b: Raichu|0 fnt
+|faint|p1b: Raichu
+|
+|upkeep
+|
+|t:|1794981646
+|switch|p1b: Pelipper|Pelipper, L50, F|100/100
+|-weather|RainDance|[from] ability: Drizzle|[of] p1b: Pelipper
+|turn|3
+|
+|t:|1794981687
+|move|p2a: Basculegion|Last Respects|p1b: Pelipper
+|-damage|p1b: Pelipper|29/100
+|-damage|p2a: Basculegion|80/100|[from] item: Life Orb
+|move|p1a: Archaludon|Electro Shot||[still]
+|-prepare|p1a: Archaludon|Electro Shot
+|-boost|p1a: Archaludon|spa|1
+|-anim|p1a: Archaludon|Electro Shot|p2a: Basculegion
+|-supereffective|p2a: Basculegion|1
+|-damage|p2a: Basculegion|0 fnt
+|faint|p2a: Basculegion
+|move|p1b: Pelipper|Weather Ball|p2b: Kingambit
+|-damage|p2b: Kingambit|46/100
+|move|p2b: Kingambit|Kowtow Cleave|p1b: Pelipper
+|-damage|p1b: Pelipper|0 fnt
+|faint|p1b: Pelipper
+|
+|-weather|RainDance|[upkeep]
+|upkeep
+|
+|t:|1794981703
+|switch|p2a: Whimsicott|Whimsicott, L50, F|100/100
+|switch|p1b: Basculegion|Basculegion-F, L50, F|53/100
+|turn|4
+|
+|t:|1794981740
+|move|p2a: Whimsicott|Tailwind|p2a: Whimsicott
+|-sidestart|p2: WPA Bot|move: Tailwind
+|move|p2b: Kingambit|Sucker Punch|p1b: Basculegion
+|-supereffective|p1b: Basculegion|1
+|-damage|p1b: Basculegion|0 fnt
+|faint|p1b: Basculegion
+|move|p1a: Archaludon|Electro Shot||[still]
+|-prepare|p1a: Archaludon|Electro Shot
+|-boost|p1a: Archaludon|spa|1
+|-anim|p1a: Archaludon|Electro Shot|p2b: Kingambit
+|-damage|p2b: Kingambit|0 fnt
+|faint|p2b: Kingambit
+|
+|-weather|RainDance|[upkeep]
+|upkeep
+|turn|5
+|
+|t:|1794981814
+|move|p2a: Whimsicott|Protect|p2a: Whimsicott
+|-singleturn|p2a: Whimsicott|Protect
+|move|p1a: Archaludon|Electro Shot||[still]
+|-prepare|p1a: Archaludon|Electro Shot
+|-boost|p1a: Archaludon|spa|1
+|-anim|p1a: Archaludon|Electro Shot|p2a: Whimsicott
+|-activate|p2a: Whimsicott|move: Protect
+|
+|-weather|RainDance|[upkeep]
+|-fieldend|move: Electric Terrain
+|upkeep
+|turn|6
+|
+|t:|1794981823
+|move|p2a: Whimsicott|Moonblast|p1a: Archaludon
+|-damage|p1a: Archaludon|64/100
+|-ability|p1a: Archaludon|Stamina|boost
+|-boost|p1a: Archaludon|def|1
+|move|p1a: Archaludon|Electro Shot||[still]
+|-prepare|p1a: Archaludon|Electro Shot
+|-boost|p1a: Archaludon|spa|1
+|-anim|p1a: Archaludon|Electro Shot|p2a: Whimsicott
+|-resisted|p2a: Whimsicott|1
+|-enditem|p2a: Whimsicott|Focus Sash
+|-damage|p2a: Whimsicott|1/100
+|
+|-weather|RainDance|[upkeep]
+|-heal|p1a: Archaludon|70/100|[from] item: Leftovers
+|upkeep
+|turn|7
+|
+|t:|1794981857
+|move|p2a: Whimsicott|Protect|p2a: Whimsicott
+|-singleturn|p2a: Whimsicott|Protect
+|move|p1a: Archaludon|Protect||[still]
+|-fail|p1a: Archaludon
+|
+|-weather|RainDance|[upkeep]
+|-heal|p1a: Archaludon|76/100|[from] item: Leftovers
+|-sideend|p2: WPA Bot|move: Tailwind
+|upkeep
+|turn|8
+|
+|t:|1794981864
+|move|p1a: Archaludon|Protect|p1a: Archaludon
+|-singleturn|p1a: Archaludon|Protect
+|move|p2a: Whimsicott|Encore|p1a: Archaludon
+|-activate|p1a: Archaludon|move: Protect
+|
+|-weather|RainDance|[upkeep]
+|-heal|p1a: Archaludon|82/100|[from] item: Leftovers
+|upkeep
+|turn|9
+|
+|t:|1794981889
+|move|p1a: Archaludon|Protect||[still]
+|-fail|p1a: Archaludon
+|move|p2a: Whimsicott|Encore|p1a: Archaludon
+|-start|p1a: Archaludon|Encore
+|
+|-weather|RainDance|[upkeep]
+|-heal|p1a: Archaludon|88/100|[from] item: Leftovers
+|upkeep
+|turn|10
+|
+|t:|1794981895
+|move|p1a: Archaludon|Protect|p1a: Archaludon
+|-singleturn|p1a: Archaludon|Protect
+|move|p2a: Whimsicott|Moonblast|p1a: Archaludon
+|-activate|p1a: Archaludon|move: Protect
+|
+|-weather|none
+|-heal|p1a: Archaludon|94/100|[from] item: Leftovers
+|upkeep
+|turn|11
+|
+|t:|1794981902
+|move|p1a: Archaludon|Protect||[still]
+|-fail|p1a: Archaludon
+|move|p2a: Whimsicott|Moonblast|p1a: Archaludon
+|-damage|p1a: Archaludon|64/100
+|-ability|p1a: Archaludon|Stamina|boost
+|-boost|p1a: Archaludon|def|1
+|
+|-heal|p1a: Archaludon|70/100|[from] item: Leftovers
+|upkeep
+|turn|12
+|
+|t:|1794981910
+|move|p1a: Archaludon|Protect|p1a: Archaludon
+|-singleturn|p1a: Archaludon|Protect
+|move|p2a: Whimsicott|Moonblast|p1a: Archaludon
+|-activate|p1a: Archaludon|move: Protect
+|
+|-heal|p1a: Archaludon|76/100|[from] item: Leftovers
+|-end|p1a: Archaludon|Encore
+|upkeep
+|turn|13
+|
+|t:|1794981917
+|move|p2a: Whimsicott|Encore|p1a: Archaludon
+|-start|p1a: Archaludon|Encore
+|move|p1a: Archaludon|Protect||[still]
+|-fail|p1a: Archaludon
+|
+|-heal|p1a: Archaludon|82/100|[from] item: Leftovers
+|upkeep
+|turn|14
+|
+|t:|1794981923
+|move|p1a: Archaludon|Protect|p1a: Archaludon
+|-singleturn|p1a: Archaludon|Protect
+|move|p2a: Whimsicott|Moonblast|p1a: Archaludon
+|-activate|p1a: Archaludon|move: Protect
+|
+|-heal|p1a: Archaludon|88/100|[from] item: Leftovers
+|-end|p1a: Archaludon|Encore
+|upkeep
+|turn|15
+|
+|t:|1794981935
+|move|p2a: Whimsicott|Encore||[still]
+|-fail|p2a: Whimsicott
+|move|p1a: Archaludon|Electro Shot||[still]
+|-prepare|p1a: Archaludon|Electro Shot
+|-boost|p1a: Archaludon|spa|1
+|
+|-heal|p1a: Archaludon|94/100|[from] item: Leftovers
+|upkeep
+|turn|16
+|
+|t:|1794982019
+|move|p2a: Whimsicott|Protect|p2a: Whimsicott
+|-singleturn|p2a: Whimsicott|Protect
+|move|p1a: Archaludon|Electro Shot|p2a: Whimsicott|[from] lockedmove
+|-activate|p2a: Whimsicott|move: Protect
+|
+|-heal|p1a: Archaludon|100/100|[from] item: Leftovers
+|upkeep
+|turn|17
+|
+|t:|1794982027
+|move|p2a: Whimsicott|Tailwind|p2a: Whimsicott
+|-sidestart|p2: WPA Bot|move: Tailwind
+|move|p1a: Archaludon|Snarl|p2a: Whimsicott
+|-resisted|p2a: Whimsicott|1
+|-damage|p2a: Whimsicott|0 fnt
+|faint|p2a: Whimsicott
+|
+|win|PO
+|deinit

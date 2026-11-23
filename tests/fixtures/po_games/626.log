@@ -1,0 +1,187 @@
+|init|battle
+|title|PO vs. WPA Bot
+|j|☆PO
+|j|☆WPA Bot
+|t:|1794979824
+|gametype|doubles
+|player|p1|PO|102|
+|player|p2|WPA Bot|265|
+|gen|9
+|tier|[Gen 9 Champions] VGC 2026 Reg M-C
+|rule|Species Clause: Limit one of each Pokemon
+|rule|Item Clause: Limit 1 of each item
+|clearpoke
+|poke|p1|Raichu, L50, F|
+|poke|p1|Golisopod, L50, M|
+|poke|p1|Basculegion-F, L50, F|
+|poke|p1|Archaludon, L50, M|
+|poke|p1|Pelipper, L50, F|
+|poke|p1|Sneasler, L50, M|
+|poke|p2|Sneasler, L50, M|
+|poke|p2|Archaludon, L50, F|
+|poke|p2|Basculegion, L50, M|
+|poke|p2|Salamence, L50, M|
+|poke|p2|Froslass, L50, F|
+|poke|p2|Kingambit, L50, M|
+|teampreview|4
+|showteam|p2|Sneasler||WhiteHerb|Unburden|CloseCombat,DireClaw,Protect,RockSlide|Adamant|2,32,0,0,0,32|M|||50|]Archaludon||SitrusBerry|Stamina|AuraSphere,DragonPulse,ElectroShot,Protect|Calm|31,0,1,2,30,2|F|||50|]Basculegion||FocusSash|Adaptability|AquaJet,LastRespects,Protect,WaveCrash|Adamant|2,32,0,0,0,32|M|||50|]Salamence||Salamencite|Intimidate|DracoMeteor,HyperVoice,Protect,Tailwind|Modest|2,0,0,32,0,32|M|||50|]Froslass||Froslassite|CursedBody|AuroraVeil,Blizzard,Protect,ShadowBall|Modest|2,0,0,32,0,32|F|||50|]Kingambit||BlackGlasses|Defiant|KowtowCleave,Protect,SuckerPunch,SwordsDance|Adamant|32,31,0,0,2,1|M|||50|
+|showteam|p1|Raichu|||||||F|||50|]Golisopod|||||||M|||50|]Basculegion-F|||||||F|||50|]Archaludon|||||||M|||50|]Pelipper|||||||F|||50|]Sneasler|||||||M|||50|
+|
+|t:|1794979892
+|teamsize|p1|4
+|teamsize|p2|4
+|start
+|switch|p1a: Archaludon|Archaludon, L50, M|100/100
+|switch|p1b: Raichu|Raichu, L50, F|100/100
+|switch|p2a: Sneasler|Sneasler, L50, M|100/100
+|switch|p2b: Kingambit|Kingambit, L50, M|100/100
+|turn|1
+|
+|t:|1794979935
+|move|p1b: Raichu|Fake Out|p2a: Sneasler
+|-damage|p2a: Sneasler|85/100
+|move|p2b: Kingambit|Sucker Punch||[still]
+|-fail|p2b: Kingambit
+|cant|p2a: Sneasler|flinch
+|move|p1a: Archaludon|Dragon Pulse|p2a: Sneasler
+|-damage|p2a: Sneasler|31/100
+|
+|upkeep
+|turn|2
+|
+|t:|1794979972
+|detailschange|p1b: Raichu|Raichu-Mega-X, L50, F
+|-mega|p1b: Raichu|Raichu|Raichunite X
+|-fieldstart|move: Electric Terrain|[from] ability: Electric Surge|[of] p1b: Raichu
+|move|p1b: Raichu|Volt Switch|p2a: Sneasler
+|-damage|p2a: Sneasler|0 fnt
+|faint|p2a: Sneasler
+|
+|t:|1794979979
+|switch|p1b: Pelipper|Pelipper, L50, F|100/100|[from] Volt Switch
+|-weather|RainDance|[from] ability: Drizzle|[of] p1b: Pelipper
+|move|p1a: Archaludon|Electro Shot||[still]
+|-prepare|p1a: Archaludon|Electro Shot
+|-boost|p1a: Archaludon|spa|1
+|-anim|p1a: Archaludon|Electro Shot|p2b: Kingambit
+|-damage|p2b: Kingambit|24/100
+|move|p2b: Kingambit|Kowtow Cleave|p1b: Pelipper
+|-damage|p1b: Pelipper|47/100
+|
+|-weather|RainDance|[upkeep]
+|upkeep
+|
+|t:|1794979979
+|switch|p2a: Basculegion|Basculegion, L50, M|100/100
+|turn|3
+|
+|t:|1794980000
+|switch|p2b: Archaludon|Archaludon, L50, F|100/100
+|move|p2a: Basculegion|Last Respects|p1b: Pelipper
+|-damage|p1b: Pelipper|0 fnt
+|faint|p1b: Pelipper
+|move|p1a: Archaludon|Electro Shot||[still]
+|-prepare|p1a: Archaludon|Electro Shot
+|-boost|p1a: Archaludon|spa|1
+|-anim|p1a: Archaludon|Electro Shot|p2a: Basculegion
+|-supereffective|p2a: Basculegion|1
+|-enditem|p2a: Basculegion|Focus Sash
+|-damage|p2a: Basculegion|1/100
+|
+|-weather|RainDance|[upkeep]
+|upkeep
+|
+|t:|1794980017
+|switch|p1b: Basculegion|Basculegion-F, L50, F|100/100
+|turn|4
+|
+|t:|1794980056
+|move|p1b: Basculegion|Protect|p1b: Basculegion
+|-singleturn|p1b: Basculegion|Protect
+|move|p2a: Basculegion|Protect|p2a: Basculegion
+|-singleturn|p2a: Basculegion|Protect
+|move|p2b: Archaludon|Electro Shot||[still]
+|-prepare|p2b: Archaludon|Electro Shot
+|-boost|p2b: Archaludon|spa|1
+|-anim|p2b: Archaludon|Electro Shot|p1b: Basculegion
+|-activate|p1b: Basculegion|move: Protect
+|move|p1a: Archaludon|Snarl|p2b: Archaludon|[spread] p2b
+|-activate|p2a: Basculegion|move: Protect
+|-damage|p2b: Archaludon|78/100
+|-unboost|p2b: Archaludon|spa|1
+|-ability|p2b: Archaludon|Stamina|boost
+|-boost|p2b: Archaludon|def|1
+|
+|-weather|RainDance|[upkeep]
+|upkeep
+|turn|5
+|
+|t:|1794980095
+|move|p2a: Basculegion|Aqua Jet|p1b: Basculegion
+|-resisted|p1b: Basculegion|1
+|-crit|p1b: Basculegion
+|-damage|p1b: Basculegion|61/100
+|move|p1b: Basculegion|Shadow Ball|p2a: Basculegion
+|-supereffective|p2a: Basculegion|1
+|-damage|p2a: Basculegion|0 fnt
+|faint|p2a: Basculegion
+|move|p2b: Archaludon|Electro Shot||[still]
+|-prepare|p2b: Archaludon|Electro Shot
+|-boost|p2b: Archaludon|spa|1
+|-anim|p2b: Archaludon|Electro Shot|p1b: Basculegion
+|-supereffective|p1b: Basculegion|1
+|-damage|p1b: Basculegion|0 fnt
+|faint|p1b: Basculegion
+|move|p1a: Archaludon|Dragon Pulse|p2b: Archaludon
+|-damage|p2b: Archaludon|14/100
+|-ability|p2b: Archaludon|Stamina|boost
+|-boost|p2b: Archaludon|def|1
+|-enditem|p2b: Archaludon|Sitrus Berry|[eat]
+|-heal|p2b: Archaludon|39/100|[from] item: Sitrus Berry
+|
+|-weather|RainDance|[upkeep]
+|upkeep
+|
+|t:|1794980113
+|switch|p2a: Kingambit|Kingambit, L50, M|24/100
+|switch|p1b: Raichu|Raichu-Mega-X, L50, F|100/100
+|turn|6
+|
+|t:|1794980137
+|move|p2a: Kingambit|Protect|p2a: Kingambit
+|-singleturn|p2a: Kingambit|Protect
+|move|p1b: Raichu|Fake Out|p2b: Archaludon
+|-resisted|p2b: Archaludon|1
+|-damage|p2b: Archaludon|37/100
+|-ability|p2b: Archaludon|Stamina|boost
+|-boost|p2b: Archaludon|def|1
+|cant|p2b: Archaludon|flinch
+|move|p1a: Archaludon|Electro Shot||[still]
+|-prepare|p1a: Archaludon|Electro Shot
+|-boost|p1a: Archaludon|spa|1
+|-anim|p1a: Archaludon|Electro Shot|p2a: Kingambit
+|-activate|p2a: Kingambit|move: Protect
+|
+|-weather|RainDance|[upkeep]
+|-fieldend|move: Electric Terrain
+|upkeep
+|turn|7
+|
+|t:|1794980163
+|move|p2a: Kingambit|Protect||[still]
+|-fail|p2a: Kingambit
+|move|p1b: Raichu|Volt Tackle|p2a: Kingambit
+|-damage|p2a: Kingambit|0 fnt
+|faint|p2a: Kingambit
+|-damage|p1b: Raichu|89/100|[from] Recoil
+|move|p2b: Archaludon|Electro Shot||[still]
+|-prepare|p2b: Archaludon|Electro Shot
+|-boost|p2b: Archaludon|spa|1
+|-anim|p2b: Archaludon|Electro Shot|p1b: Raichu
+|-resisted|p1b: Raichu|1
+|-damage|p1b: Raichu|52/100
+|move|p1a: Archaludon|Dragon Pulse|p2b: Archaludon
+|-damage|p2b: Archaludon|0 fnt
+|faint|p2b: Archaludon
+|
+|win|PO

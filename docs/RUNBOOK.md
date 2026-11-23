@@ -1791,6 +1791,53 @@ python -m wpa.play
 - Each game is kept in `battle_logs_bot\you\`, with the bot's own sheet.
   Close the window to stop.
 
+## 30. Week 17: on time every turn, the shortcuts, PP, team preview
+
+**What changed.**
+- **On time every turn.** The search looks at the clock between pairs, so a
+  turn takes about 36 seconds and never more than 45. With nothing valued
+  yet, the bot plays the likeliest play. If the advice has not answered 50
+  seconds into a turn, a legal choice is sent anyway ("Answered by the hard
+  limit" in the summary). A choice for a request that has passed is never
+  sent ("Dropped, their request passed"), so one late turn cannot put the bot
+  out of step.
+- **Shortcuts** (`wpa\shortcuts.py`). Fake Out and First Impression after a
+  Pokemon's first turn out are left out of the bot's search, for both sides.
+  Tailwind when the other side has one Pokemon left is valued last, and
+  loses a near tie (within a point of win chance) to any other play. The
+  other plays that rarely make sense (an attack into one's own partner,
+  status into a target that has one, Tailwind while one's own is up, a
+  weather move in that weather) are valued last only with `--value-last`.
+  `--no-shortcuts` turns them all off. The summary counts each.
+- **PP.** Each move's PP is counted; a move with none left is not offered,
+  and Encore fails on it. Champions gives Protect 8 PP.
+- **Team preview.** The back two are chosen against the opponent's six,
+  from `models_v4\<format>\bring_pairs.json` when the format has one. To
+  make it (under a minute):
+```
+python -m wpa.bring --matchup --logs logs_mc --format regmc --out models_v4\regmc\bring_pairs.json
+```
+- **A charge that goes off at once** (Electro Shot in rain) no longer leaves
+  the Pokemon "charging".
+- **Two places to fill and one Pokemon left:** the first place gets it.
+
+**The gate run** (`build\w17\w17_gate2.cmd`, then `w17_gate3.cmd`): the
+tests first, then the Showdown server, then 200 games against each
+opponent, into `reports\bot_w17\` and `battle_logs_bot\w17\`. Run the tests
+before the server starts: with a server up, the live-battle tests wait on
+it. The scripts check port 8000 and stop if a server is still open.
+```
+python -m wpa.matches --vs random --games 200 --workers 6 --out reports\bot_w17 --logs battle_logs_bot\w17
+python -m wpa.matches --vs random --summary --out reports\bot_w17 --logs battle_logs_bot\w17
+```
+`--vs nocuts` plays the bot against itself without the shortcuts (both
+sides think, so use 3 workers).
+
+**Your games as tests** (`tests\test_po_games.py`, about a minute): the
+turns you named that the engine must get right, from two of your games
+(your name taken out). The turn-1 Fake Out case is marked as expected to
+fail until the opponent model's Fake Out reading is fixed.
+
 ---
 
 ## If something goes wrong
