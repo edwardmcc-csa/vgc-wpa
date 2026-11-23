@@ -1840,6 +1840,31 @@ fail until the opponent model's Fake Out reading is fixed.
 
 ---
 
+## 31. Week 18: choosing the bot's team, and the recharge
+
+**Choosing the team** (Phase 4; on Reg M-C now as a dry run). Each candidate
+is one run: the bot always plays the pool's team N, and the engine itself
+plays the other side (the same strength, so the team is what differs),
+against each of the pool's 40 teams in turn. 80 games is each team twice.
+The table ranks the candidates by win rate, with 95% intervals.
+```
+python -m wpa.matches --vs engine --team 14 --games 80 --workers 3 --out reports\team_w18 --logs battle_logs_bot\w18
+python -m wpa.matches --vs engine --table --out reports\team_w18
+```
+`build\w18\w18_teams.cmd` runs the tests, starts the server and plays the
+eight candidates (pool teams 14, 40, 12, 31, 28, 11, 2 and 3), about 1.5
+hours each; it is safe to stop and run again. `--vs engine --team N
+--summary` gives one candidate's full summary. For another regulation, add
+`--format regmd` (with that regulation's server, pool and models).
+`build\w18\team_candidates.py` lists the pool's teams by how often 1500+
+players won with them.
+
+**A Pokemon that must recharge** (after Hyper Beam) now has one choice, the
+recharge, as Showdown allows; the search no longer spends its time on moves
+it cannot make.
+
+---
+
 ## If something goes wrong
 
 **`pip install -e ".[dev]"` fails because of `open-spiel`.**
