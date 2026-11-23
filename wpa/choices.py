@@ -466,11 +466,16 @@ def replacement_options(
 ) -> dict[int, list[Action]]:
     """For each slot to fill (by the fainted Pokemon's sheet position), a switch
     to each Pokemon that could come in. `brought`: the side's four, where known.
-    With fewer Pokemon left than slots, only the slots filled are offered."""
+    With fewer Pokemon left than slots, only the slots filled are offered: in a
+    log, those it shows; live (nothing taken yet, Week 17), the first ones, and
+    the rest pass."""
     pool = [j for j in r.bench if brought is None or j in brought]
     if not pool:
         return {}
-    slots = r.slots if len(pool) >= len(r.slots) else sorted(r.taken)
+    if len(pool) >= len(r.slots):
+        slots = r.slots
+    else:
+        slots = sorted(r.taken) if r.taken else r.slots[: len(pool)]
     return {i: [Action(i, "switch", switch_to=j) for j in pool] for i in slots}
 
 

@@ -70,6 +70,20 @@ def test_the_replacements_the_log_shows():
     assert Action(1, "switch", switch_to=3) in opts[1] and len(opts[1]) == 4
 
 
+def test_two_places_to_fill_and_one_pokemon_left():
+    """Week 17: both Pokemon fall and one is left to send in. Live (nothing
+    taken yet) one place gets the switch-ins and the other passes; it was
+    offered nothing, and the advice failed ("no Pokemon to send in") 75 times
+    in the gate's 1,000 games."""
+    r = C.Replacement(2, "p1", [{}] * 6, [{}] * 6, [1, 2], {}, [3])
+    assert C.replacement_options(r) == {1: [Action(1, "switch", switch_to=3)]}
+    # in a log, the place the player filled
+    r = C.Replacement(2, "p1", [{}] * 6, [{}] * 6, [1, 2], {2: 3}, [3])
+    assert C.replacement_options(r) == {2: [Action(2, "switch", switch_to=3)]}
+    r = C.Replacement(2, "p1", [{}] * 6, [{}] * 6, [1, 2], {}, [3, 4])
+    assert set(C.replacement_options(r)) == {1, 2}
+
+
 # --- the board after a forced switch, and its split -------------------------
 
 ROOT = __import__("pathlib").Path(__file__).resolve().parent.parent
