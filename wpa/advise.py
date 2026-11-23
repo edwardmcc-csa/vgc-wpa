@@ -557,6 +557,7 @@ def advise(
     own_four: set[int] | None = None,
     stop: Callable[[], bool] | None = None,
     shortcuts: bool = False,
+    value_last: bool = False,
 ) -> Advice:
     """The advice at the start of the last turn the log reaches (`up_to_turn`).
     `own_four`: the four the player brought, when known (the log shows only
@@ -564,13 +565,14 @@ def advise(
     search goes the likeliest plays first and ends when it says the time is up
     (`strong_within`, `rank_within`); the typical choice is not valued.
     `shortcuts` (the bot, Week 17): plays that cannot work left out on both
-    sides, plays that rarely make sense valued last (`wpa.shortcuts`)."""
+    sides (`wpa.shortcuts`); `value_last` as well: plays that rarely make
+    sense valued last (off since the head-to-head of 21 Nov, the PO's call)."""
     tools = _own(tools, fmt, log)  # own models (Week 15); by rating (rev 15)
     from wpa import attribution as A
 
     other = "p2" if role == "p1" else "p1"
     fired: Counter | None = Counter() if shortcuts else None
-    lasts: set | None = set() if shortcuts else None
+    lasts: set | None = set() if shortcuts and value_last else None
     pt, tv, turn, full, plain, kept = _turn_mixes(
         tag, log, fmt, tools, role, own_four, fired, lasts
     )

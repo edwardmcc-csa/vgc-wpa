@@ -468,6 +468,7 @@ async def _play_bot(
                 start_timer_on_battle_start=not a.untimed,
                 timed=not a.untimed,
                 shortcuts=not a.no_shortcuts,
+                value_last=a.value_last,
                 log_level=40,
             )
         else:
@@ -544,6 +545,11 @@ def parser() -> argparse.ArgumentParser:
         "--no-shortcuts",
         action="store_true",
         help="the bot without the move-list shortcuts (Week 17, Task 2)",
+    )
+    p.add_argument(
+        "--value-last",
+        action="store_true",
+        help="the bot values rare plays last too (off since 22 Nov)",
     )
     p.add_argument(
         "--untimed",

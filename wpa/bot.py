@@ -477,8 +477,9 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
     time it had and the clock left, how many plays were compared, valued
     against every reply and against the likeliest only, whether the time ran
     out, and why the choice sent is not exactly the engine's (empty when it
-    is). `shortcuts` (Week 17): the move-list shortcuts on (`wpa.shortcuts`);
-    each turn's record counts the plays they left out and valued last."""
+    is). `shortcuts` (Week 17): plays that cannot work left out
+    (`wpa.shortcuts`); `value_last`: rare plays valued last too (off by
+    default, the PO's call of 22 Nov). Each turn's record counts both."""
 
     def __init__(
         self,
@@ -489,6 +490,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         records=None,
         timed: bool = True,
         shortcuts: bool = True,
+        value_last: bool = False,
         **kw,
     ):
         kw.setdefault("battle_format", f"gen9championsvgc2026{fmt}")
@@ -497,6 +499,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         self.tools, self.fmt, self.paste = tools, fmt, paste_from_packed(packed)
         self.timed = timed
         self.shortcuts = shortcuts  # the move-list shortcuts (Week 17, Task 2)
+        self.value_last = value_last  # their value-last order: off (22 Nov)
         self.records: list[dict] = records if records is not None else []
         self.lines: dict[str, list[str]] = {}
         self.idents: dict[str, list[str]] = {}
@@ -606,6 +609,7 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
                     self.four.get(tag),
                     stop=stop,
                     shortcuts=self.shortcuts,
+                    value_last=self.value_last,
                 )
             elif kind == "replacement":
                 adv = advise_replacement(

@@ -166,3 +166,21 @@ def test_plays_valued_last_are_searched_last_whatever_their_odds():
     asked = list(dict.fromkeys(j for batch in c.pairs for j, _y2 in batch))
     assert likeliest not in asked  # left for last
     assert got.ranked[-1][0] == likeliest  # not valued: at the end, still listed
+
+
+def test_the_bot_keeps_only_the_late_fake_out_removal_by_default():
+    """The PO, 22 Nov, after the head-to-head (93 of 200, 40% to 53%): keep
+    the removal of plays that cannot work; the order that values some plays
+    last is off unless asked for (`--value-last`)."""
+    import inspect
+
+    from wpa import advise as AD
+    from wpa import matches as M
+    from wpa.bot import EngineBot
+
+    bot = inspect.signature(EngineBot.__init__).parameters
+    assert bot["shortcuts"].default is True
+    assert bot["value_last"].default is False
+    assert inspect.signature(AD.advise).parameters["value_last"].default is False
+    assert M.parser().parse_args(["--vs", "random"]).value_last is False
+    assert M.parser().parse_args(["--vs", "random", "--value-last"]).value_last
