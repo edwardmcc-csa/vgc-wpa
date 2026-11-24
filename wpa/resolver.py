@@ -607,6 +607,11 @@ def _mon_key(st: Mapping) -> tuple:
     )
 
 
+class Stopped(Exception):
+    """A resolve given up part way: its time was up (`Resolver.resolve`'s
+    `stop`, Week 18)."""
+
+
 class Resolver:
     """One game's resolver: the format's data, the calculator, both sheets and
     each Pokemon's spread, keyed (role, sheet position from 0)."""
@@ -750,7 +755,11 @@ class Resolver:
         sides: Mapping[str, Sequence[Mapping]],
         fld: Field,
         actions: Mapping[str, Sequence[Action]],
+        stop: Callable[[], bool] | None = None,
     ) -> list[Outcome]:
+        """Every board the turn can end on, with its chance. `stop` (Week 18):
+        looked at as the boards are worked out; once it says so, `Stopped` is
+        raised and nothing is returned (one pair can take many seconds)."""
         self.coarsest = self.resolution or 0.0
         self._pending = {
             (r, a.user): a.move
@@ -807,10 +816,14 @@ class Resolver:
                     for rest, branch in groups.items():
                         if not rest:
                             for b in branch:
+                                if stop is not None and stop():
+                                    raise Stopped
                                 end.add([b] if b.winner else self._end_of_turn(b))
                             continue
                         (role, act), tail = rest[0], rest[1:]
                         for b in branch:
+                            if stop is not None and stop():
+                                raise Stopped
                             sig = self._speed_sig(b)
                             for x in self._act(b, role, act):
                                 if x.winner is not None:

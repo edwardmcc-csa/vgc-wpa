@@ -830,6 +830,11 @@ def measure_values(a) -> tuple[float, ...]:
 # --------------------------------------------------------------------------
 
 
+# Week 18: boards valued by the model in one go (it is far quicker on a large
+# batch than on many small ones; between parts the clock can be looked at)
+BOARDS_AT_ONCE = 256
+
+
 class TurnValues:
     """E[WP | p1's choice, p2's choice] from p1's side at one turn: every board
     the resolver gives, valued by `board_wp` (a list of outcomes in, p1's win
@@ -852,26 +857,52 @@ class TurnValues:
         batch (the model is far quicker on one large batch than many small).
         `stop` (within a time, Week 17): looked at between pairs; once it says
         the time is up, the pairs resolved so far are valued and the rest left.
-        True when every pair was valued."""
+        True when every pair was valued. `stop.hard`, if it has one (Week 18):
+        looked at inside each pair as it is resolved, since one pair can take
+        many seconds; a pair cut short is left unvalued with the rest."""
+        from wpa.resolver import Stopped
+
         todo = [k for k in dict.fromkeys(pairs) if k not in self._value]
         if not todo:
             return True
         got = {}
         whole = True
+        hard = getattr(stop, "hard", None)
+        more = {} if hard is None else {"stop": hard}
         for p1, p2 in todo:
             if got and stop is not None and stop():
                 whole = False
                 break
-            got[(p1, p2)] = self.resolver.resolve(
-                copy.deepcopy(dict(self.sides)),
-                copy.deepcopy(self.fld),
-                {"p1": p1, "p2": p2},
-            )
+            try:
+                got[(p1, p2)] = self.resolver.resolve(
+                    copy.deepcopy(dict(self.sides)),
+                    copy.deepcopy(self.fld),
+                    {"p1": p1, "p2": p2},
+                    **more,
+                )
+            except Stopped:
+                whole = False
+                break
         todo = [k for k in todo if k in got]
         empty = [k for k in todo if not got[k]]
         if empty:
             raise ValueError(f"the resolver gave no boards for {empty[0]}")
-        flat = [o for k in todo for o in got[k]]
+        # valued in parts of about BOARDS_AT_ONCE boards (Week 18): after a
+        # long resolve, a thousand boards took seconds more; between parts the
+        # hard stop is looked at, and pairs not yet valued are left
+        part: list = []
+        for n, k in enumerate(todo):
+            part.append(k)
+            if n + 1 < len(todo) and sum(len(got[x]) for x in part) < BOARDS_AT_ONCE:
+                continue
+            self._value_part(part, got)
+            part = []
+            if n + 1 < len(todo) and hard is not None and hard():
+                return False
+        return whole
+
+    def _value_part(self, keys: Sequence[tuple[Joint, Joint]], got: Mapping) -> None:
+        flat = [o for k in keys for o in got[k]]
         # a board where the game ended is worth its result; the rest, the model
         need = [o for o in flat if getattr(o, "winner", None) is None]
         rest = iter(np.asarray(self.board_wp(need), dtype=float) if need else ())
@@ -885,14 +916,13 @@ class TurnValues:
             dtype=float,
         )
         i = 0
-        for k in todo:
+        for k in keys:
             outs = got[k]
             ps = np.array([o.prob for o in outs], dtype=float)
             w = wps[i : i + len(outs)]
             i += len(outs)
             self.outcomes[k] = outs
             self._value[k] = float((ps * w).sum() / ps.sum())
-        return whole
 
     def __call__(self, p1: Joint, p2: Joint) -> float:
         if (p1, p2) not in self._value:

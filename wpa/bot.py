@@ -393,6 +393,10 @@ class Deadline:
         self.last = now
         return now + 1.5 * self.longest > self.end
 
+    def over(self) -> bool:
+        """The time is up (Week 18: looked at inside a step; no count kept)."""
+        return self.clock() > self.end
+
 
 HARD_LIMIT = 50  # Week 17: a legal choice by then, whatever the advice is doing
 
@@ -594,6 +598,9 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
 
             def stop() -> bool:  # the time is up, or the request has passed
                 return deadline() or not self._live(tag, token, battle)
+
+            # Week 18: inside one pair's resolve too (it can take many seconds)
+            stop.hard = lambda: deadline.over() or not self._live(tag, token, battle)
 
         try:
             log = with_sheets(live_log(lines, role), role, self.paste)
