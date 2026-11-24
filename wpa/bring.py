@@ -393,7 +393,7 @@ def main_matchup(a) -> None:
                     odds = t.adjust(odds, mine, theirs)
                 sets = set_chances(odds, ())
                 ll += math.log(max(sets.get(four, 0.0), 1e-12))
-                hit += max(sets, key=sets.get) == four
+                hit += max(sets, key=lambda k: sets[k]) == four
             n = max(1, len(rs))
             lines.append(
                 f"{name} ({len(rs)} sides): {label}: mean log chance of the four "

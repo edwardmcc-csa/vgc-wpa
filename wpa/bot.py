@@ -24,7 +24,7 @@ import asyncio
 import random
 import re
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
 from wpa.advise import Pick
@@ -398,6 +398,20 @@ class Deadline:
         return self.clock() > self.end
 
 
+class _Stop:
+    """The search's stop: the time is up, or the request has passed. `hard`
+    (Week 18) is looked at inside a step, and keeps no count."""
+
+    def __init__(self, deadline: Deadline, live: Callable[[], bool]) -> None:
+        self.deadline, self.live = deadline, live
+
+    def __call__(self) -> bool:
+        return self.deadline() or not self.live()
+
+    def hard(self) -> bool:
+        return self.deadline.over() or not self.live()
+
+
 HARD_LIMIT = 50  # Week 17: a legal choice by then, whatever the advice is doing
 
 
@@ -592,15 +606,12 @@ class EngineBot(_player_base()):  # type: ignore[misc]  # pragma: no cover
         clock = self.clocks.setdefault(tag, Clock())
         left = clock.left(lines)
         budget = think_time(left) if self.timed else None
-        stop = None
+        stop: _Stop | None = None
         if budget:
-            deadline = Deadline(budget - (time.monotonic() - start))
-
-            def stop() -> bool:  # the time is up, or the request has passed
-                return deadline() or not self._live(tag, token, battle)
-
-            # Week 18: inside one pair's resolve too (it can take many seconds)
-            stop.hard = lambda: deadline.over() or not self._live(tag, token, battle)
+            stop = _Stop(
+                Deadline(budget - (time.monotonic() - start)),
+                lambda: self._live(tag, token, battle),
+            )
 
         try:
             log = with_sheets(live_log(lines, role), role, self.paste)

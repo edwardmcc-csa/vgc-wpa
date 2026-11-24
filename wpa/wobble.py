@@ -21,6 +21,7 @@ import argparse
 import json
 from argparse import Namespace
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -67,7 +68,7 @@ def wobble(preds: np.ndarray, table: Table) -> dict:
     levels = preds.std(axis=0, ddof=ddof) * 100
     a, b = _swing_pairs(table)
     swings = (preds[:, b] - preds[:, a]).std(axis=0, ddof=ddof) * 100
-    out = {"levels": levels, "swings": swings}
+    out: dict[str, Any] = {"levels": levels, "swings": swings}
     for name, v in (("level", levels), ("swing", swings)):
         out[f"{name}_median"] = float(np.median(v)) if len(v) else 0.0
         out[f"{name}_p90"] = float(np.percentile(v, 90)) if len(v) else 0.0

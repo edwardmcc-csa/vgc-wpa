@@ -110,7 +110,7 @@ def options(
             out[i] = [Action(i, "move", move="recharge")]
             continue
         ally = next((k for k in actives if k != i), None)
-        mega_ok =not side_megaed and not st.get("mega") and _has_own_stone(mon, dex)
+        mega_ok = not side_megaed and not st.get("mega") and _has_own_stone(mon, dex)
         acts: list[Action] = []
         moves, can_switch = _locked(mon, st, _usable_moves(mon, st, dex))
         # no status moves with an Assault Vest, or while taunted (unless that
