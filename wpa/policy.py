@@ -79,6 +79,11 @@ FIELD_MOVES = {
     "auroraveil": "auroraveil",
 }
 SMOOTH = 20.0
+# Week 18, Task 2: the choice model's ridge. 0.01 for every choice pulled the
+# weight of a rare play (Fake Out on a first turn out) towards zero: on Reg M-C
+# validation games it was expected 33% of the time and used 47%. At 1e-4 it is
+# expected 47%, and the mean log chance of the choice made rises -1.915 to -1.875.
+CHOICE_L2 = 1e-4
 
 
 class DamageInfo:
@@ -337,7 +342,7 @@ def rates_from_counts(
     return out
 
 
-def main() -> None:  # pragma: no cover - runs on the corpus
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Fit the opponent choice model (Week 9 Task 3)."
     )
@@ -373,7 +378,17 @@ def main() -> None:  # pragma: no cover - runs on the corpus
     )
     p.add_argument("--val-games", type=int, nargs="+", default=[1000, 400])
     p.add_argument("--out", type=Path, default=Path("models_v4/policy.json"))
-    a = p.parse_args()
+    p.add_argument(
+        "--l2",
+        type=float,
+        default=CHOICE_L2,
+        help="the ridge, for every choice (Week 18: 1e-4; it was 0.01)",
+    )
+    return p
+
+
+def main() -> None:  # pragma: no cover - runs on the corpus
+    a = parser().parse_args()
     from wpa.policy_data import collect
 
     collect(a)

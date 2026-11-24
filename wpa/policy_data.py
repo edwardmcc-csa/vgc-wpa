@@ -285,7 +285,10 @@ def collect(a) -> None:  # pragma: no cover - runs on the corpus
                     f"{split} {fmt}: {len(picked[split][fmt])} games, {len(g)} choices",
                     flush=True,
                 )
-    model = fit([g for f in mods for g in groups["train"][f]])
+    from wpa.policy import CHOICE_L2
+
+    l2 = getattr(a, "l2", CHOICE_L2)  # Week 18: the choice model's own ridge
+    model = fit([g for f in mods for g in groups["train"][f]], l2=l2)
     model.rates = rates
     a.out.parent.mkdir(parents=True, exist_ok=True)
     model.save(a.out)

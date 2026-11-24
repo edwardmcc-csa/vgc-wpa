@@ -141,3 +141,46 @@ def test_sharpness_keeps_the_order_and_concentrates_the_chance(tmp_path):
     back = P.PolicyModel.load(tmp_path / "p.json")
     assert back.sharpness == 1.7 and back.rates == m.rates
     assert P.PolicyModel(w).sharpness == 1.0
+
+
+def _rare_groups(seed: int = 1, n: int = 4000):
+    """A rare play (in 3% of choices, like Fake Out on a first turn out) that is
+    picked about half the time it is there."""
+    rng = np.random.default_rng(seed)
+    k = P.FEATURES.index("fakeout_first")
+    groups = []
+    for _ in range(n):
+        X = rng.normal(size=(5, len(P.FEATURES))) * 0.3
+        X[:, k] = 0.0
+        if rng.random() < 0.03:
+            X[0, k] = 1.0
+        logits = 1.0 * X[:, 0] + 4.0 * X[:, k]
+        p = np.exp(logits - logits.max())
+        p /= p.sum()
+        groups.append((X, int(rng.choice(5, p=p))))
+    return groups, k
+
+
+def _share(m, groups, k):
+    rare = [(X, c) for X, c in groups if X[:, k].any()]
+    expected = np.mean([m.chances(X)[0] for X, _c in rare])
+    used = np.mean([c == 0 for _X, c in rare])
+    return expected, used
+
+
+def test_the_choice_models_ridge_lets_a_rare_play_keep_its_chance():
+    """Week 18, Task 2: the opponent model expected Fake Out on a first turn
+    out 33% of the time where players used it 48%. The cause: the ridge, 0.01
+    for every choice, pulled a rare play's weight towards zero. The choice
+    model's own ridge (`CHOICE_L2`) is weak enough to keep it."""
+    groups, k = _rare_groups()
+    expected, used = _share(P.fit(groups, l2=P.CHOICE_L2), groups, k)
+    assert abs(expected - used) < 0.03
+    shrunk, _ = _share(P.fit(groups, l2=1e-2), groups, k)
+    assert shrunk < used - 0.08  # the old ridge: well under
+
+
+def test_the_choice_model_is_fitted_with_its_own_ridge_by_default():
+    a = P.parser().parse_args([])
+    assert a.l2 == P.CHOICE_L2 == 1e-4
+    assert P.parser().parse_args(["--l2", "0.01"]).l2 == 0.01

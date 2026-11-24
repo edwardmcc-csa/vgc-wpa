@@ -77,13 +77,15 @@ def test_629_turn_15_no_encore_on_a_move_with_no_pp(tools):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="the opponent model under-expects Fake Out on a first turn out "
-    "(Week 17: 33% expected, 48% used); to pass once that is fixed",
+    reason="the engine now expects the Fake Out (Week 18) but still values "
+    "attacking higher: what Sneasler surviving is worth shows only later",
 )
 def test_626_turn_1_sneasler_protects_against_the_fake_out(tools):
     """The 9:34 pm game, turn 1: the PO's Raichu Fake Outs Sneasler, which
-    needed to survive to Close Combat his Archaludon. Protect is the answer;
-    the engine attacks because it does not expect the Fake Out."""
+    needed to survive to Close Combat his Archaludon. Protect is the answer.
+    Week 17: the engine attacked, not expecting the Fake Out (7% among its
+    likeliest replies). Week 18, with the choice model's ridge fixed: it
+    expects it (55%), and still attacks (Protect 5th, 4 points behind)."""
     adv = _advice(tools, "626", 1)
     best = adv.choices[0][0]
     sneasler = 0  # the bot's sheet: Sneasler first
