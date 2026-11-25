@@ -457,7 +457,7 @@ async def answer_within(work, limit: float | None, fallback) -> tuple[Any, bool]
     task = asyncio.ensure_future(asyncio.to_thread(work))
     try:
         return await asyncio.wait_for(asyncio.shield(task), limit), False
-    except TimeoutError:
+    except asyncio.TimeoutError:  # the built-in TimeoutError only from Python 3.11
         return fallback(), True
 
 
