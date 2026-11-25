@@ -89,7 +89,18 @@ jobs:
           until curl --output /dev/null --silent --head --fail http://localhost:8100; do
             sleep 0.1
           done
+      - name: Cache the Champions Showdown node_modules
+        uses: actions/cache@v4
+        with:
+          path: pokemon-showdown-mc/node_modules
+          key: showdown-mc-${{ hashFiles('pokemon-showdown-mc/package-lock.json') }}
+          restore-keys: showdown-mc-
 
+      - name: Build the Champions Showdown
+        run: |
+          cd pokemon-showdown-mc
+          npm install
+          node build
       - name: Run integration tests
         env:
           VGC_WPA_SHOWDOWN_PORT: "8100"
