@@ -25,6 +25,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def tools():
+    pytest.importorskip("sklearn")  # the models' calibration (not on Python 3.10)
     from wpa import matches as M
 
     return M._tools()

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from wpa import evaluate as E
 from wpa import features as F
@@ -180,6 +181,7 @@ def test_selecting_every_column_in_order_keeps_the_same_array():
 
 
 def test_training_converts_the_table_to_float64_once(tmp_path):
+    pytest.importorskip("sklearn")  # not on Python 3.10 (pyproject)
     # sklearn converts to float64 on every warm-start step; converting once up
     # front avoids holding a float32 and a float64 copy of the whole table
     rows, _ = fixture_rows()
@@ -266,6 +268,7 @@ def test_every_feature_group_has_a_report_name():
 
 
 def test_a_one_sided_model_is_trained_saved_and_recorded(tmp_path):
+    pytest.importorskip("sklearn")  # not on Python 3.10 (pyproject)
     # Week 8 blank sheets: the two sides of a row know different things
     from argparse import Namespace
 

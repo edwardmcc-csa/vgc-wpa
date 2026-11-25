@@ -55,6 +55,7 @@ def test_higher_odds_mean_more_likely_and_the_set_chances_follow_the_odds():
 
 
 def test_a_model_learns_who_gets_brought_and_beats_the_uniform_guess():
+    pytest.importorskip("sklearn")  # not on Python 3.10 (pyproject)
     # species "ace" always brought, "dud" never; the rest at random
     import random
 
@@ -76,6 +77,7 @@ def test_a_model_learns_who_gets_brought_and_beats_the_uniform_guess():
 
 
 def test_last_games_four_count_in_game_two():
+    pytest.importorskip("sklearn")  # not on Python 3.10 (pyproject)
     import random
 
     rnd = random.Random(1)

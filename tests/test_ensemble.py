@@ -114,6 +114,7 @@ def test_the_noise_of_the_average_is_measured_from_its_two_halves():
 
 
 def test_the_split_uses_the_averaged_model_when_there_is_one(tmp_path):
+    pytest.importorskip("sklearn")  # not on Python 3.10 (pyproject)
     import json
 
     from wpa import attribution as A
