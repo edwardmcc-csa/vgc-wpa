@@ -97,3 +97,39 @@ def test_a_game_whose_opponent_stopped_is_left_out_of_the_table(tmp_path):
     rows[0]["inactive"] = "opponent"
     path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     assert "0 of 1 (0%" in M.round_robin(tmp_path, pool, "engine")
+
+
+# -- Week 18: the bot against itself with last week's choice model ---------
+
+
+def test_the_engine_before_this_weeks_models_is_an_opponent():
+    assert "before" in M.OPPONENTS and "before" in M.VS_CODE
+    assert len(set(M.VS_CODE.values())) == len(M.VS_CODE)
+    a = M.parser().parse_args(["--vs", "before"])
+    assert a.before == "models_v4/regmc_w17_backup"
+
+
+def test_tools_with_a_folders_choice_model_and_strength(tmp_path):
+    """The opponent's tools: the format's choice model and strength from the
+    folder (the backups kept before this week's refit); everything else, and
+    the bot's own tools, as they were."""
+    import json
+
+    from wpa import attribution as A
+    from wpa.policy import FEATURES, PolicyModel
+
+    PolicyModel([0.5] * len(FEATURES), {"regmc": {"fakeout": -1.0}}, 1.0).save(
+        tmp_path / "policy.json"
+    )
+    (tmp_path / "strength.json").write_text(
+        json.dumps({"strength": 9.6, "by_format": {"regmc": 9.6}}), encoding="utf-8"
+    )
+    now = PolicyModel([0.0] * len(FEATURES), {}, 1.0)
+    tools = A.Tools({}, {}, {}, None, None, None, None, {})
+    tools.by_format = {"regmc": {"policy": now, "strength": 10.0, "bring": "b"}}
+    old = M.with_models(tools, "regmc", tmp_path)
+    assert old.by_format["regmc"]["strength"] == 9.6
+    assert list(old.by_format["regmc"]["policy"].weights) == [0.5] * len(FEATURES)
+    assert old.by_format["regmc"]["bring"] == "b"
+    assert tools.by_format["regmc"]["strength"] == 10.0  # the bot's, untouched
+    assert tools.by_format["regmc"]["policy"] is now

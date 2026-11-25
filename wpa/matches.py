@@ -45,6 +45,8 @@ OPPONENTS = {
     "nocuts": "the same engine without the shortcuts",
     # Week 18, Task 5: the same strength on both sides, so the team is what differs
     "engine": "the engine itself",
+    # Week 18: the same engine with last week's choice model and strength
+    "before": "the engine with the earlier choice model and strength",
 }
 LIMITS = {"preview": 90, "turn": 55, "replacement": 55, "pivot": 55}
 VS_CODE = {
@@ -54,6 +56,7 @@ VS_CODE = {
     "engine0": 4,
     "nocuts": 5,
     "engine": 6,
+    "before": 7,
 }
 
 
@@ -448,6 +451,26 @@ def _tools():  # pragma: no cover - loads the models
     return A._tools(RP._options(ns))
 
 
+def with_models(tools, fmt: str, folder) -> object:
+    """`tools` with `fmt`'s choice model and strength from `folder` (its
+    policy.json and strength.json; Week 18: the backups kept before the
+    refit), and the rest as they were. `tools` itself is not changed."""
+    import dataclasses
+
+    from wpa.policy import PolicyModel
+
+    folder = Path(folder)
+    own = dict(tools.by_format.get(fmt, {}))
+    own["policy"] = PolicyModel.load(folder / "policy.json")
+    own["strength"] = float(
+        json.loads((folder / "strength.json").read_text(encoding="utf-8"))["strength"]
+    )
+    own.pop("rating_line", None)
+    old = dataclasses.replace(tools)
+    old.by_format = {**tools.by_format, fmt: own}
+    return old
+
+
 def run_name(a) -> str:
     """A run's folder: the opponent, "-untimed" for the measuring run, and
     "-team<N>" for a candidate's run (Week 18)."""
@@ -461,7 +484,9 @@ def _names(run: str, w: int) -> tuple[str, str]:
     return f"wpabot{run}w{w}", f"wpaopp{run}w{w}"
 
 
-def _opponent(vs: str, packed: str, name: str, port: int, w: int):  # pragma: no cover
+def _opponent(
+    vs: str, packed: str, name: str, port: int, w: int, before: str = ""
+):  # pragma: no cover
     from poke_env.player import RandomPlayer
     from poke_env.ps_client import AccountConfiguration
 
@@ -485,6 +510,8 @@ def _opponent(vs: str, packed: str, name: str, port: int, w: int):  # pragma: no
         return O.EngineBot(tools, packed, FMT, shortcuts=False, **kw)
     if vs == "engine":
         return O.EngineBot(tools, packed, FMT, **kw)
+    if vs == "before":
+        return O.EngineBot(with_models(tools, FMT, before), packed, FMT, **kw)
     return O.EngineBot(O.at_strength_zero(tools), packed, FMT, **kw)
 
 
@@ -504,7 +531,9 @@ async def _play_opponent(a, w: int, games, pool, done) -> None:  # pragma: no co
             continue
         packed = pool[theirs]["packed"]
         if player is None:
-            player = _opponent(a.vs, packed, opp_name, a.port, w)
+            player = _opponent(
+                a.vs, packed, opp_name, a.port, w, getattr(a, "before", "")
+            )
             # poke_env logs in on its own loop: its event is read, not awaited
             while not player.ps_client.logged_in.is_set():
                 await asyncio.sleep(0.2)
@@ -637,6 +666,12 @@ def parser() -> argparse.ArgumentParser:
         "--table",
         action="store_true",
         help="the candidates' win rates, from every --team run so far",
+    )
+    p.add_argument(
+        "--before",
+        default="models_v4/regmc_w17_backup",
+        help="for --vs before: the folder with the earlier policy.json and "
+        "strength.json (Week 18)",
     )
     p.add_argument(
         "--format",
