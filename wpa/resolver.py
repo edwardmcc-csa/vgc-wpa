@@ -510,6 +510,29 @@ class _World:
         )
 
 
+def _absorb(into: _World, w: _World) -> None:
+    """`w` merged into `into`, a board in the same cell of the grid: the chances
+    add, and each Pokemon's hit points become the chance-weighted mean of the
+    two (Week 18, the PO's call). The first board's were kept before: on the 5%
+    grid a hit's 16 rolls mostly share a cell, so a hit read as one roll, most
+    often the lowest. Pokemon are copied before they change, since boards can
+    share them."""
+    tot = into.p + w.p
+    if tot > 0:
+        sides = None
+        for r, ms in into.sides.items():
+            for i, (a, b) in enumerate(zip(ms, w.sides[r])):
+                if a is b or a["hp_fraction"] == b["hp_fraction"]:
+                    continue
+                if sides is None:
+                    sides = {k: list(v) for k, v in into.sides.items()}
+                hp = (a["hp_fraction"] * into.p + b["hp_fraction"] * w.p) / tot
+                sides[r][i] = dict(a, hp_fraction=hp)
+        if sides is not None:
+            into.sides = sides
+    into.p = tot
+
+
 def _merge(
     worlds: Sequence[_World],
     resolution: float | None,
@@ -517,7 +540,8 @@ def _merge(
     coarsen: int = 0,
 ) -> list[_World]:
     """Identical boards merged (hit points to `resolution`, if given, or to the
-    cap's grid `coarsen`); boards less likely than `prune` dropped (the caller
+    cap's grid `coarsen`; the merged board at their chance-weighted hit points,
+    `_absorb`); boards less likely than `prune` dropped (the caller
     renormalises)."""
     out: dict[tuple, _World] = {}
     for w in worlds:
@@ -525,7 +549,7 @@ def _merge(
             continue
         k = w.key(resolution, coarsen)
         if k in out:
-            out[k].p += w.p
+            _absorb(out[k], w)
         else:
             out[k] = w
     return list(out.values())
@@ -539,8 +563,9 @@ class _Pool:
     With a `cap`, the grid is coarsened as the pool grows, as `Resolver._capped`
     does at the end, and lands on the same grid with the same boards: the cap's
     grids nest, so merging on a grid and then on the next is merging on the next
-    (the first board in each cell is kept, the chances add), and a pool that is
-    over the cap on a grid means every board together is over it too."""
+    (the boards in each cell become one, at their chance-weighted hit points),
+    and a pool that is over the cap on a grid means every board together is over
+    it too."""
 
     def __init__(
         self, resolution: float | None, prune: float = 0.0, cap: int | None = None
@@ -559,7 +584,7 @@ class _Pool:
                 continue
             k = w.key(self.resolution, self.level)
             if k in out:
-                out[k].p += w.p
+                _absorb(out[k], w)
             else:
                 out[k] = w
         if self.cap is not None and len(out) > self.cap:
@@ -574,7 +599,7 @@ class _Pool:
             for w in self._out.values():
                 k = w.key(self.resolution, self.level)
                 if k in new:
-                    new[k].p += w.p
+                    _absorb(new[k], w)
                 else:
                     new[k] = w
             self._out = new
@@ -3173,7 +3198,9 @@ class Resolver:
         """The hit distribution with damage values that leave the target on the
         same hit points merged (on the `resolution` grid, if any): one board each
         instead of one per roll. Exact by default, since equal hit points are an
-        equal board."""
+        equal board. On the grid, a cell's damage is the chance-weighted mean of
+        its rolls (Week 18, the PO's call; it was the first roll, mostly the
+        lowest, so hits read low)."""
         t = w.sides[tgt[0]][tgt[1]]
         max_hp = self.max_hp(*tgt)
         hp = round(t["hp_fraction"] * max_hp)
@@ -3190,9 +3217,10 @@ class Resolver:
             frac = new / max_hp
             res = self.resolution
             key = (new == 0, round(frac / res) if res else new)
-            g = groups.setdefault(key, [0.0, dmg])
+            g = groups.setdefault(key, [0.0, 0.0, dmg])
             g[0] += pd
-        return [(p, dmg) for p, dmg in groups.values()]
+            g[1] += pd * dmg
+        return [(p, round(wd / p) if p > 0 else d0) for p, wd, d0 in groups.values()]
 
     def _absorbs(self, w: _World, role: str, a: Action, m: Mapping, tgt) -> str:
         """The target's ability that takes in this move (ABSORB), or "". Not

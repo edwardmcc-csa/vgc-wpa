@@ -7,7 +7,9 @@ held about 89,000 boards before the one merge at the end of the step and ran
 out of memory, in Week 9's code as in Week 10's. The pool must give exactly the
 boards, chances and grid that merging (and capping) at the end gives. For that,
 each coarser grid's cells are two whole cells of the one before (a turn under the
-cap is untouched): merging on one grid and then the next is merging on the next.
+cap is untouched): merging on one grid and then the next is merging on the next
+(since Week 18 a merged board is at its cell's chance-weighted hit points, the
+same however the cell's boards are grouped).
 """
 
 from __future__ import annotations
@@ -67,9 +69,17 @@ def _chunks(worlds: list, seed: int) -> list[list]:
 
 
 def _same(a: list, b: list) -> None:
+    """The same boards: hit points to 1e-12, since a merged board is at the
+    chance-weighted mean of its cell (Week 18), and merging in a different
+    order sums in a different order."""
     assert len(a) == len(b)
     for x, y in zip(a, b):
-        assert x.sides == y.sides  # the same board kept for each cell
+        for r in x.sides:
+            for m, n in zip(x.sides[r], y.sides[r]):
+                assert abs(m["hp_fraction"] - n["hp_fraction"]) < 1e-12
+                assert {k: v for k, v in m.items() if k != "hp_fraction"} == {
+                    k: v for k, v in n.items() if k != "hp_fraction"
+                }
         assert abs(x.p - y.p) < 1e-12
 
 
