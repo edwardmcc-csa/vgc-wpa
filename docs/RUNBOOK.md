@@ -1840,7 +1840,7 @@ fail until the opponent model's Fake Out reading is fixed.
 
 ---
 
-## 31. Week 18: choosing the bot's team, and the recharge
+## 31. Week 18: choosing the bot's team, the choice model's ridge, and damage
 
 **Choosing the team** (Phase 4; on Reg M-C now as a dry run). Each candidate
 is one run: the bot always plays the pool's team N, and the engine itself
@@ -1852,8 +1852,9 @@ python -m wpa.matches --vs engine --team 14 --games 80 --workers 3 --out reports
 python -m wpa.matches --vs engine --table --out reports\team_w18
 ```
 `build\w18\w18_teams.cmd` runs the tests, starts the server and plays the
-eight candidates (pool teams 14, 40, 12, 31, 28, 11, 2 and 3), about 1.5
-hours each; it is safe to stop and run again. `--vs engine --team N
+eight candidates (pool teams 14, 40, 12, 31, 28, 11, 2 and 3), about 1.7
+hours each; it is safe to stop and run again. `build\w18\w18_night2.cmd` is
+the second round: the top four, 200 games each (about 4.3 hours a team). `--vs engine --team N
 --summary` gives one candidate's full summary. For another regulation, add
 `--format regmd` (with that regulation's server, pool and models).
 `build\w18\team_candidates.py` lists the pool's teams by how often 1500+
@@ -1862,6 +1863,29 @@ players won with them.
 **A Pokemon that must recharge** (after Hyper Beam) now has one choice, the
 recharge, as Showdown allows; the search no longer spends its time on moves
 it cannot make.
+
+**The bot against itself with an earlier choice model.** `--vs before` plays
+the same engine with the format's choice model and strength from `--before`
+(default `models_v4\regmc_w17_backup`, kept before this week's refit), on the
+same pairings as Week 17's head-to-head:
+```
+python -m wpa.matches --vs before --games 200 --workers 3 --out reports\bot_w18 --logs battle_logs_bot\w18
+```
+`build\w18\w18_vs_before.cmd` runs it (about 4 hours).
+
+**The choice model's ridge.** The choice model is fitted with its own ridge,
+1e-4 (`python -m wpa.policy --l2`, the default); 0.01 for every choice pulled
+a rare play's weight (Fake Out on a first turn out) towards zero. Refit, then
+measure the strength again with it, as `build\w18\w18_choice.cmd` does; today's
+files are kept in `models_v4\regmc_w17_backup` first, so going back is a copy.
+
+**Unchanged by these, but worth knowing:**
+- the advice's search stops inside one pair of plays when its time is up, and
+  values boards in parts of 256, so the hard limit is rarely needed;
+- boards merged on the 5% grid keep the chance-weighted mean of their hit
+  points (they kept the first board's, which read hits low);
+- CI on GitHub builds the Champions Showdown (Node 22) before the tests, and
+  tests that need scikit-learn skip on Python 3.10.
 
 ---
 
