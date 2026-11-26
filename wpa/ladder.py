@@ -4,7 +4,7 @@ game at a time, on Showdown's own server or, for a trial, on your local one.
     python -m wpa.ladder --server local --games 20        # the trial
     python -m wpa.ladder --server showdown --games 50     # the pilot
 
-On Showdown it logs in as chasevgc with the password in your password file:
+On Showdown it logs in as chasemunk with the password in your password file:
 one line, the password, in `showdown_password.txt` in your user folder (make
 it with `notepad %USERPROFILE%\\showdown_password.txt`). The file is read, never
 printed, and refused if it is inside the repo. On the local server (started
@@ -176,7 +176,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--games", type=int, default=1, help="games to play this run")
     p.add_argument("--team", type=int, default=40, help="the pool's team, 1 to 40")
     p.add_argument("--format", default="regmc", help="regmc or regmd")
-    p.add_argument("--name", default=None, help="chasevgc on Showdown")
+    p.add_argument("--name", default=None, help="chasemunk on Showdown")
     p.add_argument("--password-file", type=Path, default=None)
     p.add_argument("--out", type=Path, default=None, help="the pilot folder")
     p.add_argument("--port", type=int, default=8000, help="the local server's")
@@ -190,7 +190,7 @@ def settings(a: argparse.Namespace) -> argparse.Namespace:
     """The options with their defaults filled in for the server chosen."""
     live = a.server == "showdown"
     if a.name is None:
-        a.name = "chasevgc" if live else "WPA Ladder"
+        a.name = "chasemunk" if live else "WPA Ladder"
     if a.password_file is None:
         a.password_file = default_password_file()
     if a.out is None:

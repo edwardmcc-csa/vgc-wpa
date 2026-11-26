@@ -1904,12 +1904,16 @@ Prompt:
 ```
 notepad %USERPROFILE%\showdown_password.txt
 ```
-Notepad asks to create the file: yes. Type chasevgc's password on the first
+or in PowerShell (which does not read `%USERPROFILE%`):
+```
+notepad "$env:USERPROFILE\showdown_password.txt"
+```
+Notepad asks to create the file: yes. Type chasemunk's password on the first
 line, save, close. The bot reads it and never prints it; it refuses a file
 inside the repo, and `.gitignore` lists the name too. To change the password,
 edit the file; to stop using it, delete it.
 
-**The pilot on Showdown** (as chasevgc):
+**The pilot on Showdown** (as chasemunk; another account: `--name`):
 ```
 python -m wpa.ladder --server showdown --games 50
 ```

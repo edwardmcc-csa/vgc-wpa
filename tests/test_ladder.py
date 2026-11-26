@@ -1,5 +1,5 @@
 """Week 19, Task 1 (Phase 5's tool): ladder mode. The bot searches the ladder
-and plays one game at a time, on Showdown's own server as chasevgc or, for a
+and plays one game at a time, on Showdown's own server as chasemunk or, for a
 trial, on the local server. The password is read from a file the PO writes
 outside the repo, and is never printed. Every game is kept with its decisions,
 time and the rating after it; the run stops after the games asked, or at the
@@ -64,12 +64,12 @@ def test_the_password_file_is_also_kept_out_of_git():
 # -- the options -------------------------------------------------------------
 
 
-def test_the_trial_is_local_and_the_pilot_is_chasevgc():
+def test_the_trial_is_local_and_the_pilot_is_chasemunk():
     a = L.settings(L.parser().parse_args([]))
     assert (a.server, a.games, a.team, a.name) == ("local", 1, 40, "WPA Ladder")
     assert a.out == Path("reports/ladder_trial_regmc")
     a = L.settings(L.parser().parse_args(["--server", "showdown", "--games", "50"]))
-    assert (a.server, a.games, a.name) == ("showdown", 50, "chasevgc")
+    assert (a.server, a.games, a.name) == ("showdown", 50, "chasemunk")
     assert a.out == Path("reports/pilot_regmc")
     a = L.settings(L.parser().parse_args(["--server", "showdown", "--format", "regmd"]))
     assert a.out == Path("reports/pilot_regmd")
@@ -78,18 +78,18 @@ def test_the_trial_is_local_and_the_pilot_is_chasevgc():
 # -- the rating after a game ---------------------------------------------------
 
 LINES = [
-    "|win|chasevgc",
+    "|win|chasemunk",
     "|raw|Someone&#39;s Alt's rating: 1104 &rarr; <strong>1088</strong>"
     "<br />(-16 for losing)",
-    "|raw|ChaseVGC's rating: 1000 &rarr; <strong>1023</strong><br />(+23 for winning)",
+    "|raw|Chasemunk's rating: 1000 &rarr; <strong>1023</strong><br />(+23 for winning)",
 ]
 
 
 def test_the_ratings_are_read_from_the_end_of_the_game():
     got = L.ratings(LINES)
-    assert got["chasevgc"] == (1000, 1023)
+    assert got["chasemunk"] == (1000, 1023)
     assert got["someonesalt"] == (1104, 1088)
-    assert L.ratings(["|win|chasevgc"]) == {}
+    assert L.ratings(["|win|chasemunk"]) == {}
 
 
 # -- one game's row ------------------------------------------------------------
@@ -97,7 +97,7 @@ def test_the_ratings_are_read_from_the_end_of_the_game():
 
 def _row(n=1, lines=LINES, **kw):
     base: dict[str, Any] = dict(
-        me="chasevgc",
+        me="chasemunk",
         opponent="Someone's Alt",
         won=True,
         finished=True,
@@ -121,7 +121,7 @@ def test_a_games_row_keeps_the_result_time_decisions_and_rating():
 
 
 def test_who_lost_on_time_is_kept():
-    r = _row(lines=["|-message|chasevgc lost due to inactivity."])
+    r = _row(lines=["|-message|chasemunk lost due to inactivity."])
     assert r["inactive"] == "bot" and r["rating"] is None
     r = _row(lines=["|-message|Someone's Alt lost due to inactivity."])
     assert r["inactive"] == "opponent"
@@ -136,7 +136,7 @@ def test_the_run_stops_at_a_crash_a_refused_choice_or_a_timeout():
     assert "crash" in L.stop_reason(_row(finished=False))
     refused = LINES + ["|error|[Invalid choice] Can't move: Kingambit can't use"]
     assert "refused" in L.stop_reason(_row(lines=refused))
-    lost = ["|-message|chasevgc lost due to inactivity."]
+    lost = ["|-message|chasemunk lost due to inactivity."]
     assert "timeout" in L.stop_reason(_row(lines=lost))
     slow = [{"battle": "b", "kind": "turn", "seconds": 80.0}]
     assert "timeout" in L.stop_reason(_row(decisions=slow))
