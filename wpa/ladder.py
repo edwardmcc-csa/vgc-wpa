@@ -170,6 +170,28 @@ def pilot_summary(rows: Sequence[Mapping]) -> str:
     return "\n".join(out)
 
 
+def verify_with(bundle: str) -> None:
+    """TLS connections made without naming their trusted roots (Showdown's
+    battle server, through poke_env and asyncio) are checked against this CA
+    bundle (certifi's, Mozilla's list) instead of the computer's own store.
+    On the PO's computer the Windows store holds an expired Let's Encrypt
+    cross-certificate that Python picks for the battle server's chain.
+    Verification stays on; a caller that names its own roots is unchanged."""
+    import ssl
+
+    base = getattr(ssl.create_default_context, "base", ssl.create_default_context)
+
+    def create_default_context(
+        purpose=ssl.Purpose.SERVER_AUTH, *, cafile=None, capath=None, cadata=None
+    ):
+        if cafile is None and capath is None and cadata is None:
+            cafile = bundle
+        return base(purpose, cafile=cafile, capath=capath, cadata=cadata)
+
+    create_default_context.base = base  # type: ignore[attr-defined]
+    setattr(ssl, "create_default_context", create_default_context)
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="The bot on the ladder.")
     p.add_argument("--server", choices=["local", "showdown"], default="local")
@@ -247,6 +269,9 @@ async def _run(a) -> None:  # pragma: no cover - plays on a server
         raise SystemExit(f"--team must be 1 to {len(pool)}")
     packed = pool[a.team - 1]["packed"]
     if a.server == "showdown":
+        import certifi
+
+        verify_with(certifi.where())
         account = AccountConfiguration(a.name, read_password(a.password_file))
         server = ShowdownServerConfiguration
     else:  # the local server was checked before this

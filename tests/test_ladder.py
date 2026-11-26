@@ -174,3 +174,30 @@ def test_the_summary_gives_the_record_and_the_rating():
     assert "Crashes: 0. Illegal choices: 0. Timeouts: 0." in text
     stopped = rows + [_row(4, crashed="RuntimeError()")]
     assert "Stopped after game 4: a crash" in L.pilot_summary(stopped)
+
+
+# -- the connection to Showdown ----------------------------------------------
+
+
+def test_showdowns_connection_is_checked_against_certifis_list(monkeypatch):
+    """On the PO's computer, Windows' store holds an expired Let's Encrypt
+    cross-certificate (ISRG Root X2 by X1, to 15 Sep 2025) that Python uses
+    for Showdown's battle server; certifi's list verifies it. Verification
+    stays on; only where the trusted roots come from changes, and a caller
+    that names its own stays as it was."""
+    import ssl
+
+    seen = []
+
+    def fake(purpose=ssl.Purpose.SERVER_AUTH, **kw):
+        seen.append(kw)
+        return "context"
+
+    monkeypatch.setattr(ssl, "create_default_context", fake)
+    L.verify_with("bundle.pem")
+    assert ssl.create_default_context() == "context"
+    ssl.create_default_context(cafile="own.pem")
+    assert seen == [
+        {"cafile": "bundle.pem", "capath": None, "cadata": None},
+        {"cafile": "own.pem", "capath": None, "cadata": None},
+    ]
