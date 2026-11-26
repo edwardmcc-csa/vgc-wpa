@@ -64,3 +64,6 @@ battle_logs_bot/
 # Week 17: Reg M-C's models retrained with the charging fix
 features_v4b_mc_w17/
 models_v4_avg_w17/
+
+# Week 19: the Showdown password (kept outside the repo; never committed)
+showdown_password.txt

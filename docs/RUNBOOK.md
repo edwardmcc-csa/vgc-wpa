@@ -1887,6 +1887,49 @@ files are kept in `models_v4\regmc_w17_backup` first, so going back is a copy.
 - CI on GitHub builds the Champions Showdown (Node 22) before the tests, and
   tests that need scikit-learn skip on Python 3.10.
 
+## 32. Week 19: ladder mode (the trial, then the pilot)
+
+**The trial on your computer's server** (no account, no password). Start the
+Reg M-C server as in Section 29, step 1, then:
+```
+python -m wpa.ladder --server local --games 20
+```
+The bot ("WPA Ladder") searches the local ladder with the pool's team 40; a
+sparring partner ("WPA Sparring", the strongest move, the pool's teams in
+turn) searches it too, so the server pairs them. Games and the summary go to
+`reports\ladder_trial_regmc`. `build\w19\w19_trial.cmd` does all of it.
+
+**The password file** (once, before the first real game). In a Command
+Prompt:
+```
+notepad %USERPROFILE%\showdown_password.txt
+```
+Notepad asks to create the file: yes. Type chasevgc's password on the first
+line, save, close. The bot reads it and never prints it; it refuses a file
+inside the repo, and `.gitignore` lists the name too. To change the password,
+edit the file; to stop using it, delete it.
+
+**The pilot on Showdown** (as chasevgc):
+```
+python -m wpa.ladder --server showdown --games 50
+```
+It logs in, searches the Reg M-C ladder, plays one game at a time on
+Showdown's timer (denying open team sheets), and stops after 50 games, or at
+the first crash, refused choice or timeout, or if no game starts within 15
+minutes (`--search-minutes`). Each game is kept in `reports\pilot_regmc`:
+`games.jsonl` (result, opponent, rating before and after, the bot's decisions
+and time) and `logs\` (each game with the bot's own sheet, for the replay
+report). `summary.txt` covers every game so far.
+
+**Stopping and carrying on.** Close the window to stop at once (a game in
+progress is lost on time, and not kept). Running the same command again
+carries on: the numbering continues and the summary covers both runs. For
+another regulation, add `--format regmd` (its folder is `reports\pilot_regmd`);
+for another team, `--team N`.
+
+**Choices counted as replaced** no longer include the last Pokemon left filling
+one of two empty places (the other place can only pass).
+
 ---
 
 ## If something goes wrong

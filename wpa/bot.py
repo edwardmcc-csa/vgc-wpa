@@ -294,9 +294,27 @@ def order_for(joint, battle, idents: Sequence[str], foes: Mapping[int, int]):
             DoubleBattleOrder(),
             "Showdown's request allows nothing",
         )  # pragma: no cover
-    if any(c is None for c in chosen) and not why:
+    if any(c is None for c in chosen) and not why and _completions(chosen, valid) > 1:
         why.append("a place without an action was given one at random")
     return order, "; ".join(why)
+
+
+def _completions(chosen: list, valid: Sequence[Sequence]) -> int:
+    """How many of Showdown's choices keep the places already chosen (one:
+    the empty place had no choice, as when the last Pokemon left fills one
+    of two empty places and the other passes)."""
+    from poke_env.player.battle_order import DoubleBattleOrder
+
+    fixed = [c.message if c is not None else None for c in chosen]
+    n = 0
+    for o in DoubleBattleOrder.join_orders(list(valid[0]), list(valid[1])):
+        parts = (o.first_order, o.second_order)
+        if all(
+            f is None or (p is not None and p.message == f)
+            for f, p in zip(fixed, parts)
+        ):
+            n += 1
+    return n
 
 
 def pivot_order(battle, plan: Mapping[int, int], idents: Sequence[str]):

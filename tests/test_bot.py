@@ -238,6 +238,21 @@ def test_a_forced_switch_sends_the_newcomer_and_passes_the_other_place():
     assert (order.message, why) == ("/choose switch Gholdengo, pass", "")
 
 
+def test_the_last_one_left_for_two_places_is_not_a_replaced_choice():
+    """Week 19, Task 4: both places empty and one Pokemon left: the other
+    place can only pass, so nothing was chosen at random (13 of the 20
+    choices counted as replaced in Week 18's head-to-head)."""
+    b, _ = _battle_until(3)
+    r = json.loads(json.dumps(b.last_request))
+    r["forceSwitch"] = [True, True]
+    for m in r["side"]["pokemon"]:
+        if m["ident"] in ("p1: Arcanine", "p1: Raichu"):
+            m["condition"] = "0 fnt"
+    b.parse_request(r)
+    order, why = B.order_for((Action(4, "switch", switch_to=1),), b, IDENTS, {})
+    assert (order.message, why) == ("/choose switch Gholdengo, pass", "")
+
+
 def test_a_switching_move_brings_in_the_one_it_planned():
     b, _ = _battle_until(3)  # a switch asked for in place a
     plan = {0: 3}  # place a's move was to bring in Raichu
